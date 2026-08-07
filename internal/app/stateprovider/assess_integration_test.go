@@ -91,15 +91,48 @@ func putCPAt(t *testing.T, repo *checkpointjson.Repo, idByte byte, path, content
 	if err != nil {
 		t.Fatalf("ParseConfigHash: %v", err)
 	}
-	putManifest(t, repo, id, cfg, omitted, []worktree.Entry{entry})
+	putManifest(t, repo, id, cfg, omitted, []worktree.Entry{entry}, nil)
+	return id
+}
+
+// putCPSkippedAt writes a one-record checkpoint whose single record at path is a skipped
+// input rather than an entry, under the scan-config identity cfgNibble. Paired with
+// putCPAt on the same path and cfgNibble it produces the entry <-> skipped transition the
+// comparator reports as Skipped, which is otherwise unreachable from entry-only fixtures.
+func putCPSkippedAt(t *testing.T, repo *checkpointjson.Repo, idByte byte, path, cfgNibble string) checkpoint.CheckpointID {
+	t.Helper()
+	id, err := checkpoint.NewCheckpointID(bytes.NewReader(bytes.Repeat([]byte{idByte}, 20)))
+	if err != nil {
+		t.Fatalf("NewCheckpointID: %v", err)
+	}
+	p, err := worktree.ParseRelPath(path)
+	if err != nil {
+		t.Fatalf("ParseRelPath(%q): %v", path, err)
+	}
+	omitted := worktree.FieldSet(0).With(worktree.FieldCtime).With(worktree.FieldDev).With(worktree.FieldIno).With(worktree.FieldNlink)
+	// A large-file skip is the deliberate, complete decision the supported skip policy
+	// records; unlike a read error it does not taint the scan, so the checkpoint stays a
+	// comparable observation.
+	skip, err := worktree.NewSkippedInput(p, worktree.ReasonLargeFileSkipPolicy, 4096,
+		worktree.StatSignature{Size: 4096, MtimeNs: 5, Mode: 0o644, Omitted: omitted}, "", worktree.SymlinkTarget{}, worktree.TraversalInfo{})
+	if err != nil {
+		t.Fatalf("NewSkippedInput: %v", err)
+	}
+	cfg, err := hashing.ParseConfigHash("blake3:" + strings.Repeat(cfgNibble, 64))
+	if err != nil {
+		t.Fatalf("ParseConfigHash: %v", err)
+	}
+	putManifest(t, repo, id, cfg, omitted, nil, []worktree.SkippedInput{skip})
 	return id
 }
 
 // putManifest publishes a checkpoint through the streaming write contract. The tree
 // hash, stats, and record count are derived by the store from the records themselves,
-// so a fixture never hands the store a derived fact.
+// so a fixture never hands the store a derived fact. It is the single owner of the
+// checkpoint build shape: entries and skipped inputs are both parameters so a fixture
+// varying only the records it publishes never restates that shape.
 func putManifest(t *testing.T, repo *checkpointjson.Repo, id checkpoint.CheckpointID,
-	cfg hashing.ConfigHash, omitted worktree.FieldSet, entries []worktree.Entry) {
+	cfg hashing.ConfigHash, omitted worktree.FieldSet, entries []worktree.Entry, skipped []worktree.SkippedInput) {
 	t.Helper()
 	build := checkpoint.CheckpointBuild{
 		ID:                   id,
@@ -112,7 +145,7 @@ func putManifest(t *testing.T, repo *checkpointjson.Repo, id checkpoint.Checkpoi
 		TrustMode:            config.TrustNormal,
 		OmittedStatFields:    omitted,
 	}
-	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, nil)); err != nil {
+	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, skipped)); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 }
@@ -151,7 +184,7 @@ func putCPEntries(t *testing.T, repo *checkpointjson.Repo, idByte byte, cfgNibbl
 	if err != nil {
 		t.Fatalf("ParseConfigHash: %v", err)
 	}
-	putManifest(t, repo, id, cfg, omitted, entries)
+	putManifest(t, repo, id, cfg, omitted, entries, nil)
 	return id
 }
 
@@ -518,6 +551,48 @@ func TestCompareMovedContentIsAddPlusDelete(t *testing.T) {
 	}
 	if counts.Added() != 1 || counts.Deleted() != 1 || counts.Modified() != 0 || counts.TypeChanged() != 0 {
 		t.Errorf("counts = a=%d m=%d d=%d t=%d, want added=1 deleted=1 and nothing else: a move is reported as a separate add and delete",
+			counts.Added(), counts.Modified(), counts.Deleted(), counts.TypeChanged())
+	}
+}
+
+// TestCompareSkippedTransitionCounts proves the production fold preserves the comparator's
+// skipped count. One path is a skipped input on the left and a readable entry on the right,
+// so the merge produces exactly one change and that change's only honest status is Skipped.
+// A fold that dropped the fact would still call this comparison Different and complete while
+// reporting zero changes — a document asserting both "these states differ" and "the complete
+// change cardinality is nothing".
+//
+// It runs through the real Assessor over two on-disk checkpoints rather than constructing the
+// counts value, so the streaming merge and mergeCounts are the things under test.
+//
+// Mutation proof: dropping sum.Skipped from the NewCounts call in mergeCounts turns this red.
+func TestCompareSkippedTransitionCounts(t *testing.T) {
+	a, repo, _ := newAssessor(t)
+	// One shared path and one shared scan config: the pair is provably compatible, and the
+	// only thing that differs is whether that path was observed or skipped.
+	const shared = "a.txt"
+	left := putCPSkippedAt(t, repo, 0x11, shared, "a")
+	right := putCPAt(t, repo, 0x22, shared, hexA, "a")
+
+	cmp, err := a.Compare(context.Background(), state.Range{Left: idRef(left), Right: idRef(right)}, state.NowContext{})
+	if err != nil {
+		t.Fatalf("Compare: %v", err)
+	}
+	if cmp.Relationship() != provider.RelDifferent {
+		t.Fatalf("relationship = %v, want different: a skip-only transition is still a difference", cmp.Relationship())
+	}
+	if !cmp.Complete() {
+		t.Error("a skip-only difference is a complete observation of both states")
+	}
+	counts, ok := cmp.Counts()
+	if !ok {
+		t.Fatal("different comparison must carry counts")
+	}
+	if counts.Skipped() != 1 {
+		t.Errorf("skipped = %d, want 1", counts.Skipped())
+	}
+	if counts.Added() != 0 || counts.Modified() != 0 || counts.Deleted() != 0 || counts.TypeChanged() != 0 {
+		t.Errorf("counts = a=%d m=%d d=%d t=%d, want every non-skipped count zero: the one skipped transition is the whole difference",
 			counts.Added(), counts.Modified(), counts.Deleted(), counts.TypeChanged())
 	}
 }

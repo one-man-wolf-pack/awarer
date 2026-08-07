@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -29,8 +30,11 @@ type stateProjection struct {
 	ScanIdentity struct {
 		ScanConfigHash string `json:"scan_config_hash"`
 	} `json:"scan_identity"`
-	Comparable      bool `json:"comparable"`
-	Reconstructable bool `json:"reconstructable"`
+	Comparable       bool `json:"comparable"`
+	Reconstructable  bool `json:"reconstructable"`
+	EvidenceBoundary struct {
+		SkippedInputs int `json:"skipped_inputs"`
+	} `json:"evidence_boundary"`
 }
 
 type resolveData struct {
@@ -51,6 +55,7 @@ type compareData struct {
 		Modified    int `json:"modified"`
 		Deleted     int `json:"deleted"`
 		TypeChanged int `json:"type_changed"`
+		Skipped     int `json:"skipped"`
 	} `json:"counts"`
 	Completeness *struct {
 		Complete bool `json:"complete"`
@@ -240,8 +245,11 @@ func TestAcceptanceStateCompareBounded(t *testing.T) {
 	if d.Outcome != "different" {
 		t.Fatalf("latest..now = %q, want different", d.Outcome)
 	}
-	if d.Counts == nil || d.Counts.Added != 1 {
-		t.Errorf("counts = %+v, want added=1", d.Counts)
+	// skipped is asserted zero here, not merely present. It is the one count another
+	// scenario pins non-zero (the skipped-transition test asserts one), so this is where a
+	// projection publishing a constant instead of the comparator's value gets caught.
+	if d.Counts == nil || d.Counts.Added != 1 || d.Counts.Skipped != 0 {
+		t.Errorf("counts = %+v, want added=1 and skipped=0", d.Counts)
 	}
 	if d.Completeness == nil || !d.Completeness.Complete {
 		t.Errorf("different comparison must be complete, got %+v", d.Completeness)
@@ -276,6 +284,91 @@ func TestAcceptanceStateCompareBounded(t *testing.T) {
 		t.Error("incomparable comparison must carry no counts")
 	}
 	assertComparisonCompleteness(t, d2, false)
+}
+
+// TestAcceptanceStateCompareSkippedTransition proves the built binary publishes the
+// skipped transition count of a comparison. It uses only the supported large-file skip
+// policy — no private-store mutation, no FIFO, no platform-specific setup — so it runs the
+// same way on every host lane.
+//
+// The scenario turns one oversized (therefore skipped) file into a small readable one. That
+// path is present on both sides with no honest status other than skipped, so the whole
+// difference is one skipped transition: a build that dropped the count would report this
+// comparison as different, complete, and empty.
+//
+// The second oversized file never changes. It stays skipped on both sides, contributes
+// nothing to the delta, and exists to push each operand's evidence_boundary.skipped_inputs
+// above the comparison's skipped count — so a projection that substituted the operand's
+// observation total for the delta could not satisfy both assertions at once.
+func TestAcceptanceStateCompareSkippedTransition(t *testing.T) {
+	const (
+		transitioning = "unique_skip_marker_7q.txt"
+		stableSkipped = "unique_stable_marker_3k.txt"
+		oversized     = "larger than four bytes"
+		small         = "ok" // <= max_file_size, so it is observed rather than skipped
+	)
+	root := initProject(t)
+	// The shared config is what makes the scenario portable: an ordinary size threshold
+	// plus the supported skip policy, both of which every host applies identically.
+	write(t, root, "awa.toml", "[hashing]\nmax_file_size = \"4B\"\nlarge_file_policy = \"skip\"\n")
+	write(t, root, transitioning, oversized)
+	write(t, root, stableSkipped, oversized)
+	if code, _, stderr := awa(t, root, "checkpoint", "-m", "oversized baseline"); code != 0 {
+		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
+	}
+	write(t, root, transitioning, small)
+
+	d := compareJSON(t, root, "latest..now")
+	if d.Outcome != "different" {
+		t.Fatalf("latest..now = %q, want different: a skip-only transition is still a difference", d.Outcome)
+	}
+	assertComparisonCompleteness(t, d, true)
+	if d.Counts == nil {
+		t.Fatal("different comparison must carry counts")
+	}
+	if d.Counts.Skipped != 1 {
+		t.Errorf("counts.skipped = %d, want 1", d.Counts.Skipped)
+	}
+	if d.Counts.Added != 0 || d.Counts.Modified != 0 || d.Counts.Deleted != 0 || d.Counts.TypeChanged != 0 {
+		t.Errorf("counts = %+v, want every non-skipped count zero", *d.Counts)
+	}
+	// The counts object publishes exactly its five required fields, skipped included. A
+	// typed decode cannot see a missing or an extra key, so the key set is the assertion.
+	assertObjectFields(t, "state.compare counts", d.rawData["counts"],
+		[]string{"added", "modified", "deleted", "type_changed", "skipped"}, nil)
+
+	// The delta is not the operands' observation boundaries: the left side skipped both
+	// oversized files, the right side still skips the unchanged one, and the comparison
+	// counts one transition. The bounds are deliberately lower bounds, not equalities —
+	// awa.toml is itself larger than the threshold and is skipped alongside them, so the
+	// observed totals are higher, and this test must not depend on whether the shared
+	// config file participates in the scan.
+	if d.Left == nil || d.Right == nil {
+		t.Fatal("a difference must publish both operands")
+	}
+	if d.Left.EvidenceBoundary.SkippedInputs < 2 {
+		t.Errorf("left evidence_boundary.skipped_inputs = %d, want at least 2 (both oversized files)", d.Left.EvidenceBoundary.SkippedInputs)
+	}
+	if d.Right.EvidenceBoundary.SkippedInputs < 1 {
+		t.Errorf("right evidence_boundary.skipped_inputs = %d, want at least 1 (the unchanged oversized file)", d.Right.EvidenceBoundary.SkippedInputs)
+	}
+
+	// Human output names the skipped count and stays summary-only.
+	code, human, stderr := awa(t, root, "state", "compare", "latest..now")
+	if code != 0 {
+		t.Fatalf("human compare exit = %d, stderr = %q", code, stderr)
+	}
+	// The word boundary makes the count exact without pinning the compact layout, which is
+	// presentation-owned: a plain substring would also accept "skipped 10", so a human
+	// renderer disagreeing with the JSON count could pass.
+	if !regexp.MustCompile(`skipped 1\b`).MatchString(human) {
+		t.Errorf("human compare must name the skipped count as 1, got:\n%s", human)
+	}
+	for _, path := range []string{transitioning, stableSkipped} {
+		if strings.Contains(human, path) {
+			t.Errorf("human compare leaked path %q; it must be summary-only:\n%s", path, human)
+		}
+	}
 }
 
 // TestAcceptanceStateResolveAdversarial proves degraded evidence is a machine-readable

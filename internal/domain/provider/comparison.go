@@ -41,19 +41,27 @@ func (r Relationship) String() string {
 // Counts are the path-keyed per-kind change counts of a complete comparison. They are
 // summary-only: there is deliberately no changed-path list, no rename pairing, and no
 // per-path slice, so retained memory never grows with tree cardinality.
+//
+// skipped counts a both-present path whose comparison status is skipped: a readable entry
+// that became a skipped input, a skipped input that became readable, and two skips that
+// differ. It is a fact about the delta between two observations, and is therefore distinct
+// from either operand's EvidenceBoundary.SkippedInputs, which describes what one
+// observation skipped. A skipped record present on only one side stays an add or a delete,
+// exactly as the comparator classifies it.
 type Counts struct {
 	added       int
 	modified    int
 	deleted     int
 	typeChanged int
+	skipped     int
 }
 
 // NewCounts builds counts from non-negative per-kind totals.
-func NewCounts(added, modified, deleted, typeChanged int) (Counts, error) {
-	if added < 0 || modified < 0 || deleted < 0 || typeChanged < 0 {
-		return Counts{}, fmt.Errorf("comparison counts must be non-negative, got a=%d m=%d d=%d t=%d", added, modified, deleted, typeChanged)
+func NewCounts(added, modified, deleted, typeChanged, skipped int) (Counts, error) {
+	if added < 0 || modified < 0 || deleted < 0 || typeChanged < 0 || skipped < 0 {
+		return Counts{}, fmt.Errorf("comparison counts must be non-negative, got a=%d m=%d d=%d t=%d s=%d", added, modified, deleted, typeChanged, skipped)
 	}
-	return Counts{added: added, modified: modified, deleted: deleted, typeChanged: typeChanged}, nil
+	return Counts{added: added, modified: modified, deleted: deleted, typeChanged: typeChanged, skipped: skipped}, nil
 }
 
 // Added returns the number of added paths.
@@ -68,8 +76,8 @@ func (c Counts) Deleted() int { return c.deleted }
 // TypeChanged returns the number of type-changed paths.
 func (c Counts) TypeChanged() int { return c.typeChanged }
 
-// Total returns the sum of all per-kind counts.
-func (c Counts) Total() int { return c.added + c.modified + c.deleted + c.typeChanged }
+// Skipped returns the number of changed paths whose comparison status is skipped.
+func (c Counts) Skipped() int { return c.skipped }
 
 // Comparison is the resolved verdict for a `state compare` range. It is built only
 // through the relationship-specific constructors, which enforce the operand, count, and

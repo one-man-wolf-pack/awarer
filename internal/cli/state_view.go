@@ -42,11 +42,17 @@ type resolveDoc struct {
 	Reason           string              `json:"reason,omitempty"`
 }
 
+// countsDoc is the complete change cardinality of a difference, split by status. Every
+// field is required, skipped included: a zero is an exact counted fact, not an
+// inapplicable concept, and omitting it would leave a consumer unable to tell "no skipped
+// transitions" from "this build does not report them". It is the delta between the two
+// operands and is unrelated to their evidence_boundary.skipped_inputs.
 type countsDoc struct {
 	Added       int `json:"added"`
 	Modified    int `json:"modified"`
 	Deleted     int `json:"deleted"`
 	TypeChanged int `json:"type_changed"`
+	Skipped     int `json:"skipped"`
 }
 
 type completenessDoc struct {
@@ -168,6 +174,7 @@ func emitCompare(w *output.Writer, inv invocation, c provider.Comparison) error 
 				Modified:    counts.Modified(),
 				Deleted:     counts.Deleted(),
 				TypeChanged: counts.TypeChanged(),
+				Skipped:     counts.Skipped(),
 			}
 		}
 		if c.Complete() {
@@ -191,7 +198,7 @@ func renderCompareHuman(w *output.Writer, c provider.Comparison) {
 		w.Linef("  right            %s %s", right.Kind(), shortRef(right.CanonicalRef()))
 	}
 	if counts, ok := c.Counts(); ok {
-		w.Linef("  changes          +%d ~%d -%d (type-changed %d)", counts.Added(), counts.Modified(), counts.Deleted(), counts.TypeChanged())
+		w.Linef("  changes          +%d ~%d -%d (type-changed %d, skipped %d)", counts.Added(), counts.Modified(), counts.Deleted(), counts.TypeChanged(), counts.Skipped())
 	}
 	if c.Complete() {
 		w.Line("  complete         yes")

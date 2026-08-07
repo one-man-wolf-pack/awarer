@@ -133,7 +133,10 @@ func unavailableFrom(leftOut, rightOut operandOutcome, fallback provider.Reason)
 // keeps only a fixed-size Summary — never a changed-path slice — so retained memory is
 // O(1) with respect to tree cardinality. Rename detection is disabled, so a rename
 // appears as a separate delete and add (rename pairing is outside this summary surface);
-// the returned counts must therefore carry no renamed entries.
+// the returned counts must therefore carry no renamed entries. Renamed is the only summary
+// status without a counts field, and it is asserted zero below rather than discarded; every
+// other status the comparator produces — including a skipped transition — is carried
+// through, so the counts always sum to the change cardinality.
 //
 // Its three self-raised failures — a merge it cannot construct over two manifests it just
 // opened, a renamed count under disabled pairing, and a monotonic non-negative summary the
@@ -173,7 +176,7 @@ func (a *Assessor) mergeCounts(ctx context.Context, left, right *state.ResolvedS
 	if sum.Renamed != 0 {
 		return provider.Counts{}, fmt.Errorf("state provider: %w: rename count %d with rename detection disabled", errInternalFault, sum.Renamed)
 	}
-	counts, err := provider.NewCounts(sum.Added, sum.Modified, sum.Deleted, sum.TypeChanged)
+	counts, err := provider.NewCounts(sum.Added, sum.Modified, sum.Deleted, sum.TypeChanged, sum.Skipped)
 	if err != nil {
 		return provider.Counts{}, fmt.Errorf("state provider: %w: summarizing the merge counts: %w", errInternalFault, err)
 	}

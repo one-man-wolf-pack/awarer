@@ -40,16 +40,38 @@ func runIdent(t *testing.T, before bool, id, treeNibble, cfgNibble string) provi
 	return i
 }
 
-func TestNewCountsRejectsNegative(t *testing.T) {
-	if _, err := provider.NewCounts(-1, 0, 0, 0); err == nil {
-		t.Error("expected error for negative count")
+// TestNewCountsRejectsNegativeAndRoutesEveryCount pins both of the constructor's
+// obligations: it rejects a negative value in every position, and it stores each argument
+// in its own field. The accepted values are pairwise distinct on purpose — with equal
+// counts a constructor that stored an argument in the wrong field, or an accessor that
+// returned a sibling's value, would still satisfy every assertion. The five counts are the
+// whole change cardinality, so their sum is asserted against the independent literal sum of
+// the same distinct values rather than against a value-owned total.
+func TestNewCountsRejectsNegativeAndRoutesEveryCount(t *testing.T) {
+	negatives := map[string][5]int{
+		"added":        {-1, 0, 0, 0, 0},
+		"modified":     {0, -1, 0, 0, 0},
+		"deleted":      {0, 0, -1, 0, 0},
+		"type-changed": {0, 0, 0, -1, 0},
+		"skipped":      {0, 0, 0, 0, -1},
 	}
-	c, err := provider.NewCounts(1, 2, 3, 4)
+	for name, v := range negatives {
+		if _, err := provider.NewCounts(v[0], v[1], v[2], v[3], v[4]); err == nil {
+			t.Errorf("NewCounts with a negative %s count: expected an error", name)
+		}
+	}
+
+	c, err := provider.NewCounts(1, 2, 3, 4, 5)
 	if err != nil {
 		t.Fatalf("NewCounts: %v", err)
 	}
-	if c.Total() != 10 {
-		t.Errorf("Total = %d, want 10", c.Total())
+	got := [5]int{c.Added(), c.Modified(), c.Deleted(), c.TypeChanged(), c.Skipped()}
+	if want := [5]int{1, 2, 3, 4, 5}; got != want {
+		t.Errorf("accessors = %v, want %v (a=1 m=2 d=3 t=4 s=5)", got, want)
+	}
+	sum := c.Added() + c.Modified() + c.Deleted() + c.TypeChanged() + c.Skipped()
+	if sum != 1+2+3+4+5 {
+		t.Errorf("counts sum = %d, want %d: every per-kind count contributes to the change cardinality", sum, 1+2+3+4+5)
 	}
 }
 
@@ -77,7 +99,7 @@ func TestEqualComparison(t *testing.T) {
 func TestDifferent(t *testing.T) {
 	l := cpIdent(t, "a", "1", validScan(t, "a"))
 	r := cpIdent(t, "b", "2", validScan(t, "a"))
-	counts, _ := provider.NewCounts(1, 0, 0, 0)
+	counts, _ := provider.NewCounts(1, 0, 0, 0, 0)
 	cmp := provider.Different(l, r, counts)
 	got, ok := cmp.Counts()
 	if !ok || got.Added() != 1 {
@@ -238,7 +260,7 @@ func TestClassifyDistinctRunsProvenCompatible(t *testing.T) {
 func TestComparisonCompleteProjection(t *testing.T) {
 	l := cpIdent(t, "a", "1", validScan(t, "a"))
 	r := cpIdent(t, "b", "2", validScan(t, "a"))
-	counts, _ := provider.NewCounts(1, 0, 0, 0)
+	counts, _ := provider.NewCounts(1, 0, 0, 0, 0)
 	incomp, _ := provider.Incomparable(l, r, provider.ReasonIncompatibleIdentityPolicy)
 	unavail, _ := provider.ComparisonUnavailable(&l, nil, provider.ReasonNotFound)
 
