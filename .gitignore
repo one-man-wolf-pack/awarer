@@ -1,0 +1,25 @@
+# Built binary (`go build -o awa ./cmd/awa` in the repo root).
+/awa
+
+# GoReleaser's output: archives, checksums, and the per-target binaries. Generated
+# only, never committed.
+/dist/
+
+# The generated site (`just site`). A build artifact: a checkout regenerates it from
+# the binary, and a committed copy would become a second documentation tree.
+/site/dist/
+
+# Go test/coverage artifacts.
+*.test
+*.out
+coverage.txt
+
+# Editor/OS noise.
+.DS_Store
+
+# User-local registry of repositories where awa is dogfooded.
+/.awa-integrations.local.md
+
+# Local credentials and provider configuration.
+/.env
+/.wrangler/

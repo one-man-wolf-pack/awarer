@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Go module dependencies. Grouped into one PR so a weekly bump is a single review.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions are all SHA-pinned in the workflows; Dependabot bumps the pins
+  # (and updates the readable version comment), so they cannot rot into stale,
+  # unreviewed versions. Grouped into one PR.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -1,0 +1,61 @@
+version: 2
+
+project_name: awa
+
+builds:
+  - id: awa
+    main: ./cmd/awa
+    binary: awa
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # Stating ldflags replaces GoReleaser's default, which stamps `main.version` — a
+      # variable awa does not have. `.Version` strips the leading `v`; the stamp is the
+      # tag verbatim, and it is what `awa version` prints and a checkpoint records.
+      - -X awarer/internal/app.versionStamp=awa.version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - darwin
+      - freebsd
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: freebsd
+        goarch: arm64
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: awa
+    ids:
+      - awa
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    # Explicit because THIRD_PARTY_NOTICES has no extension: GoReleaser's implicit
+    # LICENSE*/README* globs do not reach it, and its defaults also glob CHANGELOG*.
+    files:
+      - LICENSE
+      - README.md
+      - THIRD_PARTY_NOTICES
+
+checksum:
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  # Release Please owns this release and its notes. Every other mode rewrites them.
+  #
+  # `replace_existing_artifacts` is deliberately absent: a partially published release
+  # is inspected and cleaned before a rerun, never overwritten.
+  mode: keep-existing

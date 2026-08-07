@@ -1,0 +1,13 @@
+{{ define "content" }}
+<div class="prose">
+  <h1>Not found</h1>
+  <p>This site publishes the documentation of one <code>awa</code> release and nothing else. There are no
+    versioned copies of older pages, so a link to a document a previous release carried has no address here.</p>
+  <p>The binary is always the authority for its own version: <code>awa help topics</code> lists every document
+    the installed release carries, without a network.</p>
+  <div class="hero-actions">
+    <a class="button button-primary" href="{{ .Site.DocsURL }}">All documentation</a>
+    <a class="button" href="{{ .Site.HomeURL }}">Home</a>
+  </div>
+</div>
+{{ end }}

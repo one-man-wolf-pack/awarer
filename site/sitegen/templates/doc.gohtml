@@ -1,0 +1,51 @@
+{{ define "content" }}
+{{- with .Document }}
+{{- /*
+The article comes first in the document, and the corpus navigation follows it.
+On a wide screen CSS places the navigation in the left column; on a phone it
+stays where it is, below the text. The alternative — navigation first in the
+markup — puts all 38 corpus links between a reader and the document they opened.
+*/ -}}
+<div class="doc-layout">
+  <article class="prose doc-main">
+    <p class="breadcrumbs"><a href="{{ $.Site.DocsURL }}">Documentation</a> / {{ .KindName }}</p>
+    <h1>{{ $.Title }}</h1>
+    <p class="doc-meta">
+      <code>awa {{ $.Site.Version }}</code> · slug <code>{{ .Slug }}</code>
+      {{- if .Aliases }} · also <code>{{ range $i, $a := .Aliases }}{{ if $i }}</code>, <code>{{ end }}{{ $a }}{{ end }}</code>{{ end }}
+      · offline: <code>awa docs export</code> → <code>{{ .SourceOf }}</code>
+    </p>
+
+    {{- if .Sections }}
+    <details class="outline" open>
+      <summary>On this page</summary>
+      <ul>
+        {{- range .Sections }}
+        <li><a href="#{{ .ID }}">{{ .Text }}</a></li>
+        {{- end }}
+      </ul>
+    </details>
+    {{- end }}
+
+    <div class="doc-content">{{ .Content }}</div>
+
+    <nav class="pager" aria-label="Adjacent documents">
+      <span>{{ with .Prev }}<a href="{{ .Route }}">← {{ .Title }}</a>{{ end }}</span>
+      <span>{{ with .Next }}<a href="{{ .Route }}">{{ .Title }} →</a>{{ end }}</span>
+    </nav>
+  </article>
+
+  <nav class="doc-nav" aria-label="All documentation">
+    <h2>All documents</h2>
+    {{- range $.Site.Nav }}
+    <h3>{{ .Name }}</h3>
+    <ul>
+      {{- range .Links }}
+      <li><a href="{{ .Route }}"{{ if eq .Slug $.Document.Slug }} aria-current="page"{{ end }}>{{ .Title }}</a></li>
+      {{- end }}
+    </ul>
+    {{- end }}
+  </nav>
+</div>
+{{- end }}
+{{ end }}

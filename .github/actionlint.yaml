@@ -1,0 +1,8 @@
+# Blacksmith self-hosted runner labels. Declared here so actionlint does not flag
+# them as unknown runners — they are not GitHub-hosted labels. Keep in sync with the
+# `runs-on:` values in .github/workflows/*.yml.
+self-hosted-runner:
+  labels:
+    - blacksmith-2vcpu-ubuntu-2404
+    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-4vcpu-windows-2025

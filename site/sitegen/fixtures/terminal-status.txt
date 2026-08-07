@@ -1,0 +1,22 @@
+$ awa status
+root:        /home/dev/acme-api
+config:      built-in defaults (no awa.toml or .awa/config.toml)
+initialized: yes
+checkpoints: 1
+  latest:    32td8sbxh2dw at 2026-07-26T20:51:51.487112Z (0 skipped)
+run cache:   1 runs
+  latest:    18c5f22f2059 exit=0 at 2026-07-26T20:51:51.542414Z
+store:       /home/dev/acme-api/.awa/store
+checkpoint:  checkpoint 32td8sbxh2dw "before extracting the rate limiter" (just now)
+  dirty:     1 changed (0A 1M 0D 0R 0T 0S) — awa changes --stat
+git:         branch main @ ef47c97 (dirty)
+reusable:    none — 1 near miss(es), inspect with: awa run ls --near
+  nearest:   18c5f22f2059 go test ./... not-reusable(input-tree-differs)
+next:
+  awa changes --stat     # what changed since the checkpoint
+  awa diff src/          # focus the review on a path
+  awa run ls --near      # why recent checks are stale
+  awa run explain -- <command>
+  awa log -n 5          # inspect recent checkpoints if this baseline is surprising
+  awa gc --dry-run --json # store footprint and what cleanup would free
+note: awa shows changes vs the checkpoint baseline; review the full git diff before acceptance

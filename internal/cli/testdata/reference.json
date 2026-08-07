@@ -1,0 +1,1197 @@
+{
+  "schema_version": 1,
+  "commands": [
+    {
+      "name": "init",
+      "summary": "create a new .awa project in the current directory",
+      "usage": [
+        "init [--profile <name>] [--root <path>]"
+      ],
+      "topic": "quickstart",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--json"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--profile"
+          ],
+          "desc": "starter profile: default|strict",
+          "default": "default",
+          "takes_value": true,
+          "value": "<name>"
+        }
+      ]
+    },
+    {
+      "name": "status",
+      "summary": "show project status (default command)",
+      "usage": [
+        "status"
+      ],
+      "topic": "status",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--json"
+      ]
+    },
+    {
+      "name": "checkpoint",
+      "summary": "record a checkpoint of the worktree",
+      "usage": [
+        "checkpoint [-m <message>]"
+      ],
+      "topic": "checkpoints",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "-m",
+            "--message"
+          ],
+          "desc": "checkpoint message",
+          "takes_value": true,
+          "value": "<msg>"
+        }
+      ]
+    },
+    {
+      "name": "log",
+      "summary": "list recorded checkpoints",
+      "usage": [
+        "log [-n <count>] [--all] [--oneline] [--time <mode>]"
+      ],
+      "topic": "checkpoints",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--json"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "-n",
+            "--limit"
+          ],
+          "desc": "show at most <count> entries",
+          "takes_value": true,
+          "value": "<count>"
+        },
+        {
+          "spellings": [
+            "-1"
+          ],
+          "desc": "shorthand for --limit 1",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--all"
+          ],
+          "desc": "include the run timeline, not just checkpoints",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--oneline"
+          ],
+          "desc": "compact one-line-per-entry output (human only)",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--time"
+          ],
+          "desc": "time display: relative|utc|local (human only)",
+          "default": "[ui].time",
+          "takes_value": true,
+          "value": "<mode>"
+        }
+      ]
+    },
+    {
+      "name": "changes",
+      "summary": "summarize changes between two states",
+      "usage": [
+        "changes [range] [-- path...] [--stat|--name-only] [--no-renames]"
+      ],
+      "topic": "diff",
+      "operands": "path-filter",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--stat"
+          ],
+          "desc": "one-line change-count summary (human only)",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--name-only"
+          ],
+          "desc": "print only changed paths (human only)",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--no-renames"
+          ],
+          "desc": "disable rename detection",
+          "takes_value": false
+        }
+      ]
+    },
+    {
+      "name": "diff",
+      "summary": "show a diff between two states",
+      "usage": [
+        "diff [range] [-- path...] [--context <n>] [--stat] [--no-renames]"
+      ],
+      "topic": "diff",
+      "operands": "path-filter",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--context"
+          ],
+          "desc": "lines of context around each change",
+          "default": "[checkpoint].diff_context",
+          "takes_value": true,
+          "value": "<n>"
+        },
+        {
+          "spellings": [
+            "--stat"
+          ],
+          "desc": "one-line change-count summary (human only)",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--no-renames"
+          ],
+          "desc": "disable rename detection",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--algorithm"
+          ],
+          "desc": "select the diff engine (histogram|myers)",
+          "default": "[diff].algorithm",
+          "takes_value": true,
+          "value": "<name>"
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "summary": "restore selected paths from an immutable state",
+      "usage": [
+        "restore <state-ref> -- <path...>",
+        "restore [--dry-run|--apply] <state-ref> -- <path...>",
+        "restore [--dry-run|--apply] --all <state-ref>"
+      ],
+      "topic": "restore",
+      "operands": "path-filter",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--apply"
+          ],
+          "desc": "perform the restore (the only mutating mode)",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--dry-run"
+          ],
+          "desc": "preview explicitly; identical to the default",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--all"
+          ],
+          "desc": "select all proven restorable scope instead of paths",
+          "takes_value": false
+        }
+      ]
+    },
+    {
+      "name": "run",
+      "summary": "run a command with caching and supervised history",
+      "usage": [
+        "run [run flags] -- <command> [args...]",
+        "run <subcommand> [flags]   (ls, log, show, rm, explain)"
+      ],
+      "topic": "run",
+      "exit_note": "exit code: awa run returns the wrapped command's own exit code after a hit or a miss. Because that can overlap awa's 1-6 codes, use --json (run.exit_origin) or the run log to tell an awa-origin failure from a child result.",
+      "operands": "wrapped-command",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--display"
+          ],
+          "desc": "terminal display: full|summary|tail:<n>|none",
+          "default": "full",
+          "takes_value": true,
+          "value": "<mode>"
+        },
+        {
+          "spellings": [
+            "--record"
+          ],
+          "desc": "execute and record evidence, never a reusable hit",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--refresh"
+          ],
+          "desc": "ignore any cache hit and write a fresh entry",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--no-cache"
+          ],
+          "desc": "do not read or write the cache",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--no-cache-failures"
+          ],
+          "desc": "do not cache a failing command",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--scope"
+          ],
+          "desc": "replace the run input scope",
+          "takes_value": true,
+          "value": "<path>"
+        },
+        {
+          "spellings": [
+            "--include"
+          ],
+          "desc": "add an input path to the scope",
+          "takes_value": true,
+          "value": "<path>"
+        },
+        {
+          "spellings": [
+            "--exclude"
+          ],
+          "desc": "remove an input path from the scope",
+          "takes_value": true,
+          "value": "<path>"
+        },
+        {
+          "spellings": [
+            "--cwd"
+          ],
+          "desc": "run the command in this directory (inside the root)",
+          "takes_value": true,
+          "value": "<path>"
+        },
+        {
+          "spellings": [
+            "--allow-skipped-inputs"
+          ],
+          "desc": "allow a cache hit when some inputs were skipped",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--allow-tty"
+          ],
+          "desc": "attach the terminal to the child; forces non-cacheable",
+          "takes_value": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "ls",
+          "summary": "list reusable runs for the current state",
+          "usage": [
+            "run ls [--all] [--near] [-n <count>] [--command <substr>] [--time <mode>]"
+          ],
+          "topic": "run",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json",
+            "--trust-mode/--strict"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "--all"
+              ],
+              "desc": "also list non-reusable runs, each with a reason",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--near"
+              ],
+              "desc": "add the nearest near-miss section",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "-n",
+                "--limit"
+              ],
+              "desc": "show at most <count> entries",
+              "takes_value": true,
+              "value": "<count>"
+            },
+            {
+              "spellings": [
+                "--command"
+              ],
+              "desc": "filter to runs whose command contains <substr>",
+              "takes_value": true,
+              "value": "<substr>"
+            },
+            {
+              "spellings": [
+                "--time"
+              ],
+              "desc": "time display: relative|utc|local (human only)",
+              "default": "[ui].time",
+              "takes_value": true,
+              "value": "<mode>"
+            }
+          ]
+        },
+        {
+          "name": "log",
+          "summary": "list recorded runs, newest first",
+          "usage": [
+            "run log [-n <count>] [--command <substr>] [--time <mode>]"
+          ],
+          "topic": "inspect",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "-n",
+                "--limit"
+              ],
+              "desc": "show at most <count> entries",
+              "takes_value": true,
+              "value": "<count>"
+            },
+            {
+              "spellings": [
+                "--command"
+              ],
+              "desc": "filter to runs whose command contains <substr>",
+              "takes_value": true,
+              "value": "<substr>"
+            },
+            {
+              "spellings": [
+                "--time"
+              ],
+              "desc": "time display: relative|utc|local (human only)",
+              "default": "[ui].time",
+              "takes_value": true,
+              "value": "<mode>"
+            }
+          ]
+        },
+        {
+          "name": "show",
+          "summary": "show one run's metadata and stored output",
+          "usage": [
+            "run show <id>|--last [--meta|--stdout|--stderr] [--tail <n>] [--grep <re>]"
+          ],
+          "topic": "inspect",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "--last"
+              ],
+              "desc": "select the most recent readable run",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--meta"
+              ],
+              "desc": "metadata only (no output)",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--stdout"
+              ],
+              "desc": "write the stored stdout stream",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--stderr"
+              ],
+              "desc": "write the stored stderr stream",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--tail"
+              ],
+              "desc": "only the last <n> lines of the selected output",
+              "takes_value": true,
+              "value": "<n>"
+            },
+            {
+              "spellings": [
+                "--grep"
+              ],
+              "desc": "only output lines matching <re>",
+              "takes_value": true,
+              "value": "<re>"
+            },
+            {
+              "spellings": [
+                "--time"
+              ],
+              "desc": "time display: relative|utc|local (human only; [ui].time is not read here)",
+              "default": "relative",
+              "takes_value": true,
+              "value": "<mode>"
+            }
+          ]
+        },
+        {
+          "name": "rm",
+          "summary": "delete stored runs by id or filter",
+          "usage": [
+            "run rm <id>... | (--command <substr> | --older-than <dur>) [--dry-run]"
+          ],
+          "topic": "inspect",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "--command"
+              ],
+              "desc": "delete runs whose command contains <substr>",
+              "takes_value": true,
+              "value": "<substr>"
+            },
+            {
+              "spellings": [
+                "--older-than"
+              ],
+              "desc": "delete runs older than <dur> (e.g. 720h)",
+              "takes_value": true,
+              "value": "<dur>"
+            },
+            {
+              "spellings": [
+                "--dry-run"
+              ],
+              "desc": "report what would be removed without deleting",
+              "takes_value": false
+            }
+          ]
+        },
+        {
+          "name": "explain",
+          "summary": "explain how the run cache would behave",
+          "usage": [
+            "run explain -- <command> [args...]",
+            "run explain --last",
+            "run explain --from-run <id> --to-now"
+          ],
+          "topic": "run",
+          "operands": "wrapped-command",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json",
+            "--trust-mode/--strict"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "--last"
+              ],
+              "desc": "explain the most recent recorded run",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--from-run"
+              ],
+              "desc": "explain a stored run's inputs against now (needs --to-now)",
+              "takes_value": true,
+              "value": "<id>"
+            },
+            {
+              "spellings": [
+                "--to-now"
+              ],
+              "desc": "compare the selected run's inputs to the current state",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--scope"
+              ],
+              "desc": "replace the run input scope (command mode)",
+              "takes_value": true,
+              "value": "<path>"
+            },
+            {
+              "spellings": [
+                "--include"
+              ],
+              "desc": "add an input path to the scope (command mode)",
+              "takes_value": true,
+              "value": "<path>"
+            },
+            {
+              "spellings": [
+                "--exclude"
+              ],
+              "desc": "remove an input path from the scope (command mode)",
+              "takes_value": true,
+              "value": "<path>"
+            },
+            {
+              "spellings": [
+                "--cwd"
+              ],
+              "desc": "resolve the key as if run in this directory (command mode)",
+              "takes_value": true,
+              "value": "<path>"
+            },
+            {
+              "spellings": [
+                "--refresh"
+              ],
+              "desc": "model run's --refresh policy (command mode)",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--no-cache"
+              ],
+              "desc": "model run's --no-cache policy (command mode)",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--no-cache-failures"
+              ],
+              "desc": "model run's --no-cache-failures policy (command mode)",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--allow-skipped-inputs"
+              ],
+              "desc": "model run's --allow-skipped-inputs policy (command mode)",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--allow-tty"
+              ],
+              "desc": "model run's --allow-tty stdin (command mode)",
+              "takes_value": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gc",
+      "summary": "garbage-collect unreferenced state",
+      "usage": [
+        "gc [--dry-run] [--committed] [--keep-last <n>] [--older-than <dur>]",
+        "gc [--runs-only|--checkpoints-only|--blobs-only]"
+      ],
+      "topic": "gc",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--dry-run"
+          ],
+          "desc": "show the plan without deleting anything",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--committed"
+          ],
+          "desc": "also reclaim state made redundant by git commits",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--keep-last"
+          ],
+          "desc": "retain the most recent <n> checkpoints",
+          "default": "policy default",
+          "takes_value": true,
+          "value": "<n>"
+        },
+        {
+          "spellings": [
+            "--older-than"
+          ],
+          "desc": "only reclaim entries older than <dur> (e.g. 720h)",
+          "takes_value": true,
+          "value": "<dur>"
+        },
+        {
+          "spellings": [
+            "--runs-only"
+          ],
+          "desc": "restrict collection to the run cache",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--checkpoints-only"
+          ],
+          "desc": "restrict collection to checkpoints",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--blobs-only"
+          ],
+          "desc": "restrict collection to the blob store",
+          "takes_value": false
+        }
+      ]
+    },
+    {
+      "name": "doctor",
+      "summary": "diagnose project and store health",
+      "usage": [
+        "doctor [--repair] [--strict]"
+      ],
+      "topic": "doctor",
+      "exit_note": "exit code: the diagnosis, not an awa failure. Healthy or warnings-only exits 0; unrepaired errors or unrepaired repairable findings exit 5.",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "flags": [
+        {
+          "spellings": [
+            "--repair"
+          ],
+          "desc": "restore safe awa-owned state where possible",
+          "takes_value": false
+        }
+      ]
+    },
+    {
+      "name": "config",
+      "summary": "inspect or edit configuration",
+      "usage": [
+        "config <subcommand>"
+      ],
+      "topic": "config",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "subcommands": [
+        {
+          "name": "path",
+          "summary": "show the shared and local config paths and which exist",
+          "usage": [
+            "config path"
+          ],
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ]
+        },
+        {
+          "name": "show",
+          "summary": "print a layer's raw contents (config show [shared|local])",
+          "usage": [
+            "config show [shared|local]"
+          ],
+          "topic": "config",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ]
+        },
+        {
+          "name": "effective",
+          "summary": "print the composed config plus each value's origin layer",
+          "usage": [
+            "config effective"
+          ],
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json",
+            "--trust-mode/--strict"
+          ]
+        },
+        {
+          "name": "validate",
+          "summary": "check that every active config layer is valid",
+          "usage": [
+            "config validate"
+          ],
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ]
+        },
+        {
+          "name": "template",
+          "summary": "print an annotated config template to stdout",
+          "usage": [
+            "config template"
+          ],
+          "operands": "none",
+          "capabilities": null
+        },
+        {
+          "name": "init",
+          "summary": "write a shared awa.toml or local .awa/config.toml scaffold",
+          "usage": [
+            "config init (--shared | --local) [--force]"
+          ],
+          "topic": "config",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--json"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "--shared"
+              ],
+              "desc": "write the shared, committable awa.toml",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--local"
+              ],
+              "desc": "write the private, untracked .awa/config.toml",
+              "takes_value": false
+            },
+            {
+              "spellings": [
+                "--force"
+              ],
+              "desc": "overwrite an existing config file",
+              "takes_value": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "state",
+      "summary": "resolve and compare state for the external provider",
+      "usage": [
+        "state <subcommand>"
+      ],
+      "topic": "integrations",
+      "operands": "none",
+      "capabilities": [
+        "--root",
+        "--config",
+        "--json",
+        "--trust-mode/--strict"
+      ],
+      "subcommands": [
+        {
+          "name": "resolve",
+          "summary": "resolve a state reference to a full immutable identity",
+          "usage": [
+            "state resolve <state-ref> [--json]"
+          ],
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json",
+            "--trust-mode/--strict"
+          ]
+        },
+        {
+          "name": "compare",
+          "summary": "compare two states for freshness (summary-only)",
+          "usage": [
+            "state compare <left>..<right> [--json]"
+          ],
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json",
+            "--trust-mode/--strict"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "docs",
+      "summary": "export the documentation this binary carries",
+      "usage": [
+        "docs <subcommand>"
+      ],
+      "operands": "none",
+      "capabilities": null,
+      "subcommands": [
+        {
+          "name": "export",
+          "summary": "write the binary's complete documentation bundle to a directory",
+          "usage": [
+            "docs export --output <directory>"
+          ],
+          "operands": "none",
+          "capabilities": null,
+          "flags": [
+            {
+              "spellings": [
+                "--output"
+              ],
+              "desc": "destination directory to create; it must not exist yet, and its parent must exist",
+              "takes_value": true,
+              "value": "<directory>"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "help",
+      "summary": "show operational help for a topic",
+      "usage": [
+        "help [topic]"
+      ],
+      "operands": "none",
+      "capabilities": null
+    },
+    {
+      "name": "version",
+      "summary": "print version and build information",
+      "usage": [
+        "version [--json]"
+      ],
+      "topic": "install",
+      "operands": "none",
+      "capabilities": [
+        "--json"
+      ]
+    }
+  ],
+  "global_options": [
+    {
+      "capability": "--root",
+      "spellings": [
+        {
+          "flag": "--root",
+          "value": "<path>"
+        }
+      ],
+      "help": "project root override"
+    },
+    {
+      "capability": "--config",
+      "spellings": [
+        {
+          "flag": "--config",
+          "value": "<path>"
+        }
+      ],
+      "help": "config file override"
+    },
+    {
+      "capability": "--json",
+      "spellings": [
+        {
+          "flag": "--json"
+        }
+      ],
+      "help": "emit schema-versioned JSON"
+    },
+    {
+      "capability": "--trust-mode/--strict",
+      "spellings": [
+        {
+          "flag": "--trust-mode",
+          "value": "<mode>"
+        },
+        {
+          "flag": "--strict"
+        }
+      ],
+      "help": "cache trust level (normal|strict|fast)"
+    },
+    {
+      "spellings": [
+        {
+          "flag": "-h"
+        },
+        {
+          "flag": "--help"
+        }
+      ],
+      "help": "show help"
+    }
+  ],
+  "exit_codes": {
+    "awa_owned": [
+      {
+        "code": 0,
+        "name": "success"
+      },
+      {
+        "code": 1,
+        "name": "generic-error"
+      },
+      {
+        "code": 2,
+        "name": "usage-error"
+      },
+      {
+        "code": 3,
+        "name": "not-found"
+      },
+      {
+        "code": 4,
+        "name": "config-error"
+      },
+      {
+        "code": 5,
+        "name": "state-action-required"
+      },
+      {
+        "code": 6,
+        "name": "lock-timeout"
+      },
+      {
+        "code": 130,
+        "name": "interrupted"
+      }
+    ],
+    "run_child_exit": {
+      "passthrough": true,
+      "overlaps_awa_range": true,
+      "origin_field": "data.run.exit_origin",
+      "interruption": {
+        "normal_command": 130,
+        "wrapped_child": "child signal-derived (e.g. 137 for SIGKILL)"
+      }
+    }
+  },
+  "help_topics": {
+    "canonical": [
+      {
+        "name": "agents",
+        "summary": "golden-path workflow for LLM/coding agents"
+      },
+      {
+        "name": "install",
+        "summary": "download, verify, upgrade, and identify the binary"
+      },
+      {
+        "name": "quickstart",
+        "summary": "initialize a project and run the first review loop"
+      },
+      {
+        "name": "workflows",
+        "summary": "structure a coding, review, spec, or fix loop"
+      },
+      {
+        "name": "status",
+        "summary": "read the dashboard: baseline, drift, git, reuse, next"
+      },
+      {
+        "name": "run",
+        "summary": "cache deterministic checks; hit/miss/replay model"
+      },
+      {
+        "name": "record",
+        "summary": "always-execute history for non-cacheable commands"
+      },
+      {
+        "name": "inspect",
+        "summary": "locate, read, verify, and delete stored run output"
+      },
+      {
+        "name": "checkpoints",
+        "summary": "user-authored worktree checkpoints"
+      },
+      {
+        "name": "diff",
+        "summary": "compare two states; default range latest..now"
+      },
+      {
+        "name": "restore",
+        "summary": "preview-first repair of selected paths from a stored state"
+      },
+      {
+        "name": "refs",
+        "summary": "now, latest, @-N, run:<id>:before/after, restore:<id>:before, A..B"
+      },
+      {
+        "name": "config",
+        "summary": "config schema, layers/precedence, and when to change it"
+      },
+      {
+        "name": "ignores",
+        "summary": "protected paths, .awaignore on, .gitignore off"
+      },
+      {
+        "name": "doctor",
+        "summary": "diagnose and (with --repair) repair local state"
+      },
+      {
+        "name": "gc",
+        "summary": "reclaim unreferenced checkpoints, runs, and blobs"
+      },
+      {
+        "name": "troubleshooting",
+        "summary": "symptom-to-command decision paths and recovery"
+      },
+      {
+        "name": "privacy",
+        "summary": "what .awa/ stores; keep it private and untracked"
+      },
+      {
+        "name": "integrations",
+        "summary": "use awa as a state/evidence provider for other local tools"
+      },
+      {
+        "name": "platform",
+        "summary": "supported platforms, filesystems, paths, and links"
+      },
+      {
+        "name": "json",
+        "summary": "envelope shape, partial-stream failure, exit origin"
+      },
+      {
+        "name": "exit-codes",
+        "summary": "stable process exit statuses 0–6 (plus 130 on interrupt)"
+      }
+    ],
+    "aliases": {
+      "agent": "agents",
+      "cache": "run",
+      "cfg": "config",
+      "changes": "diff",
+      "checkpoint": "checkpoints",
+      "configuration": "config",
+      "cp": "checkpoints",
+      "dashboard": "status",
+      "getting-started": "quickstart",
+      "history": "inspect",
+      "init": "quickstart",
+      "installation": "install",
+      "integration": "integrations",
+      "machine": "json",
+      "performance": "troubleshooting",
+      "provider": "integrations",
+      "recover": "restore",
+      "review": "workflows",
+      "rezonator": "integrations",
+      "run-cache": "run",
+      "scripting": "json",
+      "slow": "troubleshooting",
+      "start": "quickstart",
+      "state": "integrations",
+      "troubleshoot": "troubleshooting",
+      "undo": "restore",
+      "upgrade": "install",
+      "version": "install",
+      "workflow": "workflows"
+    }
+  }
+}

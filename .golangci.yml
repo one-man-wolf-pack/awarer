@@ -1,0 +1,71 @@
+# golangci-lint v2 configuration.
+#
+# Lean on purpose: it reinforces correctness, explicit errors, cancellation propagation,
+# and resource cleanup without noisy style churn. Add a linter only when it catches a
+# class of real defect; every enabled linter below has a one-line rationale.
+version: "2"
+
+linters:
+  # Start from the curated default set (errcheck, govet, ineffassign,
+  # staticcheck, unused) and add high-signal checks.
+  enable:
+    - misspell        # doc/comment typos
+    - unconvert       # redundant type conversions
+    - bodyclose       # unclosed HTTP/response bodies
+    # Cancellation propagation. forbidigo is the precise guard: it fails closed on any
+    # new context.Background()/TODO() minted below the entrypoint, which is the only way
+    # to detach request work from the user command's cancellation. fatcontext catches a
+    # context leaked through a loop.
+    - forbidigo       # bans context.Background()/context.TODO() below cmd/awa/main.go
+    - fatcontext      # no context derived in a loop in a way that leaks the chain
+    - durationcheck   # no accidental time.Duration * time.Duration multiplication
+    # Resource handling for the SQLite index layer.
+    - sqlclosecheck   # *sql.Rows/*sql.Stmt must be closed
+    - rowserrcheck    # *sql.Rows.Err() must be checked after iteration
+    # Correctness regression guards.
+    - copyloopvar     # guard against stale loop-variable captures
+    - makezero        # no append to a make([]T, n) that intended a zero-length slice
+    - wastedassign    # assigned-but-never-used values
+  # Left off deliberately rather than silenced, each for a reason that still holds:
+  #   errorlint — several sites compare with == against sql.ErrNoRows / io.EOF, which
+  #     database/sql and io return unwrapped, and the remaining %v→%w sites would change
+  #     error identity (the sqliteindex classifier maps raw codes to sentinels precisely
+  #     so callers do not observe the raw error). Per-site review, not a bulk rewrite.
+  #   contextcheck / containedctx — re-flag the documented bounded open-time index read
+  #     and the streaming-cursor structs that carry the scan context by design.
+  #   nilerr — flags intentional "swallow error, retain or skip state" returns.
+  #   gosec / usetesting / thelper — dominated by test TOCTOU, file-permission, and
+  #     variable-path findings and test-only nits.
+  #   exhaustive / gocritic — intentional default:-handled enum switches and deliberate
+  #     style (os.Exit after setup in main/TestMain); no correctness signal.
+  settings:
+    staticcheck:
+      checks:
+        - all
+    forbidigo:
+      # Replaces forbidigo's default fmt.Print* list: the only thing forbidden is minting
+      # a root context below the process entrypoint. The root is created once, in
+      # cmd/awa/main.go; tests/helpers and documented bounded open-time reads carry an
+      # explicit //nolint:forbidigo.
+      forbid:
+        - pattern: ^context\.Background$
+          msg: "do not mint a root context below the entrypoint; thread the command context down (root is cmd/awa/main.go). Test helpers and documented bounded open-time reads use //nolint:forbidigo."
+        - pattern: ^context\.TODO$
+          msg: "do not use context.TODO in production; thread the command context down."
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers may ignore errors where the test would fail anyway, and freely
+      # create a root context (there is no command context to inherit in a test).
+      - path: _test\.go
+        linters:
+          - errcheck
+          - forbidigo
+      # The single legitimate root context lives at the process entrypoint.
+      - path: cmd/awa/main\.go
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt

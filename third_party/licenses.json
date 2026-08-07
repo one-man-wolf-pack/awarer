@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "project_license": {
+    "spdx": "Apache-2.0",
+    "path": "LICENSE",
+    "digest": "blake3:3833fc3c91a379ff509b431db1f7fd40dea69a6614249f420ec62398957087b1"
+  },
+  "copyright_holder": "Zada Zorg",
+  "entries": [
+    {
+      "module_path": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:b562e0a9741dfeea930a625263ec776fc2259f2e57cfdc0228d69d282dbced34", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source"
+    },
+    {
+      "module_path": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64"],
+      "spdx": "BSD-3-Clause",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:1ce1073f53065d4510139c14fe0e2ac34876b44f3eb6f7583af60f9831f19051", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Not selected on windows/amd64; still a production obligation on the other five targets."
+    },
+    {
+      "module_path": "github.com/klauspost/cpuid/v2",
+      "version": "v2.0.12",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:c3ed7610ffcb1c2bab52920321958d46593bb56b73ef6ca7410e3f6bb9d74053", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source"
+    },
+    {
+      "module_path": "github.com/mattn/go-isatty",
+      "version": "v0.0.20",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:2f32127851725591addc7223bcfdf8b546785dba9c51648052c3037f3144742d", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Target-specific: selected only on darwin, freebsd, and windows (the non-linux terminal-detection path)."
+    },
+    {
+      "module_path": "github.com/ncruces/go-strftime",
+      "version": "v1.0.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:a0b14be31568009624bc043fef340ba2a715cf8365a1b0e111fe987b001a542a", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Target-specific: selected only on darwin, freebsd, and windows via modernc.org/sqlite's non-linux time path."
+    },
+    {
+      "module_path": "github.com/pelletier/go-toml/v2",
+      "version": "v2.4.3",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:c50abfa43fc2636333cf8e448658e48e411186f1bdc498f301b5bfd62914c379", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source"
+    },
+    {
+      "module_path": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:1dd9ee05b4ac372f047cf2c5072bac535612598c169270adee2c9f4333146b12", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Pseudo-version pin; LICENSE is the Go-authors BSD-3-Clause text at the pinned commit."
+    },
+    {
+      "module_path": "github.com/sabhiram/go-gitignore",
+      "version": "v0.0.0-20210923224102-525f6e181f06",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:d41db6fc8a50cb8e4308e5b04603a8501c9e94c24f5ea967f37afc540520c50b", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Pseudo-version pin; LICENSE is the MIT text at the pinned commit."
+    },
+    {
+      "module_path": "github.com/zeebo/blake3",
+      "version": "v0.2.4",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "CC0-1.0",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:683f985da6f07140197b387aa5593e6c7b8ee7af9bfee5fe814910dd236f8897", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "CC0-1.0 public-domain dedication; reproduced for attribution even though it imposes no obligation."
+    },
+    {
+      "module_path": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:47cc53904d123359488b5047a40d89ab9046e3705e4fb1268706728d64ae5e4c", "must_ship": true},
+        {"path": "PATENTS", "role": "patents", "digest": "blake3:c414e0a879208f2e016b60c5c58d2b9b574da27f75af9c49736bb91698645096", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Go project BSD-3-Clause plus the additional PATENTS grant, which is reproduced alongside the license."
+    },
+    {
+      "module_path": "modernc.org/libc",
+      "version": "v1.74.1",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause AND MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:7b09062908dd8ef0903e2e16a44d620d26d55052da2c8accb1028f9160bc8ba4", "must_ship": true},
+        {"path": "LICENSE-3RD-PARTY.md", "role": "third_party", "digest": "blake3:3abf2a03789238d9b2fa187438e20d2fbb43fd6c49fa73996a4615754f4a93b9", "must_ship": true},
+        {"path": "AUTHORS", "role": "authors", "digest": "blake3:0cc8264d17f9a3e9331e6efaf3a250611394943b58a34358d49e8a55216427b7", "must_ship": false}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Module is BSD-3-Clause but transpiles musl (MIT) and Go (BSD-3-Clause) sources; LICENSE-3RD-PARTY.md carries those obligations and is reproduced."
+    },
+    {
+      "module_path": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:960de79434ad397e85cff7ee9cf760e0890f1ab1f5d01193dc489d0912c1cdf4", "must_ship": true},
+        {"path": "AUTHORS", "role": "authors", "digest": "blake3:dc5a55b6eee890808eaa90e821b2ff4749dcc98a6407754cbab863393c57298e", "must_ship": false}
+      ],
+      "disposition": "must_appear_in_binary_and_source"
+    },
+    {
+      "module_path": "modernc.org/memory",
+      "version": "v1.11.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:885c5ca99037aacc6acdd01116e2a4f808fcc1afd713ea768e8aacf95b7bc7bc", "must_ship": true},
+        {"path": "LICENSE-GO", "role": "license", "digest": "blake3:ac99b752b48f759b7b91c0a640d40434d37bf5d4c0b449240f47173a27eaf904", "must_ship": true},
+        {"path": "LICENSE-MMAP-GO", "role": "license", "digest": "blake3:c22b79d9ec54f496ef5d292ff74c6cd1765b5b8953cb3661ae5e35ff69b7a732", "must_ship": true},
+        {"path": "AUTHORS", "role": "authors", "digest": "blake3:4a331f81cb011003dde6480cb0fd9521c77b2d2af54a296c708ca9f54c58dc5e", "must_ship": false},
+        {"path": "LICENSE-LOGO", "role": "notice", "digest": "blake3:a64503acc03a64d9cc3d07ee93d18ca331576defd0934a3119061c8bde7c29a0", "must_ship": false}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "Module and its vendored Go/mmap-go sources are all BSD-3-Clause (LICENSE, LICENSE-GO, LICENSE-MMAP-GO). LICENSE-LOGO only references a project logo image that is not linked into awa, so it is tracked but not shipped."
+    },
+    {
+      "module_path": "modernc.org/sqlite",
+      "version": "v1.55.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:dc4c35346f1f880875f6d3cc1c9fc0dd5804a1980d2823db0197e21d95c142e6", "must_ship": true},
+        {"path": "SQLITE-LICENSE", "role": "license", "digest": "blake3:27fdeed13744267a639c3f868612f7d4f792eff3d1821e69ebb4a32a90582b9e", "must_ship": true},
+        {"path": "AUTHORS", "role": "authors", "digest": "blake3:c8c101ebaa170a0b291a95bdfacbd7e866c50836cd72095972c6f65f55741343", "must_ship": false}
+      ],
+      "disposition": "must_appear_in_binary_and_source",
+      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (SQLITE-LICENSE). Both are reproduced verbatim."
+    }
+  ]
+}

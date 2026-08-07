@@ -1,0 +1,168 @@
+name: Release
+
+# Release Please must keep creating the release with a GitHub App installation token: a
+# release created with GITHUB_TOKEN starts no workflow, and this one would silently never
+# run. GoReleaser then updates that same release, which emits no second created event.
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+# An interpolated `${{ }}` value becomes shell source, and this one is event data, so
+# every shell below reads it as "$RELEASE_TAG" instead.
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+jobs:
+  release:
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    timeout-minutes: 90
+    steps:
+      # fetch-depth: 0 is required twice over: GoReleaser refuses to release unless HEAD
+      # is exactly at a tag, and the ancestry proof below reads refs/remotes/origin/main,
+      # which a shallow checkout does not create.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+
+      - name: Prove the release tag and its commit
+        run: |
+          set -euo pipefail
+          : "${RELEASE_TAG:?the release event supplied no tag}"
+          printf '%s' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || {
+            echo "$RELEASE_TAG is not a strict vMAJOR.MINOR.PATCH release tag"
+            exit 1
+          }
+          tagged=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          head=$(git rev-parse --verify HEAD)
+          if [ "$tagged" != "$head" ]; then
+            echo "the checkout is at $head but $RELEASE_TAG names $tagged"
+            exit 1
+          fi
+          git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null || {
+            echo "refs/remotes/origin/main is absent; ancestry cannot be proved from this checkout"
+            exit 1
+          }
+          git merge-base --is-ancestor "$head" refs/remotes/origin/main || {
+            echo "$RELEASE_TAG ($head) is not an ancestor of origin/main"
+            exit 1
+          }
+          echo "$RELEASE_TAG is $head, and it is on main"
+
+      # The licence check `just release-gate` runs inspects the module graph with
+      # GOPROXY=off, so a populated module cache is its precondition rather than
+      # something it may fetch. Neither command writes go.sum, which the cleanliness
+      # proof below depends on.
+      - name: hydrate the selected module graph
+        run: |
+          go mod download
+          go list -m all > /dev/null
+
+      - name: just release-gate
+        run: just release-gate
+
+      # Go's VCS stamping records vcs.modified, which makes `awa docs export` withhold
+      # its source commit. Repairing this by discarding the changes would build a binary
+      # from source the tag does not contain.
+      - name: Prove the gate left the worktree clean
+        run: |
+          set -euo pipefail
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            echo "the release gate modified the worktree; a release must be built from the tagged source exactly:"
+            printf '%s\n' "$status"
+            exit 1
+          fi
+          echo "worktree clean at $RELEASE_TAG"
+
+      # GORELEASER_CURRENT_TAG: without it GoReleaser asks git which tag points at HEAD,
+      # so a second tag on the same commit could decide the version stamped in.
+      - name: Build and attach the release assets
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+
+  site:
+    needs: release
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      SITE_RELEASE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+
+      # GoReleaser names assets with the version, which is the tag without its leading
+      # `v`. An exact name and not a glob, so a missing asset fails rather than resolving
+      # to something else. RUNNER_TEMP and not the workspace: an untracked artifact in
+      # the checkout would reach Wrangler below as an uncommitted change.
+      - name: Fetch the released binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_BIN_DIR: ${{ runner.temp }}/relbin
+        run: |
+          set -euo pipefail
+          archive="awa_${RELEASE_TAG#v}_linux_amd64.tar.gz"
+          mkdir -p "$RELEASE_BIN_DIR"
+          gh release download "$RELEASE_TAG" --pattern "$archive" --dir "$RELEASE_BIN_DIR"
+          tar -xzf "$RELEASE_BIN_DIR/$archive" -C "$RELEASE_BIN_DIR" awa
+          chmod +x "$RELEASE_BIN_DIR/awa"
+
+      - name: just site
+        env:
+          AWA_BIN: ${{ runner.temp }}/relbin/awa
+        run: just site
+
+      - name: Set up the Node runtime Wrangler needs
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      # --branch names Cloudflare's production branch. Omitted, Wrangler asks git, and a
+      # deployment attributed to any other branch is taken as a preview: it never serves
+      # the custom hostname.
+      - name: Upload the site to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.118.0 pages deploy site/dist \
+            --project-name="$CLOUDFLARE_PAGES_PROJECT" \
+            --branch=main

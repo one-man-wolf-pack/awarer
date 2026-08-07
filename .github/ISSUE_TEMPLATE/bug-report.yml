@@ -1,0 +1,119 @@
+name: Defect or documentation problem
+description: Report something awa gets wrong, or documentation that is missing, wrong, or misleading.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. A report someone else can reproduce is worth more than
+        a polished one, so fill in what you have — only four of the fields below are
+        required, and the rest help when you can answer them.
+
+        `awa` is issue-driven: this report is the contribution channel, and external pull
+        requests are not accepted. See
+        [CONTRIBUTING.md](https://github.com/one-man-wolf-pack/awarer/blob/main/CONTRIBUTING.md).
+
+        **Do not report a vulnerability here.** Use the private route in
+        [SECURITY.md](https://github.com/one-man-wolf-pack/awarer/blob/main/SECURITY.md).
+
+        **Do not paste secrets.** Tokens, keys, and private repository content do not
+        belong in a public issue. Redact them before you copy anything in.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      description: >-
+        Pick the closer fit; it decides which of the fields below apply to you. Choose
+        the behavior option if you are unsure.
+      options:
+        - awa behaves incorrectly
+        - Documentation is missing, wrong, or misleading
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: awa version
+      description: >-
+        Reporting a behavior defect? Paste the full output of `awa version` — without it
+        a defect usually cannot be placed against a release. Leave empty for a
+        documentation problem, or if you cannot run the binary.
+      placeholder: awa 0.1.0 (a1b2c3d, go1.26.5)
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Where the binary came from
+      description: >-
+        For a behavior defect, tell us how the binary you saw it with was obtained.
+        Leave unset for a documentation problem.
+      options:
+        - A GitHub release archive
+        - Built from source
+        - Something else
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      description: >-
+        For a behavior defect, the platform you saw it on. Leave empty for a
+        documentation problem.
+      placeholder: macOS 15.5 arm64
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction, or the documentation location
+      description: >-
+        For a behavior defect: the shortest sequence that shows the problem, starting
+        from a state someone else can create, with the exact commands. For a
+        documentation problem: the page, section, or `awa help` topic, and the passage
+        quoted.
+      placeholder: |
+        1. awa checkpoint -m "before"
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: >-
+        For a behavior defect: the actual result — the error message, exit status, or
+        output. For a documentation problem: what the passage told you, or failed to.
+        Quote rather than describe where you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: >-
+        The result you were after, or — for a documentation problem — what the passage
+        should have told you.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: What this costs you
+      description: >-
+        What it blocks, corrupts, slows down, or makes unreliable in real use, and
+        whether you have a way around it. This is what usually decides how urgent the
+        problem is.
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant output or configuration
+      description: >-
+        Whatever you have, redacted: the output of the failing command, `awa doctor`, or
+        the relevant part of `awa.toml` or `.awa/config.toml`. For a behavior defect this
+        is usually what decides the triage.
+      render: text

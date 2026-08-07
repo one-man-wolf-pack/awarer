@@ -1,0 +1,57 @@
+{{ define "content" }}
+{{- with .Landing }}
+<section class="hero">
+  <h1>{{ .Headline }}</h1>
+  <p>{{ .Subhead }}</p>
+  <div class="hero-actions">
+    {{- range .HeroActions }}
+    <a class="button{{ if .Primary }} button-primary{{ end }}" href="{{ .Route }}">{{ .Label }}</a>
+    {{- end }}
+  </div>
+</section>
+
+<section class="section">
+  <h2>The loop</h2>
+  <p class="section-note">{{ .Workflow.Caption }}</p>
+  <div class="workflow">
+    {{- range .Workflow.Steps }}
+    <div><code>{{ .Command }}</code><span>{{ .Comment }}</span></div>
+    {{- end }}
+  </div>
+</section>
+
+<section class="section">
+  <h2>What it looks like</h2>
+  <figure>
+    <pre class="terminal"><code>{{ range .Terminal.Lines }}{{ . }}
+{{ end }}</code></pre>
+    <figcaption>{{ .Terminal.Caption }}</figcaption>
+  </figure>
+</section>
+
+<section class="section">
+  <h2>Find the answer</h2>
+  <p class="section-note">Every card links to a page the binary itself carries.</p>
+  <ul class="cards">
+    {{- range .Cards }}
+    <li class="card">
+      <h3><a href="{{ .Route }}">{{ .Question }}</a></h3>
+      <p>{{ .Answer }}</p>
+      <span class="card-doc">{{ .DocTitle }}</span>
+    </li>
+    {{- end }}
+  </ul>
+</section>
+
+<section class="section">
+  <h2>Install</h2>
+  <p class="section-note">{{ .InstallNote }}</p>
+  <div class="hero-actions">
+    {{- range .InstallActions }}
+    <a class="button{{ if .Primary }} button-primary{{ end }}" href="{{ .Route }}">{{ .Label }}</a>
+    {{- end }}
+    <a class="button" href="{{ $.Site.ReleasesURL }}">Release archives</a>
+  </div>
+</section>
+{{- end }}
+{{ end }}

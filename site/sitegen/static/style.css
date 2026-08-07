@@ -1,0 +1,662 @@
+/* awarer site styles.
+ *
+ * One stylesheet, no imports, no asset references, no web fonts: the page must
+ * render completely from bytes this repository checked in, on a first visit,
+ * with no second request. Sizes are rem-based so a reader's browser setting is
+ * honoured; nothing is scaled to the viewport, which would make text unreadable
+ * on a narrow screen.
+ *
+ * Themes: the light tokens are the base. A dark system preference applies the
+ * dark tokens unless the reader explicitly chose light, and an explicit choice
+ * always wins over the system in both directions.
+ */
+
+:root {
+  --bg: #ffffff;
+  --bg-sunken: #f4f6f8;
+  --bg-raised: #ffffff;
+  --fg: #14181d;
+  --fg-muted: #4d5866;
+  --border: #d6dce4;
+  --border-strong: #b7c1cd;
+  --accent: #1d4ed8;
+  --accent-fg: #ffffff;
+  --code-bg: #f4f6f8;
+  --term-bg: #232b34;
+  --term-fg: #e9edf2;
+  --warn-bg: #fff4e5;
+  --warn-fg: #6b4300;
+  --warn-border: #e0b070;
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  --measure: 44rem;
+  --page: 74rem;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141a;
+    --bg-sunken: #171d25;
+    --bg-raised: #171d25;
+    --fg: #e9edf2;
+    --fg-muted: #a3aebc;
+    --border: #2b333d;
+    --border-strong: #3c4855;
+    --accent: #8ab4ff;
+    --accent-fg: #10141a;
+    --code-bg: #1c232c;
+    --term-bg: #05080c;
+    --term-fg: #e9edf2;
+    --warn-bg: #2e2413;
+    --warn-fg: #f0d199;
+    --warn-border: #6a5a34;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #10141a;
+  --bg-sunken: #171d25;
+  --bg-raised: #171d25;
+  --fg: #e9edf2;
+  --fg-muted: #a3aebc;
+  --border: #2b333d;
+  --border-strong: #3c4855;
+  --accent: #8ab4ff;
+  --accent-fg: #10141a;
+  --code-bg: #1c232c;
+  --term-bg: #05080c;
+  --term-fg: #e9edf2;
+  --warn-bg: #2e2413;
+  --warn-fg: #f0d199;
+  --warn-border: #6a5a34;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9375em;
+}
+
+code {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.05em 0.25em;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 10;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+.masthead {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.masthead-inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0.6rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 650;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.brand img {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.masthead nav {
+  display: flex;
+  gap: 1rem;
+  margin-left: auto;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.masthead nav a {
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.masthead nav a:hover,
+.masthead nav a[aria-current="page"] {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.release {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.theme-toggle {
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--fg-muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+
+/* Preview banner ---------------------------------------------------------- */
+
+.preview-banner {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border-bottom: 1px solid var(--warn-border);
+  font-size: 0.875rem;
+}
+
+.preview-banner p {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+}
+
+/* Page shells ------------------------------------------------------------- */
+
+.page {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+.prose {
+  max-width: var(--measure);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.25;
+  margin: 2rem 0 0.75rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 1.3rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+h3 {
+  font-size: 1.1rem;
+}
+
+h4 {
+  font-size: 1rem;
+}
+
+/* Landing ----------------------------------------------------------------- */
+
+.hero {
+  max-width: var(--measure);
+  padding-bottom: 0.5rem;
+}
+
+.hero h1 {
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+}
+
+.hero p {
+  color: var(--fg-muted);
+  font-size: 1.0625rem;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+}
+
+.button {
+  display: inline-block;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.9rem;
+  text-decoration: none;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.section {
+  margin-top: 2.75rem;
+}
+
+.section > h2 {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+  font-size: 1.15rem;
+}
+
+.section-note {
+  color: var(--fg-muted);
+  margin: 0.25rem 0 1rem;
+  max-width: var(--measure);
+}
+
+.workflow {
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.workflow div {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  align-items: baseline;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-raised);
+}
+
+.workflow code {
+  background: none;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+.workflow span {
+  color: var(--fg-muted);
+  font-size: 0.9375rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 0.85rem 0.95rem;
+}
+
+.card h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.card h3 a {
+  text-decoration: none;
+}
+
+.card h3 a:hover {
+  text-decoration: underline;
+}
+
+.card p {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 0.9375rem;
+}
+
+.card .card-doc {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--fg-muted);
+}
+
+.terminal {
+  background: var(--term-bg);
+  color: var(--term-fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  line-height: 1.45;
+  font-size: 0.875rem;
+}
+
+figure {
+  margin: 0;
+}
+
+figcaption {
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+  margin-top: 0.5rem;
+}
+
+/* Document index ---------------------------------------------------------- */
+
+.group {
+  margin-top: 2rem;
+}
+
+.group h2 {
+  border-top: 0;
+  padding-top: 0;
+  margin-bottom: 0.25rem;
+  font-size: 1.15rem;
+}
+
+.doc-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+}
+
+.doc-list li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-raised);
+}
+
+.doc-list a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.doc-list a:hover {
+  text-decoration: underline;
+}
+
+.doc-list p {
+  margin: 0.2rem 0 0;
+  color: var(--fg-muted);
+  font-size: 0.9375rem;
+}
+
+/* Document page ----------------------------------------------------------- */
+
+.doc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+}
+
+.doc-nav {
+  font-size: 0.9375rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.doc-nav h2 {
+  font-size: 1rem;
+  border-top: 0;
+  padding-top: 0;
+  margin: 0 0 0.5rem;
+}
+
+.doc-nav h3 {
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin: 1.25rem 0 0.4rem;
+}
+
+.doc-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.doc-nav a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  display: block;
+  padding: 0.1rem 0;
+}
+
+.doc-nav a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+/* The current page is marked by paint alone. A heavier weight changes the text's
+ * advance width, so the long titles in this narrow column rewrap the moment
+ * their own page is opened — and a title sitting near its wrap threshold gains a
+ * line, moving every label below it. The underline is thickened and offset
+ * rather than plain, because a plain one is exactly what :hover above already
+ * draws: the reader must still be able to tell the current page from whichever
+ * link the pointer happens to rest on. */
+.doc-nav a[aria-current="page"] {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+}
+
+.breadcrumbs {
+  font-size: 0.875rem;
+  color: var(--fg-muted);
+  margin-bottom: 0.5rem;
+}
+
+.breadcrumbs a {
+  color: var(--fg-muted);
+}
+
+.doc-meta {
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  margin: 0 0 1.5rem;
+}
+
+.outline {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.9rem;
+  margin: 0 0 1.75rem;
+  background: var(--bg-sunken);
+  font-size: 0.9375rem;
+}
+
+.outline summary {
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+
+.outline ul {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.doc-content h2:first-of-type {
+  margin-top: 1.5rem;
+}
+
+.doc-content ul,
+.doc-content ol {
+  padding-left: 1.25rem;
+}
+
+.doc-content li + li {
+  margin-top: 0.2rem;
+}
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9375rem;
+}
+
+/* On a wide screen the corpus navigation moves into a sticky left column. The
+ * markup keeps the article first so a phone shows the document, not 38 links,
+ * above the fold. */
+@media (min-width: 60rem) {
+  .doc-layout {
+    grid-template-columns: 15rem minmax(0, 1fr);
+  }
+
+  .doc-main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .doc-nav {
+    grid-column: 1;
+    grid-row: 1;
+    position: sticky;
+    top: 1rem;
+    align-self: start;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .doc-nav h2 {
+    position: absolute;
+    left: -9999px;
+  }
+
+  .doc-nav h3:first-of-type {
+    margin-top: 0;
+  }
+}
+
+/* Footer ------------------------------------------------------------------ */
+
+.colophon {
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+}
+
+.colophon-inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2.5rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.colophon a {
+  color: var(--accent);
+}

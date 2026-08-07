@@ -1,0 +1,239 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# CI orchestrates only: every shared validation command lives in the justfile, except the
+# commit range below, which is the one category a checkout cannot carry and which calls
+# the same checked-in script the local hook calls. Each evidence category runs once per
+# event, in the one job that owns it, which is why the lanes call the internal recipes
+# directly — `just check` or `just release-gate` here would re-run what a sibling job
+# already proved.
+jobs:
+  check:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The co-author step walks the range this event introduced, which a depth-1
+          # clone does not contain: the base commit is unreachable and `git rev-list`
+          # fails rather than narrowing to HEAD.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+      # The co-author rule over every commit this event introduced, through the same
+      # check the local commit-msg hook runs. The SHAs cross as environment values rather
+      # than being interpolated into shell text, and each message is piped to the check
+      # rather than split into shell words.
+      #
+      # An unresolvable range must fail the step rather than yield no commits, so
+      # `git rev-list` heads a pipeline (`set -e` with pipefail sees its status) instead
+      # of sitting in a `for` word list, where a failed substitution leaves the loop
+      # empty and the step green. Both identities are required for the same reason: an
+      # empty base would make `..HEAD` mean `HEAD..HEAD` and check nothing at all.
+      #
+      # A push that creates the branch reports all zeros in place of a base commit, which
+      # is what the first push into an empty repository sends. That is not a commit id and
+      # no range can be built from it, so this one value selects everything reachable from
+      # the head. It is matched literally: any other unresolvable base is still a failure.
+      - name: co-author trailers
+        env:
+          COMMIT_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          COMMIT_RANGE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          : "${COMMIT_RANGE_BASE:?the event supplied no base commit}"
+          : "${COMMIT_RANGE_HEAD:?the event supplied no head commit}"
+          initial_push=0000000000000000000000000000000000000000
+          if [ "$COMMIT_RANGE_BASE" = "$initial_push" ]; then
+            range="$COMMIT_RANGE_HEAD"
+          else
+            range="$COMMIT_RANGE_BASE".."$COMMIT_RANGE_HEAD"
+          fi
+          git rev-list --reverse "$range" | while read -r sha; do
+            git show -s --format=%B "$sha" | ./scripts/check-co-authors.sh || {
+              echo "commit $sha does not satisfy the co-author rule"
+              exit 1
+            }
+          done
+          echo "co-author rule applied to $range"
+      # The licence check inspects the module graph with GOPROXY=off, so a populated
+      # module cache is its precondition rather than something it may fetch. Both
+      # commands are needed and neither writes go.sum: `go mod download` extracts the
+      # module zips whose LICENSE bytes are audited, and `go list -m all` fetches the
+      # rest of the graph's go.mod files. (`go mod download all` would also work but
+      # records extra zip hashes in go.sum, dirtying the worktree.)
+      - name: hydrate the selected module graph
+        run: |
+          go mod download
+          go list -m all > /dev/null
+      - name: just _gate
+        run: just _gate
+      # One licence scope per event: the two conditions are this workflow's two triggers,
+      # so no event gets both and none gets neither.
+      - name: just _licenses-fast
+        if: github.event_name == 'pull_request'
+        run: just _licenses-fast
+      - name: just _licenses-full
+        if: github.event_name == 'push'
+        run: just _licenses-full
+
+  # staticcheck, govulncheck, and actionlint reach no offline evidence reader, so this
+  # lane needs no module-graph hydration step.
+  analyze:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+      - name: just _analyze
+        run: just _analyze
+
+  crossbuild:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+      - name: just _crossbuild
+        run: just _crossbuild
+
+  # Runtime proof on the shipped platform whose filesystem semantics differ most from the
+  # development ones: Windows has no openat, no O_NOFOLLOW, and different rules for
+  # removing an open or read-only file, so a cross-build's compile confidence is not
+  # enough for the packages below.
+  #
+  # Symlink capability is a fail-loud precondition. Windows grants the create-symlink
+  # privilege only in developer mode or to an elevated process, and a run whose symlink
+  # cases all skipped would report green while proving nothing about the boundary this
+  # lane exists for. If the image stops granting it, this lane must go red rather than
+  # have its posture relaxed to obtain the privilege.
+  #
+  # Secret-free by decision. It runs `go test` directly and installs no task runner for
+  # the same reason: this lane is a platform-evidence inventory owned by the workflow,
+  # not a second cross-platform command surface.
+  windows-portability:
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 15
+    env:
+      AWA_REQUIRE_SYMLINK_TESTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Runs through the same os.Symlink the tests use, so the preflight cannot pass
+      # while the suite's links fail for a reason a shell-level probe would miss.
+      - name: preflight (symbolic link capability)
+        run: go test ./internal/infra/worktreemut/... -run TestSymlinkCapability -v
+      - name: go test (filesystem primitives, worktree mutator, checkpoint store, state resolution and comparison, documentation export, site generator)
+        run: go test ./internal/infra/fsx/... ./internal/infra/worktreemut/... ./internal/infra/checkpointjson/... ./internal/app/changes/... ./internal/app/diff/... ./internal/app/state/... ./internal/app/stateprovider/... ./internal/app/docsexport/... ./site/...
+
+  # Runtime proof for the other shipped platform this repository never runs on. FreeBSD
+  # compiles the same Unix implementations as darwin and linux, so what needs observing
+  # is not a different algorithm but what a cross-build cannot see: that those syscalls
+  # behave as the shared code assumes, and that FreeBSD's own symlink errno — open(2)
+  # reports EMLINK where POSIX reports ELOOP — reaches the classification the durable
+  # stores and the restore mutator depend on.
+  #
+  # This is the one job on an ordinary GitHub-hosted runner rather than the Blacksmith
+  # labels the rest of the file uses: the guest needs the host's nested virtualization,
+  # which is a property of the runner image and not something a label alias promises. It
+  # runs a third-party virtual machine, so it stays read-only and secret-free by decision.
+  #
+  # Symlink capability is a fail-loud precondition here for the same reason it is on
+  # Windows. GOTOOLCHAIN=local is set before anything runs, so the toolchain the platform
+  # packages must satisfy go.mod on its own — an insufficient one fails loudly at
+  # hydration instead of being silently downloaded, which would make this job evidence
+  # about a Go the platform does not ship. Modules are hydrated while the network is
+  # available; the test command then runs with the proxy off.
+  freebsd-portability:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: FreeBSD 15.1 (x86_64) focused runtime suite
+        uses: vmactions/freebsd-vm@77ed28d336d03fe19a3f4f7266c1d2c4714dd79d # v1.5.2
+        with:
+          release: "15.1"
+          arch: x86_64
+          usesh: true
+          # Nothing produced inside the VM is consumed on the host; the evidence is the
+          # job's own conclusion.
+          copyback: false
+          prepare: |
+            pkg install -y go126
+          run: |
+            set -eu
+            export PATH=/usr/local/go126/bin:$PATH
+            export GOTOOLCHAIN=local
+            export AWA_REQUIRE_SYMLINK_TESTS=1
+            freebsd-version
+            uname -m
+            go version
+            go mod download
+            go test ./internal/infra/worktreemut/... -run TestSymlinkCapability -v
+            GOPROXY=off GOFLAGS=-mod=readonly go test \
+              ./internal/infra/fsx/... \
+              ./internal/infra/worktreemut/... \
+              ./internal/infra/worktreefs/... \
+              ./internal/infra/projfs/... \
+              ./internal/infra/sqliteindex/... \
+              ./internal/infra/blobstore/... \
+              ./internal/infra/checkpointjson/... \
+              ./internal/infra/manifestjsonl/... \
+              ./internal/infra/runstore/... \
+              ./internal/infra/restorestore/... \
+              ./internal/infra/lockfile/... \
+              ./internal/app/scanner/... \
+              ./internal/app/restore/... \
+              ./internal/app/doctor/... \
+              ./internal/app/docsexport/...
+
+  # The two suites no pull request pays for, in one job because they share one
+  # precondition. It builds a binary for its own use and publishes nothing; packaging and
+  # checksums belong to the Release workflow.
+  release-evidence:
+    if: github.event_name == 'push'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.57.0"
+      - name: just stress
+        run: just stress
+      - name: just _smoke
+        run: just _smoke

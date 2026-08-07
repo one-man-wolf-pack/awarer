@@ -1,0 +1,10 @@
+# Local commit-message feedback. Optional, explicit, and fast.
+#
+# Installation is a deliberate act (`lefthook install`); nothing here installs itself. The
+# Validate workflow applies the same check to every commit a push or pull request
+# introduces, so this file cannot make a nonconforming commit pass the remote policy, and
+# its absence cannot make a conforming one fail — it only makes the answer arrive sooner.
+commit-msg:
+  jobs:
+    - name: co-author-trailers
+      run: ./scripts/check-co-authors.sh "{1}"

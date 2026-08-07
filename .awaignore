@@ -1,0 +1,8 @@
+# Local build and validation artifacts. Gitignore is intentionally not used as
+# awa scan policy, so keep command-generated noise explicit here.
+/awa
+/site/dist/
+*.test
+*.out
+coverage.txt
+.DS_Store

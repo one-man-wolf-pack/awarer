@@ -1,0 +1,63 @@
+{{- /*
+The shared document shell. Every value interpolated here comes from the export
+manifest or the typed landing model, and html/template escapes all of it; the
+only pre-rendered markup is the document body, which the Markdown renderer
+produced with raw HTML disabled.
+
+There is no robots meta element: this is public documentation, and an absent
+directive is the indexable default. What the page is — product, release, canonical
+address, purpose — is stated positively below and in discovery.go's artifacts.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ if eq .Route "/" }}{{ .Title }}{{ else }}{{ .Title }} — awarer{{ end }}</title>
+<meta name="description" content="{{ .Description }}">
+<link rel="canonical" href="{{ .Canonical }}">
+<link rel="icon" type="image/png" href="{{ .Site.MarkURL }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="awarer">
+<meta property="og:title" content="{{ .Title }}">
+<meta property="og:description" content="{{ .Description }}">
+<meta property="og:url" content="{{ .Canonical }}">
+<meta property="og:image" content="{{ .Site.MarkAbsURL }}">
+<meta name="twitter:card" content="summary">
+<meta name="generator" content="awarer sitegen; awa {{ .Site.Version }}">
+<link rel="stylesheet" href="{{ .Site.StyleURL }}">
+<script>{{ .Site.ThemeScript }}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+{{- if .Site.Preview }}
+<div class="preview-banner"><p><strong>Development preview.</strong> Built from an unreleased binary
+(<code>awa {{ .Site.Version }}</code>). It is not the published documentation of any release.</p></div>
+{{- end }}
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="{{ .Site.HomeURL }}"><img src="{{ .Site.MarkURL }}" alt="" width="24" height="24">awarer</a>
+    <nav>
+      <a href="{{ .Site.DocsURL }}"{{ if eq .Route .Site.DocsURL }} aria-current="page"{{ end }}>Documentation</a>
+      <a href="{{ .Site.ReleasesURL }}">Releases</a>
+      <a href="{{ .Site.SourceURL }}">Source</a>
+      <span class="release">awa {{ .Site.Version }}</span>
+      <button class="theme-toggle" type="button" data-theme-toggle>theme</button>
+    </nav>
+  </div>
+</header>
+<main id="main" class="page">
+{{ template "content" . }}
+</main>
+<footer class="colophon">
+  <div class="colophon-inner">
+    <p>Documentation generated from the <code>awa {{ .Site.Version }}</code> binary's own documentation export.
+      {{- if .Site.Commit }} Source commit <code>{{ .Site.Commit }}</code>.{{ end }}
+      The released binary is the authority for its own behaviour; this site renders what that binary carries.</p>
+    <p><a href="{{ .Site.SourceURL }}">Source</a> · <a href="{{ .Site.ReleasesURL }}">Releases</a> ·
+      <a href="{{ .Site.LLMsURL }}">llms.txt</a> · <a href="{{ .Site.MachineURL }}">Machine reference</a></p>
+    <p>awarer is licensed under Apache-2.0. Third-party notices ship with each release archive.</p>
+  </div>
+</footer>
+</body>
+</html>

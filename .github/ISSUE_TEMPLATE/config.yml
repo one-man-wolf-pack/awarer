@@ -1,0 +1,6 @@
+# The two forms beside this file are the whole public issue surface: a blank issue
+# arrives without the evidence a decision needs. Users with write access still see
+# GitHub's own "Maintainers only" blank option.
+#
+# No contact_links: every entry would need a public destination, and none exists yet.
+blank_issues_enabled: false

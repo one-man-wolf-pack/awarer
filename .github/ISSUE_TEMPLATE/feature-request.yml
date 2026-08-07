@@ -1,0 +1,69 @@
+name: Feature or use case
+description: Describe a problem awa does not solve, or a use case it does not cover.
+title: "[Proposal] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for proposing this. Describe the problem you have — the design is not
+        yours to carry. `awa` specifies behavior before implementing it, so a
+        well-described need is more useful here than a solution or a patch. Only two of
+        the fields below are required; the rest help when you can answer them.
+
+        `awa` is issue-driven: this proposal is the contribution channel, and external
+        pull requests are not accepted. See
+        [CONTRIBUTING.md](https://github.com/one-man-wolf-pack/awarer/blob/main/CONTRIBUTING.md).
+
+        **Do not paste secrets.** Tokens, keys, and private repository content do not
+        belong in a public issue. Redact them before you copy anything in.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem or use case
+      description: >-
+        What are you trying to do, and where does `awa` stop you? Describe the situation
+        you are in rather than the feature you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do today
+      description: >-
+        How you handle it now — another tool, a manual step, or living with it. Knowing
+        there is no workaround at all is just as useful.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: The outcome you want
+      description: >-
+        What should be true afterwards, from where you sit. A concrete command surface
+        is welcome, but it is not required and will not be treated as the design.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Who this affects, and how much
+      description: >-
+        How often you hit this, what it costs when you do, and whether it affects your
+        setup alone or anyone using `awa` the same way. This is what usually decides how
+        urgent the need is.
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints that matter
+      description: >-
+        Anything a solution would have to respect — your operating system, repository
+        size, CI, agent setup, privacy requirements, offline use.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you tried or considered
+      description: Other tools, other approaches, and why they did not fit.

@@ -1,0 +1,32 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+# release-please performs its writes (release PR, tags, releases) with the GitHub App
+# token below, so the default GITHUB_TOKEN needs no write scope. The App token is also
+# what lets the published release start the Release workflow: a release created with
+# GITHUB_TOKEN triggers nothing.
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      # The App must be installed on this repository with its client-id in the
+      # RELEASE_PLEASE_APP_CLIENT_ID variable and its private key in the
+      # RELEASE_PLEASE_APP_PRIVATE_KEY secret.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
