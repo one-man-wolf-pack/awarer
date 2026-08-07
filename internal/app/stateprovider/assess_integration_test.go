@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,10 +57,17 @@ func newAssessor(t *testing.T) (*stateprovider.Assessor, *checkpointjson.Repo, p
 	return stateprovider.NewAssessor(r), repo, layout
 }
 
-// putCP writes a one-entry checkpoint whose tree hash is driven by contentHex and whose
-// scan-config identity is driven by cfgNibble, so tests can vary content and policy
+// putCP writes a one-entry checkpoint at a.txt whose tree hash is driven by contentHex and
+// whose scan-config identity is driven by cfgNibble, so tests can vary content and policy
 // independently.
 func putCP(t *testing.T, repo *checkpointjson.Repo, idByte byte, contentHex, cfgNibble string) checkpoint.CheckpointID {
+	t.Helper()
+	return putCPAt(t, repo, idByte, "a.txt", contentHex, cfgNibble)
+}
+
+// putCPAt is putCP with the entry's path chosen by the caller, so a pair of checkpoints can
+// hold identical content at different paths.
+func putCPAt(t *testing.T, repo *checkpointjson.Repo, idByte byte, path, contentHex, cfgNibble string) checkpoint.CheckpointID {
 	t.Helper()
 	id, err := checkpoint.NewCheckpointID(bytes.NewReader(bytes.Repeat([]byte{idByte}, 20)))
 	if err != nil {
@@ -71,9 +77,9 @@ func putCP(t *testing.T, repo *checkpointjson.Repo, idByte byte, contentHex, cfg
 	if err != nil {
 		t.Fatalf("ParseContentHash: %v", err)
 	}
-	p, err := worktree.ParseRelPath("a.txt")
+	p, err := worktree.ParseRelPath(path)
 	if err != nil {
-		t.Fatalf("ParseRelPath: %v", err)
+		t.Fatalf("ParseRelPath(%q): %v", path, err)
 	}
 	omitted := worktree.FieldSet(0).With(worktree.FieldCtime).With(worktree.FieldDev).With(worktree.FieldIno).With(worktree.FieldNlink)
 	entry, err := worktree.NewRegularEntry(p, ch, worktree.StorageBlob,
@@ -481,6 +487,41 @@ func TestCompareDifferentCounts(t *testing.T) {
 	}
 }
 
+// TestCompareMovedContentIsAddPlusDelete proves the state provider keeps rename pairing
+// disabled, as the summary surface it publishes requires: identical content at a new path
+// is one delete plus one add, never one rename. The choice lives in a single Options field
+// that no syntax guard here reads, so this is the fixture that makes it observable —
+// enabling DetectRenames pairs these two changes and mergeCounts rejects the resulting
+// renamed count, so this comparison stops being a Different one carrying add=1/delete=1.
+//
+// Rename pairing's own matrix (ambiguity, symlinks, the bounded candidate limit) belongs to
+// the compare domain; this test owns only the state provider's selection of it.
+func TestCompareMovedContentIsAddPlusDelete(t *testing.T) {
+	a, repo, _ := newAssessor(t)
+	// One content hash across both sides at different paths is the whole discriminator:
+	// it is the identity rename detection pairs on, so the two sides must share this
+	// symbol rather than two literals that happen to match today.
+	const moved = hexA
+	left := putCPAt(t, repo, 0x11, "old.txt", moved, "a")
+	right := putCPAt(t, repo, 0x22, "new.txt", moved, "a")
+
+	cmp, err := a.Compare(context.Background(), state.Range{Left: idRef(left), Right: idRef(right)}, state.NowContext{})
+	if err != nil {
+		t.Fatalf("Compare: %v", err)
+	}
+	if cmp.Relationship() != provider.RelDifferent {
+		t.Fatalf("relationship = %v, want different", cmp.Relationship())
+	}
+	counts, ok := cmp.Counts()
+	if !ok {
+		t.Fatal("different comparison must carry counts")
+	}
+	if counts.Added() != 1 || counts.Deleted() != 1 || counts.Modified() != 0 || counts.TypeChanged() != 0 {
+		t.Errorf("counts = a=%d m=%d d=%d t=%d, want added=1 deleted=1 and nothing else: a move is reported as a separate add and delete",
+			counts.Added(), counts.Modified(), counts.Deleted(), counts.TypeChanged())
+	}
+}
+
 func TestCompareIncompatibleScanConfig(t *testing.T) {
 	a, repo, _ := newAssessor(t)
 	left := putCP(t, repo, 0x11, hexA, "a")
@@ -515,9 +556,12 @@ func TestCompareCancelledContextIsFault(t *testing.T) {
 	}
 }
 
-// TestCompareLargeTreeCounts drives the real assessor's streaming merge over two
-// many-entry checkpoints, proving mergeCounts produces correct counts at a scale where a
-// per-path buffer would be visible, while retaining only a bounded Summary.
+// TestCompareLargeTreeCounts drives the real Assessor.Compare over two many-entry
+// on-disk checkpoints, proving the production wiring and result semantics: real
+// manifests, the real resolver, mergeCounts, and a Different comparison carrying exact
+// per-kind counts. It is one of the three layers that together own the boundedness claim
+// (see boundedness_test.go); this one owns wiring and result semantics, and leaves the
+// streaming and no-materialization claims to the other two. It measures no memory.
 func TestCompareLargeTreeCounts(t *testing.T) {
 	a, repo, _ := newAssessor(t)
 	const n = 2000
@@ -533,90 +577,6 @@ func TestCompareLargeTreeCounts(t *testing.T) {
 	counts, _ := cmp.Counts()
 	if counts.Modified() != n || counts.Added() != 0 || counts.Deleted() != 0 {
 		t.Errorf("counts = a=%d m=%d d=%d, want only modified=%d", counts.Added(), counts.Modified(), counts.Deleted(), n)
-	}
-}
-
-// comparePeakLiveBytes builds two n-entry checkpoints and runs the real Assessor.Compare
-// over their on-disk (streamed) manifests while a background sampler forces a GC and reads
-// the live heap on a tight loop, returning the peak live heap observed *during* the
-// comparison (above the pre-comparison baseline). Forcing a GC before each sample isolates
-// live memory from collectable per-record garbage: a streaming merge keeps only the
-// fixed-size Summary live, so its peak is flat in n, whereas a merge that materializes a
-// per-path []Change holds it live for the whole drain, so its peak grows with n — even if
-// it drops the slice before returning, which a post-return sample cannot catch.
-func comparePeakLiveBytes(t *testing.T, n int) int64 {
-	t.Helper()
-	a, repo, _ := newAssessor(t)
-	left := putCPEntries(t, repo, 0x11, "a", n, 0)
-	right := putCPEntries(t, repo, 0x22, "a", n, 1)
-
-	runtime.GC()
-	var base runtime.MemStats
-	runtime.ReadMemStats(&base)
-
-	var peak atomic.Int64
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			runtime.GC()
-			var ms runtime.MemStats
-			runtime.ReadMemStats(&ms)
-			if live := int64(ms.HeapAlloc) - int64(base.HeapAlloc); live > peak.Load() {
-				peak.Store(live)
-			}
-			time.Sleep(100 * time.Microsecond)
-		}
-	}()
-
-	cmp, err := a.Compare(context.Background(), state.Range{Left: idRef(left), Right: idRef(right)}, state.NowContext{})
-	close(stop)
-	<-done
-
-	if err != nil {
-		t.Fatalf("Compare: %v", err)
-	}
-	if cmp.Relationship() != provider.RelDifferent {
-		t.Fatalf("relationship = %v, want different", cmp.Relationship())
-	}
-	if counts, _ := cmp.Counts(); counts.Modified() != n {
-		t.Fatalf("modified = %d, want %d", counts.Modified(), n)
-	}
-	runtime.KeepAlive(cmp)
-	return peak.Load()
-}
-
-// TestCompareBoundedPeakMemoryAtScale is the production-path *peak* working-set guarantee:
-// the real Assessor.Compare, streaming two large on-disk manifests, must hold only the
-// fixed-size Summary live at any instant, so its peak live heap is flat in tree
-// cardinality. Because the oracle samples live memory (post-GC) *during* the comparison, it
-// catches the core regression a post-return sample cannot — a merge that materializes a
-// per-path []Change, counts it, and drops it before returning a compact Comparison. The
-// structural TestMergeCountsUsesStreamingMerge is kept only as an auxiliary name-based
-// guard, not the primary proof.
-//
-// Mutation proof: in mergeCounts, accumulate the drained changes into a local
-// `[]compare.Change` (append in the loop) and drop it before returning — the
-// large-cardinality peak jumps by many MiB and this test goes red.
-func TestCompareBoundedPeakMemoryAtScale(t *testing.T) {
-	// Streaming holds only the Summary plus bounded decode/merge buffers live; a
-	// materialized 100k-path change list is ~15+ MiB live. The band must sit above the
-	// streaming path's transient decode/merge + GC-lag noise (observed ~6-7 MiB at 100k)
-	// yet well below that ~15 MiB materialization regression. 10 MiB gives ~3 MiB headroom
-	// over the noise and ~5 MiB below the regression, so the oracle stays sharp without
-	// flaking on GC timing.
-	const band = 10 << 20 // 10 MiB
-	small := comparePeakLiveBytes(t, 10000)
-	large := comparePeakLiveBytes(t, 100000)
-	t.Logf("peak live heap: n=10000 -> %d bytes, n=100000 -> %d bytes (delta %d)", small, large, large-small)
-	if large-small > band {
-		t.Errorf("peak live heap grew by %d bytes across a 10x cardinality increase (band %d): the production comparison materializes changes, it does not stream", large-small, band)
 	}
 }
 
