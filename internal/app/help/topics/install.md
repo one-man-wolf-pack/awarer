@@ -4,8 +4,9 @@
 background service, no network calls, and no telemetry. Installing it means
 putting one file on `PATH`; removing it means deleting that file.
 
-There is no package-manager distribution: no Homebrew formula, no apt or dnf
-repository, no npm package, no container image, and no `go install` path.
+Release archives are the distribution channel this topic documents. Another is
+named here only after it has been verified on a supported host, so absence from
+this topic is not a claim that nothing else can exist.
 
 ## Which version am I running
 
@@ -41,8 +42,8 @@ https://github.com/one-man-wolf-pack/awarer
 https://github.com/one-man-wolf-pack/awarer/releases
 ```
 
-The first is the source repository, the second is where the release assets live.
-Nothing else is a distribution channel for awa.
+The first is the source repository, the second is where the release assets live
+and is the authority for the archives described below.
 
 Archives are named
 `awa_<version>_<goos>_<goarch>.tar.gz`, except Windows, which uses
