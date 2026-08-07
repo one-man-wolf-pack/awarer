@@ -180,7 +180,7 @@ product commands: `site/sitegen`, `site/siteserve`, and the programs under
 - [`site/DEPLOYMENT.md`](site/DEPLOYMENT.md) — Cloudflare Pages setup, the
   release-coupled deployment path, and rollback.
 - [`.goreleaser.yaml`](.goreleaser.yaml) — the release targets, archive contents,
-  names, and checksums GoReleaser produces.
+  names, checksums, and generated Homebrew cask GoReleaser produces.
 - [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) and
   [`third_party/licenses.json`](third_party/licenses.json) — reviewed third-party
   legal material and its machine-checked inventory.

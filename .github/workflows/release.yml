@@ -93,8 +93,27 @@ jobs:
           fi
           echo "worktree clean at $RELEASE_TAG"
 
+      # This job's own token is scoped to this repository, so it cannot update the cask in
+      # one-man-wolf-pack/homebrew-tap. `repositories` names that one repository and
+      # `permission-contents` the one access it needs; the token expires with the job.
+      # The App is the one Release Please already uses, and `client-id` matches the
+      # identifier the RELEASE_PLEASE_APP_CLIENT_ID variable holds.
+      - name: Mint the tap installation token
+        id: tap-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          owner: one-man-wolf-pack
+          repositories: homebrew-tap
+          permission-contents: write
+
       # GORELEASER_CURRENT_TAG: without it GoReleaser asks git which tag points at HEAD,
       # so a second tag on the same commit could decide the version stamped in.
+      #
+      # The two tokens stay separate: GITHUB_TOKEN publishes the release in this
+      # repository, and HOMEBREW_TAP_TOKEN reaches only the tap. A tap failure fails this
+      # job without making the uploaded assets invalid.
       - name: Build and attach the release assets
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -103,6 +122,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
 
   site:

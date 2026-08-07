@@ -9,7 +9,13 @@ Release Please authenticates as a GitHub App. The repository needs:
 - variable `RELEASE_PLEASE_APP_CLIENT_ID`;
 - secret `RELEASE_PLEASE_APP_PRIVATE_KEY`;
 - the App installed with contents and pull-request write access;
+- the same App installed on `one-man-wolf-pack/homebrew-tap` with contents write;
 - the active `release-tags` ruleset described below.
+
+The release job reuses that App a second time, for the Homebrew cask only. It mints an
+installation token naming `homebrew-tap` and no other repository, and that token reaches
+one environment variable of the GoReleaser step. Nothing long-lived is stored for the
+tap, and the release itself is still published with the workflow's own token.
 
 Who may create a `v*` tag is decided by that ruleset. It targets tags, includes
 `refs/tags/v*` with no exclusion, and restricts creation, update, and deletion; the
@@ -38,8 +44,17 @@ action, and the four analyzers the quality gates run through `go run module@vers
 This table is the review record: a human read the selected commit and licence and dated
 it. Nothing regenerates or reconciles it, so a pin and its row move in the same change or
 the record is wrong. What is enforced automatically is narrower and does not depend on
-this table — every `uses:` in every workflow must name a full commit SHA, and the
-Cloudflare credential must stay inside the one upload step.
+this table — every `uses:` in every workflow must name a full commit SHA, the Cloudflare
+credential must stay inside the one upload step, and inside `release.yml` the App private
+key must stay inside the one step that mints the tap token.
+
+The rows are third-party actions and independently versioned executable tools. A
+GitHub-maintained `actions/*` step is pinned to an exact commit like every other, but it
+gets no row: its identity and licence are GitHub's, and the only thing review adds is
+reading the pin where it changes, which is the workflow diff itself. So `actions/checkout`,
+`actions/setup-go`, `actions/setup-node`, and `actions/create-github-app-token` are absent
+here by policy, not by oversight — a row for one of them would be a record nobody
+independently checks.
 
 | Tool | Pin | Upstream | License | Reviewed |
 | --- | --- | --- | --- | --- |
@@ -97,6 +112,12 @@ under `dist/`, which is generated only and never committed. A snapshot names its
 `<version>-SNAPSHOT-<sha>` and uploads nothing. Inspect the archive contents, the
 checksum file, and `dist/awa_<host-target>/awa version` before trusting a config change.
 
+The snapshot also writes `dist/homebrew/Casks/awarer.rb` and pushes nothing, because the
+tap token is read only when GoReleaser publishes. Read it too: it must carry exactly four
+host clauses — `on_macos` and `on_linux`, each with `on_intel` and `on_arm` — whose URLs
+and SHA-256 values match the archives and checksum file beside it, and one `binary "awa"`.
+The freebsd and windows archives have no clause; GoReleaser drops them.
+
 ## Cutting A Release
 
 1. Land Conventional Commits on `main`.
@@ -105,6 +126,8 @@ checksum file, and `dist/awa_<host-target>/awa version` before trusting a config
 4. Watch the **Release** workflow's `release` job: it re-proves the tag, runs the
    release gate, and attaches the assets.
 5. Confirm the completed Release has one archive per target and its checksum file.
+6. Confirm the same job updated `Casks/awarer.rb` in `one-man-wolf-pack/homebrew-tap` and
+   that its version and checksums are this release's.
 
 Release notes are generated from Conventional Commit subjects. There is no
 separate hand-maintained release-notes document.
@@ -117,12 +140,18 @@ separate hand-maintained release-notes document.
 - [`.github/workflows/release-please.yml`](../.github/workflows/release-please.yml)
   maintains the release pull request and creates the tag and Release.
 - [`.github/workflows/release.yml`](../.github/workflows/release.yml) proves the tag,
-  runs the release gate, and has GoReleaser attach the archives and checksums; a second
-  best-effort job then publishes that release's documentation site.
+  runs the release gate, and has GoReleaser attach the archives and checksums and update
+  the Homebrew cask; a second best-effort job then publishes that release's documentation
+  site.
 
 A failed release is loud and stays failed. Read the first failing named step. If assets
 were partially attached, inspect and remove them before re-running the workflow —
 nothing classifies, adopts, or overwrites existing release state.
+
+A failed cask update fails the same job, after the archives are already uploaded. Those
+assets stay valid and authoritative: repair the named permission or configuration failure
+and follow the procedure above. Nothing reconciles the tap or rolls a release back, and
+the tap is never a second source of truth for what a release contains.
 
 Site publication happens automatically once a release is complete. Its setup,
 failure diagnosis, and rollback are in
