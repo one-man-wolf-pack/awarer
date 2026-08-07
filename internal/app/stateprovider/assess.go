@@ -9,9 +9,12 @@
 // never a failure: a missing, corrupt, incompatible, permission-denied, or GC-removed
 // reference resolves to an unavailable outcome with a machine reason, not a non-zero
 // error. The only faults it propagates are interruption (context cancellation) and an
-// impossible internal state (a resolved state the domain constructors reject). It never
-// classifies through the changes/diff exit-code mapping, whose store sentinels mean the
-// opposite there.
+// impossible internal state — one this package raised itself, either by returning it
+// directly (a resolved state the domain constructors reject) or by marking it
+// errInternalFault where it passes through the availability classifier. An internal state
+// is recognized by that explicit marking, never by an error's absence from the
+// availability allowlist. It never classifies through the changes/diff exit-code mapping,
+// whose store sentinels mean the opposite there.
 package stateprovider
 
 import (
@@ -257,15 +260,28 @@ func verifyManifest(ctx context.Context, rs *state.ResolvedState) error {
 	return cur.Err()
 }
 
+// errInternalFault marks an error this package raised because its own program invariant
+// was violated, so reasonFor propagates it as a fault instead of classifying it as
+// evidence availability. It carries identity only — the classifier needs one bit, and the
+// diagnostic context travels in the wrapping. It is attached solely at a call site that
+// locally knows the state is impossible; it is never inferred from an error's text or
+// from its absence in the availability allowlist below, which would erase the accepted
+// io-error boundary for an ordinary unclassified read failure.
+var errInternalFault = errors.New("impossible internal state")
+
 // reasonFor classifies a non-nil resolver/store error. The second result is true when
 // the error is an evidence-availability fact — a complete unavailable assessment that
-// exits zero; it is false only for a genuine fault (interruption) that must propagate as
-// a non-zero error. Interruption is checked first so a cancelled read is never reported
-// as an availability reason. An otherwise unclassified read-path error fails closed to
-// io-error: availability is always an assessment, never an empty success.
+// exits zero; it is false only for a genuine fault — interruption, or an explicitly
+// marked impossible internal state — that must propagate as a non-zero error.
+// Interruption is checked first so a cancelled read is never reported as an availability
+// reason, and it is a fault by cancellation alone, needing no marker. An otherwise
+// unclassified read-path error fails closed to io-error: availability is always an
+// assessment, never an empty success.
 func reasonFor(err error) (provider.Reason, bool) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "", false
+	case errors.Is(err, errInternalFault):
 		return "", false
 	case errors.Is(err, state.ErrNoCheckpoints),
 		errors.Is(err, state.ErrOutOfRange),

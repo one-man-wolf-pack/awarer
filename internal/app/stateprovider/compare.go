@@ -134,6 +134,12 @@ func unavailableFrom(leftOut, rightOut operandOutcome, fallback provider.Reason)
 // O(1) with respect to tree cardinality. Rename detection is disabled, so a rename
 // appears as a separate delete and add (rename pairing is outside this summary surface);
 // the returned counts must therefore carry no renamed entries.
+//
+// Its three self-raised failures — a merge it cannot construct over two manifests it just
+// opened, a renamed count under disabled pairing, and a monotonic non-negative summary the
+// counts constructor rejects — are impossible internal states, not evidence degradation, so
+// they carry errInternalFault and propagate as faults. Manifest open/iteration failures and
+// interruption are left unmarked for the availability classifier.
 func (a *Assessor) mergeCounts(ctx context.Context, left, right *state.ResolvedState) (provider.Counts, error) {
 	lc, err := left.Manifest(ctx)
 	if err != nil {
@@ -150,7 +156,7 @@ func (a *Assessor) mergeCounts(ctx context.Context, left, right *state.ResolvedS
 	if err != nil {
 		_ = lc.Close()
 		_ = rc.Close()
-		return provider.Counts{}, err
+		return provider.Counts{}, fmt.Errorf("state provider: %w: constructing the non-rename merge over two opened manifests: %w", errInternalFault, err)
 	}
 	defer func() { _ = cur.Close() }()
 
@@ -165,7 +171,11 @@ func (a *Assessor) mergeCounts(ctx context.Context, left, right *state.ResolvedS
 		return provider.Counts{}, cerr
 	}
 	if sum.Renamed != 0 {
-		return provider.Counts{}, fmt.Errorf("state provider: unexpected rename count %d with rename detection disabled", sum.Renamed)
+		return provider.Counts{}, fmt.Errorf("state provider: %w: rename count %d with rename detection disabled", errInternalFault, sum.Renamed)
 	}
-	return provider.NewCounts(sum.Added, sum.Modified, sum.Deleted, sum.TypeChanged)
+	counts, err := provider.NewCounts(sum.Added, sum.Modified, sum.Deleted, sum.TypeChanged)
+	if err != nil {
+		return provider.Counts{}, fmt.Errorf("state provider: %w: summarizing the merge counts: %w", errInternalFault, err)
+	}
+	return counts, nil
 }

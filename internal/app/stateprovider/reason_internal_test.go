@@ -23,6 +23,12 @@ import (
 //     the metadata-incompatible row goes red.
 //   - change the default from ReasonIOError to returning ok=false ->
 //     TestReasonForUnclassifiedFailsClosed goes red.
+//   - drop the errInternalFault case (so a marked impossible state falls through to the
+//     default) -> TestReasonForInternalFaultIsFault goes red (an internal invariant
+//     failure would become a successful unavailable io-error assessment).
+//   - move the errInternalFault case below the availability rows -> the same test's
+//     marked-error-wrapping-an-availability-sentinel case goes red (the marker must win
+//     over any reason its cause happens to match).
 
 func TestReasonForTable(t *testing.T) {
 	cases := []struct {
@@ -67,6 +73,30 @@ func TestReasonForTable(t *testing.T) {
 
 func TestReasonForInterruptionIsFault(t *testing.T) {
 	for _, err := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("scan: %w", context.Canceled)} {
+		if _, isAvailability := reasonFor(err); isAvailability {
+			t.Errorf("reasonFor(%v) must be a fault, not an availability reason", err)
+		}
+	}
+}
+
+// TestReasonForInternalFaultIsFault proves an error this package explicitly marked as a
+// violated program invariant propagates as a fault instead of being downgraded to the
+// io-error availability fallback — the distinction the marker exists to make, since a
+// marked error is otherwise indistinguishable from the unclassified read failure below.
+// The marker is inspected by identity through the wrapping, never by prose.
+//
+// The last case pins the marker's precedence over the whole availability table, not just
+// over the fallback: a marked site wraps a cause it does not author (the merge
+// constructor's failure), so a cause that happens to match an availability sentinel must
+// not turn the invariant violation back into a successful unavailable assessment.
+func TestReasonForInternalFaultIsFault(t *testing.T) {
+	cases := []error{
+		errInternalFault,
+		fmt.Errorf("state provider: %w: rename count 1 with rename detection disabled", errInternalFault),
+		fmt.Errorf("state provider: %w: summarizing the merge counts: %w", errInternalFault, errors.New("counts must be non-negative")),
+		fmt.Errorf("state provider: %w: constructing the merge: %w", errInternalFault, os.ErrPermission),
+	}
+	for _, err := range cases {
 		if _, isAvailability := reasonFor(err); isAvailability {
 			t.Errorf("reasonFor(%v) must be a fault, not an availability reason", err)
 		}
