@@ -15,9 +15,6 @@ set dotenv-load := false
 minimum-version := "1.57.0"
 _ := assert(semver_matches(just_version(), ">=" + minimum-version) == "true", "just " + minimum-version + " or newer is required")
 
-# Pinned so the gate is reproducible. Bump deliberately, and move the matching row in
-# the reviewed tooling table in docs/releasing.md in the same change — that table is a
-# human review record and nothing reconciles it with this file.
 staticcheck-version := "v0.7.0"
 golangci-version := "v2.12.2"
 # govulncheck pins only the analyzer binary; it still fetches the current

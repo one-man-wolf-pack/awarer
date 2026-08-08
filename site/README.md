@@ -52,4 +52,4 @@ The generated directory is the complete deployable artifact. Upload it without
 filtering files; every file in it answers a URL.
 
 Deployment is separate from local generation and happens automatically when a
-release is published. See [`DEPLOYMENT.md`](DEPLOYMENT.md).
+release is published.

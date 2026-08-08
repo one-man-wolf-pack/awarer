@@ -174,11 +174,7 @@ product commands: `site/sitegen`, `site/siteserve`, and the programs under
 
 ## Focused Documentation
 
-- [`docs/releasing.md`](docs/releasing.md) — cutting and verifying a binary
-  release from this checkout.
 - [`site/README.md`](site/README.md) — building and inspecting the static site.
-- [`site/DEPLOYMENT.md`](site/DEPLOYMENT.md) — Cloudflare Pages setup, the
-  release-coupled deployment path, and rollback.
 - [`.goreleaser.yaml`](.goreleaser.yaml) — the release targets, archive contents,
   names, checksums, and generated Homebrew cask GoReleaser produces.
 - [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) and
