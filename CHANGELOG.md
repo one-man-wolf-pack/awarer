@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.1...v0.1.2) (2026-08-08)
+
+
+### Documentation
+
+* **install:** explain macOS quarantine handling ([0d39cab](https://github.com/one-man-wolf-pack/awarer/commit/0d39cab834c1311cc1f3f349b2c3b9fb5e03e222))
+
 ## [0.1.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.0...v0.1.1) (2026-08-08)
 
 
