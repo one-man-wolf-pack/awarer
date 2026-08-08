@@ -34,19 +34,19 @@ project, a config file, or `.awa/`, so it answers the same way anywhere.
 
 ## Install with Homebrew
 
-On macOS and Linux, one command installs the binary and puts it on `PATH`:
+The cask is `awarer`; it installs `awa`. Use the fully qualified name because the
+cask is in a third-party tap and Homebrew already assigns `awa` to another
+application. Releases are not code-signed or notarized. Homebrew verifies the
+archive's checksum but installs the cask under macOS quarantine, so the complete
+macOS installation and first-run verification sequence is:
 
 ```text
 brew install --cask one-man-wolf-pack/tap/awarer
-```
-
-The cask is `awarer`; it installs `awa`. Use the fully qualified command because
-the cask is in a third-party tap and Homebrew already assigns `awa` to another
-application. Confirm what landed:
-
-```text
+xattr -dr com.apple.quarantine "$(brew --caskroom)/awarer"
 awa version
 ```
+
+On Linux, omit the `xattr` line.
 
 Upgrading is Homebrew's ordinary cask flow — refresh the tap, then upgrade by
 cask name:
@@ -55,6 +55,9 @@ cask name:
 brew update
 brew upgrade --cask awarer
 ```
+
+On macOS, clear the new cask's quarantine attribute with the same command before
+running the upgraded binary.
 
 Removing it is the counterpart:
 
@@ -111,9 +114,8 @@ Each archive contains exactly the `awa` binary (`awa.exe` on Windows),
 awa version
 ```
 
-The binary is not code-signed or notarized. On macOS that means a copy downloaded
-through a browser carries a quarantine attribute and Gatekeeper refuses to run it
-until that attribute is cleared:
+A copy downloaded through a browser on macOS also carries a quarantine attribute,
+and Gatekeeper refuses to run it until that attribute is cleared:
 
 ```text
 xattr -d com.apple.quarantine <path-to-awa>

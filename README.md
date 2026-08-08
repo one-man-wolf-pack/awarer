@@ -26,12 +26,16 @@ not required.
 ## Install
 
 On macOS and Linux, install the maintained Homebrew cask. The cask is named
-`awarer`; the command it installs is `awa`:
+`awarer`; the command it installs is `awa`. Releases are not code-signed or
+notarized, so the complete macOS sequence is:
 
 ```bash
 brew install --cask one-man-wolf-pack/tap/awarer
+xattr -dr com.apple.quarantine "$(brew --caskroom)/awarer"
 awa version
 ```
+
+On Linux, omit the `xattr` line.
 
 Every supported platform is covered by the release archives, which are the
 authority for what a release contains. They and their SHA-256 checksum file are
