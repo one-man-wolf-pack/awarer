@@ -98,7 +98,7 @@ var landingCopy = landingContent{
 		},
 		{
 			question: "How do I install it?",
-			answer:   "Release archives, checksum verification, and what upgrading changes.",
+			answer:   "The Homebrew cask, release archives, checksum verification, and what upgrading changes.",
 			slug:     "install",
 		},
 		{
@@ -128,13 +128,14 @@ var landingCopy = landingContent{
 		},
 		{
 			question: "Where is every command and flag?",
-			answer:   "The exhaustive syntax reference, generated from the binary's own command registry.",
+			answer:   "The exhaustive syntax reference for every command and flag.",
 			slug:     "commands",
 		},
 	},
 
 	terminalCaption: "Recorded output from a scratch project — an example, not live state.",
-	installNote:     "Prebuilt archives are published for Linux, macOS, FreeBSD, and Windows. Verify the checksum before you run it.",
+	installNote: "A maintained Homebrew cask is the shortest path on macOS and Linux. Prebuilt archives are " +
+		"published for Linux, macOS, FreeBSD, and Windows; verify the checksum before you run one.",
 	installActions: []landingAction{
 		{label: "Installation guide", slug: "install", primary: true},
 	},

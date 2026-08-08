@@ -114,7 +114,7 @@ func buildSite(ctx context.Context, b *Bundle, opts buildOptions) ([]outputFile,
 		pageMeta: pageMeta{
 			Site:        site,
 			Title:       "Documentation",
-			Description: fmt.Sprintf("Every document the awa %s binary carries: operational topics, the generated command reference, and the configuration, global-option, and exit-code reference.", site.Version),
+			Description: fmt.Sprintf("Every document in the awa %s documentation: operational topics, the generated command reference, and the configuration, global-option, and exit-code reference.", site.Version),
 			Route:       routeDocs,
 			Canonical:   opts.baseURL.Absolute(routeDocs),
 		},
@@ -144,7 +144,6 @@ func buildSite(ctx context.Context, b *Bundle, opts buildOptions) ([]outputFile,
 			Content:  r.html,
 			Sections: r.sections,
 			Aliases:  e.Aliases(),
-			SourceOf: e.Path().String(),
 		}
 		if i > 0 {
 			prev := ordered[i-1]

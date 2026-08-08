@@ -184,9 +184,7 @@ func TestDocumentPageCarriesItsNavigationAndRewrittenLinks(t *testing.T) {
 		t.Errorf("the anchored link to alpha was not rewritten:\n%s", beta)
 	}
 	// Both spellings, because they are what an unrewritten destination looks like
-	// with and without an anchor. The quote and the hash are part of the pattern:
-	// a document page prints its own export path in `.SourceOf`, so a bare ".md"
-	// would report every page.
+	// with and without an anchor.
 	for route, page := range got {
 		if !strings.HasSuffix(route, "/") {
 			continue

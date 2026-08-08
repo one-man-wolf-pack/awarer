@@ -193,7 +193,7 @@ func globalOptionSpellings(g referenceGlobal) string {
 func renderCommandIndex(ref reference) string {
 	var d docsBuilder
 	d.heading(1, "awa command reference")
-	d.para("Every command the binary implements, generated from the live command registry. Each page owns the exhaustive syntax for its command; the workflow guidance lives in the operational topics.")
+	d.para("Every command of the installed version. Each page owns the exhaustive syntax for its command; the workflow guidance lives in the operational topics.")
 	d.heading(2, "Commands")
 	for _, c := range ref.Commands {
 		d.bullet(fmt.Sprintf("[`awa %s`](%s) — %s", c.Name,
@@ -403,7 +403,7 @@ func commandsAccepting(ref reference, id string) []string {
 func renderExitCodes(ref reference, topicPaths map[string]string) string {
 	var d docsBuilder
 	d.heading(1, "awa exit codes")
-	d.para("The exact process-exit contract, generated from the exit-code catalog. Each code has a stable number and a stable machine name; the meanings and the diagnosis guidance live in the operational topic linked below.")
+	d.para("The exact process-exit contract. Each code has a stable number and a stable machine name; the meanings and the diagnosis guidance live in the operational topic linked below.")
 
 	d.heading(2, "awa-owned exit statuses")
 	for _, c := range ref.ExitCodes.AwaOwned {

@@ -88,8 +88,8 @@ func renderSitemap(base BaseURL, routes []string) ([]byte, error) {
 }
 
 // renderLLMs builds the concise map an automated reader starts from: which
-// release this is, where the authority for it lives, and one line per document
-// with the title and summary the manifest carries.
+// release this is, how to read the same documents offline, and one line per
+// document with the title and summary the manifest carries.
 //
 // It says nothing about the product in its own words. Every claim here would be a
 // second place where awa is described, and this file is a projection of an export
@@ -112,8 +112,8 @@ func renderLLMs(base BaseURL, m docbundle.Manifest, groups []navGroup, preview b
 	if c := m.Provenance().Commit; c != "" {
 		fmt.Fprintf(&b, "Source commit: %s\n", c)
 	}
-	b.WriteString("Authority: the released binary. This site renders that binary's own documentation export; ")
-	b.WriteString("`awa help <topic>` and `awa docs export` produce the same content offline.\n\n")
+	b.WriteString("Offline: `awa help <topic>` shows the operational topics, `awa <command> --help` gives ")
+	b.WriteString("command syntax, and `awa docs export` writes the whole bundle to a directory.\n\n")
 
 	for _, g := range groups {
 		fmt.Fprintf(&b, "## %s\n\n", g.Name)
@@ -147,9 +147,9 @@ func renderLLMsFull(base BaseURL, b *Bundle) ([]byte, error) {
 	m := b.Manifest()
 
 	fmt.Fprintf(&out, "# awarer documentation corpus (awa %s)\n\n", m.Provenance().Version)
-	out.WriteString("Every document the release carries, in publication order, as exported Markdown.\n")
-	out.WriteString("Bodies are reproduced byte for byte from `awa docs export`; the relative `.md` links\n")
-	out.WriteString("inside them address that export's own layout, not this site. Each document below is\n")
+	out.WriteString("Every document of this release, in publication order, as Markdown.\n")
+	out.WriteString("Bodies are reproduced byte for byte, so the relative `.md` links inside them\n")
+	out.WriteString("address the offline documentation layout, not this site. Each document below is\n")
 	fmt.Fprintf(&out, "preceded by its canonical URL, and %s maps every document to one.\n", base.Absolute(routeLLMs))
 
 	for _, e := range b.Documents() {

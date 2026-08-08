@@ -271,7 +271,7 @@ func newRouter() *router {
 			}},
 		{name: "config", summary: "inspect or edit configuration", run: runConfig, capabilities: configCapabilities(), ownsHelp: true, help: configCmdHelp, subcommands: configSubcommands},
 		{name: "state", summary: "resolve and compare state for the external provider", run: runState, capabilities: stateCapabilities(), ownsHelp: true, help: stateCmdHelp, subcommands: stateSubcommands},
-		{name: "docs", summary: "export the documentation this binary carries", run: runDocs, capabilities: docsCapabilities(), ownsHelp: true, help: docsCmdHelp, subcommands: docsSubcommands()},
+		{name: "docs", summary: "export the documentation of the installed version", run: runDocs, capabilities: docsCapabilities(), ownsHelp: true, help: docsCmdHelp, subcommands: docsSubcommands()},
 		{name: "help", summary: "show operational help for a topic", run: runHelp,
 			help: commandHelp{
 				usage:    []string{"help [topic]"},

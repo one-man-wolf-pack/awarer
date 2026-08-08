@@ -49,7 +49,7 @@ func buildDocsBundle() (docbundle.Bundle, error) {
 	index, err := newGeneratedDocument(
 		"commands",
 		"awa command reference",
-		"every command and subcommand the binary implements",
+		"every command and subcommand of the installed version",
 		docbundle.KindCommand,
 		docsCommandIndexPath,
 		renderCommandIndex(ref),

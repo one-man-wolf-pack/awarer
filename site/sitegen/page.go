@@ -215,7 +215,6 @@ type documentView struct {
 	Content  template.HTML
 	Sections []heading
 	Aliases  []string
-	SourceOf string
 	Prev     *navLink
 	Next     *navLink
 }

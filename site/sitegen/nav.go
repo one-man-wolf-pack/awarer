@@ -43,7 +43,7 @@ type kindSection struct {
 
 var kindSections = []kindSection{
 	{docbundle.KindTopic, "Operational topics", "How to work with awa, written for direct retrieval."},
-	{docbundle.KindCommand, "Command reference", "Exhaustive syntax for every command, generated from the binary's own registry."},
+	{docbundle.KindCommand, "Command reference", "Exhaustive syntax for every command and flag."},
 	{docbundle.KindReference, "Reference", "Configuration keys, global options, and the process-exit contract."},
 }
 

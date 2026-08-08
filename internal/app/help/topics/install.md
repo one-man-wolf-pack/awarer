@@ -4,14 +4,14 @@
 background service, no network calls, and no telemetry. Installing it means
 putting one file on `PATH`; removing it means deleting that file.
 
-Release archives are the distribution channel this topic documents. Another is
-named here only after it has been verified on a supported host, so absence from
-this topic is not a claim that nothing else can exist.
+A release reaches you two ways: a maintained Homebrew cask on macOS and Linux,
+or a release archive on every supported platform. Both deliver the same binary
+from the same GitHub Release. Building from source is documented further down
+and produces a development build rather than a release.
 
 ## Which version am I running
 
-The installed binary is the authority for its own identity. Ask it, not a
-website:
+The installed binary knows exactly which version it is. Ask it, not a website:
 
 ```text
 awa version
@@ -31,6 +31,41 @@ neither and its human line shows no commit in the parentheses.
 
 `awa version` takes no global options other than `--json`: it never reads a
 project, a config file, or `.awa/`, so it answers the same way anywhere.
+
+## Install with Homebrew
+
+On macOS and Linux, one command installs the binary and puts it on `PATH`:
+
+```text
+brew install --cask one-man-wolf-pack/tap/awarer
+```
+
+The cask is `awarer`; it installs `awa`. Use the fully qualified command because
+the cask is in a third-party tap and Homebrew already assigns `awa` to another
+application. Confirm what landed:
+
+```text
+awa version
+```
+
+Upgrading is Homebrew's ordinary cask flow — refresh the tap, then upgrade by
+cask name:
+
+```text
+brew update
+brew upgrade --cask awarer
+```
+
+Removing it is the counterpart:
+
+```text
+brew uninstall --cask awarer
+```
+
+The cask points at the checksummed GitHub Release archives described below, and
+those releases stay the authority for which versions exist and what bytes they
+contain. Homebrew covers macOS and Linux — use the archive on Windows and
+FreeBSD — and adds no code signing or notarization.
 
 ## Install from a release archive
 
@@ -172,25 +207,6 @@ awa doctor
 Downgrading is the same operation in reverse, with one caveat: a newer store may
 contain records an older binary reports as unreadable rather than migrating them
 backwards.
-
-## This binary is the authority
-
-Everything `awa` documents about itself ships inside it:
-
-```text
-awa help topics                        # every operational topic
-awa help agents                        # the golden path for coding agents
-awa docs export --output <directory>   # the complete documentation bundle
-```
-
-`<directory>` is a path that must not already exist; the export creates it. The
-bundle is the same content in flat Markdown plus a machine-readable reference
-and a manifest, and it is byte-identical for a given binary.
-
-Any published website is a projection of one released binary's export. It never
-contains a behavioral fact the installed binary cannot tell you, so when the two
-appear to disagree, the binary you are running is correct for the version you
-are running.
 
 ## See also
 

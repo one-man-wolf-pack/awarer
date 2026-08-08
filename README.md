@@ -5,9 +5,8 @@ evidence tool for humans and coding agents. It is a single Go binary with no
 daemon, server, telemetry, or runtime dependency. Project-local state lives
 under `.awa/`.
 
-This repository is the complete source for `awa`. It builds the binary, its
-embedded operational documentation, the release artifacts, and the small public
-documentation site.
+This repository is the complete source for `awa`. It builds the binary, its user
+documentation, the release artifacts, and the small public documentation site.
 
 ## Requirements
 
@@ -26,7 +25,17 @@ not required.
 
 ## Install
 
-Release archives and their SHA-256 checksum file are published on the
+On macOS and Linux, install the maintained Homebrew cask. The cask is named
+`awarer`; the command it installs is `awa`:
+
+```bash
+brew install --cask one-man-wolf-pack/tap/awarer
+awa version
+```
+
+Every supported platform is covered by the release archives, which are the
+authority for what a release contains. They and their SHA-256 checksum file are
+published on the
 [GitHub Releases page](https://github.com/one-man-wolf-pack/awarer/releases).
 Download the archive for your platform, verify it against
 `awa_<version>_checksums.txt` — `<version>` is the release tag without its leading
@@ -38,11 +47,9 @@ shasum -a 256 --check --ignore-missing awa_1.2.3_checksums.txt   # macOS
 awa version
 ```
 
-The installed binary carries the complete installation and upgrade guidance:
-
-```bash
-awa help install
-```
+The complete installation, verification, and upgrade guide is at
+[awarer.one-man-wolf-pack.com/docs/install/](https://awarer.one-man-wolf-pack.com/docs/install/).
+Once `awa` is installed, `awa help install` shows the same guide offline.
 
 To build from source:
 
@@ -82,9 +89,9 @@ never restored or deleted. Every apply first records the state it overwrote and
 prints a `restore:<id>:before` reference to undo it, retained under
 `[gc].keep_restores_for`. See `awa help restore` for the full boundary.
 
-Start with `awa help agents` when using the tool from an agent workflow. The
-binary, rather than this README, owns current commands, configuration, safety
-boundaries, JSON shapes, and exit behavior:
+Start with `awa help agents` when using the tool from an agent workflow. For the
+commands, configuration, safety boundaries, JSON shapes, and exit behavior of the
+version you installed, ask it directly:
 
 ```bash
 awa help agents
@@ -94,10 +101,6 @@ awa help config
 awa help restore
 awa docs export --output <directory>
 ```
-
-`awa docs export` emits the same deterministic documentation corpus used by the
-public site. Exact CLI metadata is generated from the live registries and is
-checked against [`internal/cli/testdata/reference.json`](internal/cli/testdata/reference.json).
 
 ## Development
 
@@ -123,6 +126,10 @@ go test -run '^$' -bench . -benchmem ./... # benchmarks
 go run ./internal/tools/refgen             # emit the CLI reference
 awa docs export --output <directory>       # export the documentation bundle
 ```
+
+The generated CLI reference is checked against
+[`internal/cli/testdata/reference.json`](internal/cli/testdata/reference.json); run
+`just reference-update` after an intended surface change.
 
 CI invokes the same recipes, so a locally green gate is green for the same reason.
 Agent workflow instructions are in [`AGENTS.md`](AGENTS.md). To report a defect

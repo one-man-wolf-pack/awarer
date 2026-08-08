@@ -13,7 +13,6 @@ markup — puts all 38 corpus links between a reader and the document they opene
     <p class="doc-meta">
       <code>awa {{ $.Site.Version }}</code> · slug <code>{{ .Slug }}</code>
       {{- if .Aliases }} · also <code>{{ range $i, $a := .Aliases }}{{ if $i }}</code>, <code>{{ end }}{{ $a }}{{ end }}</code>{{ end }}
-      · offline: <code>awa docs export</code> → <code>{{ .SourceOf }}</code>
     </p>
 
     {{- if .Sections }}
