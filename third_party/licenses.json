@@ -40,7 +40,7 @@
     },
     {
       "module_path": "github.com/mattn/go-isatty",
-      "version": "v0.0.20",
+      "version": "v0.0.24",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "windows/amd64"],
       "spdx": "MIT",
       "texts": [
@@ -117,7 +117,7 @@
     },
     {
       "module_path": "modernc.org/libc",
-      "version": "v1.74.1",
+      "version": "v1.74.4",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND MIT",
       "texts": [
@@ -156,7 +156,7 @@
     },
     {
       "module_path": "modernc.org/sqlite",
-      "version": "v1.55.0",
+      "version": "v1.56.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
       "texts": [
