@@ -81,6 +81,7 @@ func TestAcceptanceDiffAlgorithmReachesBothEngines(t *testing.T) {
 		t.Fatalf("checkpoint exit=%d stderr=%q", code, stderr)
 	}
 	write(t, root, "moved.txt", "funcB{\nbodyB\n}\nfuncA{\nbodyA\n}\n")
+	backdate(t, filepath.Join(root, "moved.txt"))
 
 	code, myers, stderr := awa(t, root, "diff", "--algorithm", "myers")
 	if code != 0 {
@@ -142,6 +143,7 @@ func TestAcceptanceHistogramRepeatedInputFallsBack(t *testing.T) {
 	// Edit one repeated line in the middle.
 	edited := strings.Replace(base, "{\"v\":1},\n", "{\"v\":2},\n", 1)
 	write(t, root, "data.json", edited)
+	backdate(t, filepath.Join(root, "data.json"))
 
 	// Histogram must complete and produce a valid diff that shows the edit.
 	code, stdout, stderr := awa(t, root, "diff", "--algorithm", "histogram", baseline+"..now")

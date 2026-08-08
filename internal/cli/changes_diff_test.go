@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+// backdate moves a path's timestamps two seconds into the past so its stat
+// signature differs from the one a previous scan indexed.
+func backdate(t *testing.T, abs string) {
+	t.Helper()
+	past := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(abs, past, past); err != nil {
+		t.Fatalf("chtimes %s: %v", abs, err)
+	}
+}
+
 func writeFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))

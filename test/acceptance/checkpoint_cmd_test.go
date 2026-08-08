@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"awarer/internal/domain/checkpoint"
 )
@@ -31,6 +32,16 @@ func write(t *testing.T, root, name, content string) {
 	}
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// backdate moves a path's timestamps two seconds into the past so its stat
+// signature differs from the one a previous scan indexed.
+func backdate(t *testing.T, abs string) {
+	t.Helper()
+	past := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(abs, past, past); err != nil {
+		t.Fatalf("chtimes %s: %v", abs, err)
 	}
 }
 

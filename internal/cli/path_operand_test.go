@@ -34,6 +34,7 @@ func operandProject(t *testing.T) (root, changedAbs string) {
 	// unfiltered one: the equivalence below cannot pass by both sides being empty.
 	writeFile(t, root, "generated/client/openapi.json", "{\"paths\":{\"/v2\":{}}}\n")
 	writeFile(t, root, "src/service.go", "package src\n\nfunc A() int { return 2 }\n")
+	backdate(t, filepath.Join(root, "src", "service.go"))
 	return root, filepath.Join(root, "generated", "client", "openapi.json")
 }
 
@@ -113,6 +114,7 @@ func TestPathOperandTerminatorDisambiguates(t *testing.T) {
 		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
 	}
 	writeFile(t, root, "a..b/file.txt", "two\n")
+	backdate(t, filepath.Join(root, "a..b", "file.txt"))
 	rangeLike := filepath.Join(root, "a..b")
 
 	if code, _, _ := run("changes", "--root", root, "latest..now", rangeLike); code != int(ExitUsageError) {

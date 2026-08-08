@@ -39,6 +39,7 @@ func restoreProject(t *testing.T) (root, checkpointID string) {
 	}
 
 	writeFile(t, root, "generated/client/openapi.json", "{\"v\":2}\n")
+	backdate(t, filepath.Join(root, "generated", "client", "openapi.json"))
 	writeFile(t, root, "src/service.go", "package src // dirty\n")
 	return root, env.Data.ID
 }
@@ -231,6 +232,7 @@ func TestPreviewNamesEveryBlockedPathAndReason(t *testing.T) {
 		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
 	}
 	writeFile(t, root, "generated/api.json", "{\"v\":2}\n")
+	backdate(t, filepath.Join(root, "generated", "api.json"))
 	abs := filepath.Join(root, "generated")
 
 	code, stdout, _ := run("restore", "--root", root, "latest", "--", abs)

@@ -91,6 +91,7 @@ func TestDiffAlgorithmSelectsDistinctEngines(t *testing.T) {
 		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
 	}
 	writeFile(t, root, "moved.txt", "funcB{\nbodyB\n}\nfuncA{\nbodyA\n}\n")
+	backdate(t, filepath.Join(root, "moved.txt"))
 
 	code, myers, stderr := run("diff", "--root", root, "--algorithm", "myers")
 	if code != int(ExitSuccess) {

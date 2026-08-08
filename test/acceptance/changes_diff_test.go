@@ -297,7 +297,9 @@ func TestAcceptanceLiteralPathFilterAfterDoubleDash(t *testing.T) {
 		t.Fatalf("checkpoint exit=%d stderr=%q", code, stderr)
 	}
 	write(t, root, "a..b.txt", "two\n")
+	backdate(t, filepath.Join(root, "a..b.txt"))
 	write(t, root, "-dash.go", "package y\n")
+	backdate(t, filepath.Join(root, "-dash.go"))
 	write(t, root, "other.txt", "changed\n")
 
 	// "--" makes the range-looking name a literal path filter.
