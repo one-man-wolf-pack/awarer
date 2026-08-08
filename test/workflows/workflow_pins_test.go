@@ -102,8 +102,7 @@ var tapTokenConsumer = strings.Join([]string{
 
 // TestTheDeploymentCredentialIsReachableOnlyFromTheUploader keeps publication, deployment,
 // and cross-repository privilege apart: nothing outside this file stops another step from
-// naming a repository secret. site/DEPLOYMENT.md names this test as the enforcement, so
-// the name is part of it.
+// naming a repository secret.
 func TestTheDeploymentCredentialIsReachableOnlyFromTheUploader(t *testing.T) {
 	token := 0
 	for _, file := range workflowFiles(t) {

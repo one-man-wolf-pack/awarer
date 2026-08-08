@@ -5,8 +5,7 @@
 This repository is the complete source for `awa`: the binary, its embedded
 documentation, its executable tests, the public site, and the build and release
 inputs. No other repository is needed to build, test, run, document, or release it.
-`README.md` names the tools a checkout expects; `docs/releasing.md` and
-`site/DEPLOYMENT.md` name the credentials publication needs.
+`README.md` names the tools a checkout expects.
 
 Maintainer-directed work arrives with its own task-specific instructions. Follow
 those for what to change and this file for how to work in the checkout; read what
