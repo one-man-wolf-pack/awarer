@@ -70,20 +70,25 @@ func TestStressConcurrentIdenticalRuns(t *testing.T) {
 func TestStressGCWithConcurrentWriters(t *testing.T) {
 	root := initProject(t)
 	h := helper(t)
-	write(t, root, "seed.txt", "seed")
-	if code, _, stderr := awa(t, root, "checkpoint"); code != 0 {
-		t.Fatalf("seed checkpoint: %d %q", code, stderr)
-	}
 
 	const writers = 16
 	// Mix checkpoints, runs, and gc passes firing together.
 	tasks := writers + 4
+	// Churned before the race, not inside it: replacing one file's content leaves the
+	// older checkpoints holding blobs the newest does not reference, so the concurrent
+	// gc has real deletions to race against readers, while a worktree edit inside the
+	// race would abort another task's checkpoint by design.
+	for i := 0; i < tasks; i++ {
+		write(t, root, "churn.txt", strings.Repeat("x", i+1))
+		if code, _, stderr := awa(t, root, "checkpoint", "-m", "seed"); code != 0 {
+			t.Fatalf("seed checkpoint %d: %d %q", i, code, stderr)
+		}
+	}
 	results := runConcurrent(t, tasks, func(i int) cmdResult {
 		switch i % 4 {
 		case 0:
 			return awaCmd(root, "gc", "--keep-last", "1")
 		case 1:
-			write(t, root, "w"+strconv.Itoa(i)+".txt", "w"+strconv.Itoa(i))
 			return awaCmd(root, "checkpoint", "-m", "race")
 		default:
 			return awaCmd(root, "run", "--", h, "-out", "o"+strconv.Itoa(i))
