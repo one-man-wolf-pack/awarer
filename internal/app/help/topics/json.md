@@ -25,9 +25,8 @@ script can capture stdout alone and get only the document.
 
 Global options are honored per command, not universally: a command that does not
 act on `--json` rejects it as a usage error rather than accepting and ignoring
-it. The authoritative list is generated from the parser — see
-[global options](../reference/global-options.md) and the per-command pages under
-[commands](../commands/index.md).
+it. The exhaustive list is in [global options](../reference/global-options.md) and
+the per-command pages under [commands](../commands/index.md).
 
 One case worth stating: `awa docs export` has no `--json`. The export writes its
 own machine contract, `manifest.json`, into the output directory.

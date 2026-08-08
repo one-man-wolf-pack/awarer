@@ -2,9 +2,9 @@
 {{- with .Index }}
 <div class="prose">
   <h1>Documentation</h1>
-  <p>The complete documentation the <code>awa {{ $.Site.Version }}</code> binary carries: {{ .DocumentCount }}
-    documents, exported from that binary and rendered here unchanged. The same content is available offline
-    from the binary itself with <code>awa help topics</code> and <code>awa docs export</code>.</p>
+  <p>The complete documentation for <code>awa {{ $.Site.Version }}</code>: {{ .DocumentCount }} documents.
+    Offline, <code>awa help topics</code> lists the operational topics, <code>awa &lt;command&gt; --help</code>
+    gives command syntax, and <code>awa docs export</code> writes this whole bundle to a directory.</p>
   <p>Machine consumers: <a href="{{ .MachineRefURL }}">the generated CLI reference</a> ({{ .MachineRefSize }} bytes of JSON)
     describes every command, flag, and exit code; <a href="{{ $.Site.LLMsURL }}">llms.txt</a> maps this corpus, and
     <a href="{{ $.Site.LLMsFullURL }}">llms-full.txt</a> carries it in full as Markdown.</p>

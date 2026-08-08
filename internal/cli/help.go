@@ -81,7 +81,7 @@ func writeHelpIndex(w *output.Writer) {
 	w.Line("  awa help refs")
 	w.Line("  awa help exit-codes")
 	w.Line("")
-	w.Line("This binary is the authority for its own version and documentation:")
+	w.Line("The version you are running, and its documentation as files:")
 	w.Line("  awa version                            the installed version")
 	w.Line("  awa docs export --output <directory>   the complete documentation bundle")
 }

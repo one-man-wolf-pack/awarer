@@ -143,7 +143,7 @@ awa run explain --json -- <command>
 
 ## Discovering awa itself
 
-The installed binary is the authority for its own version and documentation:
+Each of these answers for the version you have installed, without a network:
 
 ```text
 awa version                            # the installed version

@@ -921,7 +921,7 @@
     },
     {
       "name": "docs",
-      "summary": "export the documentation this binary carries",
+      "summary": "export the documentation of the installed version",
       "usage": [
         "docs <subcommand>"
       ],
@@ -930,7 +930,7 @@
       "subcommands": [
         {
           "name": "export",
-          "summary": "write the binary's complete documentation bundle to a directory",
+          "summary": "write the complete documentation bundle to a directory",
           "usage": [
             "docs export --output <directory>"
           ],

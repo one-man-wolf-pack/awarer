@@ -117,8 +117,7 @@ behalf — in particular it will not widen or narrow the scan to improve the cac
 hit rate, because that is a policy decision with consequences you should choose
 knowingly.
 
-The full key schema lives in the configuration reference, which is generated from
-the same model the decoder uses:
+The full key schema lives in the configuration reference:
 [awa help config](../reference/configuration.md).
 
 ## See also

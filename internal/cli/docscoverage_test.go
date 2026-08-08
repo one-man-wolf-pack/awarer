@@ -60,7 +60,7 @@ var docCoverage = map[string]coverageOwner{
 	"command:doctor":     {topic: "doctor"},
 	"command:config":     {topic: "quickstart"},
 	"command:state":      {topic: "integrations"},
-	"command:docs":       {topic: "install"},
+	"command:docs":       {topic: "agents"},
 	"command:version":    {topic: "install"},
 	"command:help": {reason: "help is the retrieval surface itself; " +
 		"'awa help topics' is its own index and every topic page is its output"},
@@ -79,7 +79,7 @@ var docCoverage = map[string]coverageOwner{
 	"command:config init":      {topic: "quickstart"},
 	"command:state resolve":    {topic: "integrations"},
 	"command:state compare":    {topic: "integrations"},
-	"command:docs export":      {topic: "install"},
+	"command:docs export":      {topic: "agents"},
 
 	// --- global options -------------------------------------------------------
 	"global:--root":                {topic: "quickstart"},

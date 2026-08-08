@@ -23,9 +23,9 @@ import (
 // and a variable holding that handler would make the registry and this list
 // mutually dependent at package initialization.
 func docsSubcommands() []subcommand {
-	return []subcommand{{name: "export", summary: "write the binary's complete documentation bundle to a directory", run: runDocsExport, help: commandHelp{
+	return []subcommand{{name: "export", summary: "write the complete documentation bundle to a directory", run: runDocsExport, help: commandHelp{
 		usage: []string{"docs export --output <directory>"},
-		long:  "Export every document this binary carries — the operational topics, the generated command reference, the configuration and exit-code reference, and a versioned JSON manifest — into one directory. The destination must not exist yet and its parent must, and there is no force mode: filling in or overwriting something named by mistake is not a recoverable error. Once the destination has been created, a failed or interrupted export leaves it in place and names it; awa never cleans it up. After a crash there is no message, so look at the destination itself: manifest.json is installed last and atomically, so a killed export left either nothing, an incomplete directory without manifest.json, or a complete and valid export. A directory without manifest.json is not an export — remove it yourself before retrying, because a retry refuses an existing path rather than resuming into it. Output is deterministic for a given binary and reads no project, config, git, network, or clock state, so two exports of the same binary are byte-for-byte identical.",
+		long:  "Export every document of the installed version — the operational topics, the generated command reference, the configuration and exit-code reference, and a versioned JSON manifest — into one directory. The destination must not exist yet and its parent must, and there is no force mode: filling in or overwriting something named by mistake is not a recoverable error. Once the destination has been created, a failed or interrupted export leaves it in place and names it; awa never cleans it up. After a crash there is no message, so look at the destination itself: manifest.json is installed last and atomically, so a killed export left either nothing, an incomplete directory without manifest.json, or a complete and valid export. A directory without manifest.json is not an export — remove it yourself before retrying, because a retry refuses an existing path rather than resuming into it. Output is deterministic for a given binary and reads no project, config, git, network, or clock state, so two exports of the same binary are byte-for-byte identical.",
 		flags: []flagHelp{
 			{"--output <directory>", "destination directory to create; it must not exist yet, and its parent must exist", ""},
 		},
@@ -42,7 +42,7 @@ func docsCapabilities() []capability { return unionCapabilities(docsSubcommands(
 // from docsSubcommands so the names live in exactly one place.
 var docsCmdHelp = commandHelp{
 	usage: []string{"docs <subcommand>"},
-	long:  "Publish the documentation the installed binary carries. The binary is the authority for its own version and documentation: any website or bundle is a projection of one released export, never a richer independent manual.",
+	long:  "Write the documentation of the installed version to files. The bundle collects the operational topics awa help shows, the generated command reference, and the configuration and exit-code reference as flat Markdown, plus a machine-readable reference and a manifest.",
 }
 
 // runDocs dispatches "awa docs <subcommand>".
