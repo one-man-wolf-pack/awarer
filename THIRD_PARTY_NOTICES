@@ -105,7 +105,7 @@ SOFTWARE.
 
 ================================================================================
 Component: github.com/mattn/go-isatty
-Version:   v0.0.20
+Version:   v0.0.24
 License:   MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -446,7 +446,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================================
 Component: modernc.org/libc
-Version:   v1.74.1
+Version:   v1.74.4
 License:   BSD-3-Clause AND MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -922,7 +922,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/sqlite
-Version:   v1.55.0
+Version:   v1.56.0
 License:   BSD-3-Clause AND LicenseRef-SQLite-Public-Domain
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
