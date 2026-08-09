@@ -128,7 +128,7 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 	// scoped to is scanned even if a default/baseline/ignore-file rule would drop
 	// it. Protected paths were already handled above and stay excluded regardless.
 	if !w.inc.overridesExcludes() {
-		if dec := w.eng.decide(rel, isDir); dec.Ignored {
+		if w.eng.ignores(rel, isDir) {
 			if isDir {
 				return fs.SkipDir
 			}
@@ -498,7 +498,7 @@ func (w *walk) walkRealChildren(realDir, virtualDir string, depth int, chain map
 			continue
 		}
 		// As in base(), an explicit narrowed scope outranks the ignore engine.
-		if !w.inc.overridesExcludes() && w.eng.decide(childVirtual, isDir).Ignored {
+		if !w.inc.overridesExcludes() && w.eng.ignores(childVirtual, isDir) {
 			continue
 		}
 

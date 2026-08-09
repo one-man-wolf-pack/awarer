@@ -9,73 +9,6 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
-// layer identifies an ignore precedence band. Higher values win.
-type layer int
-
-const (
-	layerBuiltin   layer = iota // configured/built-in excludes (lowest)
-	layerGitignore              // per-directory .gitignore
-	layerAwaignore              // per-directory .awaignore (overrides gitignore)
-	layerCLI                    // command-line include/exclude (highest, future)
-)
-
-func (l layer) String() string {
-	switch l {
-	case layerBuiltin:
-		return "builtin-exclude"
-	case layerGitignore:
-		return ".gitignore"
-	case layerAwaignore:
-		return ".awaignore"
-	case layerCLI:
-		return "cli"
-	default:
-		return "unknown"
-	}
-}
-
-// Decision is the result of evaluating a path against the ignore rules. Rule
-// explains which rule decided, for diagnostics ("why is this path
-// included/excluded?").
-type Decision struct {
-	Ignored bool
-	Rule    Rule
-}
-
-// Rule names the deciding ignore rule, or reports that no rule matched.
-type Rule struct {
-	Matched bool
-	Layer   layer
-	Source  string // ".gitignore" at a dir, or "config" for built-in excludes
-	Pattern string // original pattern text
-	LineNo  int    // 1-based line within Source, when known
-	Negated bool   // whether the deciding pattern re-included the path
-}
-
-// patternMeta records where a compiled pattern came from, so a decision can be
-// explained in terms of the original ignore file and line.
-type patternMeta struct {
-	layer   layer
-	source  string
-	pattern string
-	lineNo  int
-}
-
-// rewritten is a directory's contribution to one layer: rewritten, root-relative
-// pattern lines and their parallel metadata (1:1 with lines).
-type rewritten struct {
-	lines []string
-	meta  []patternMeta
-}
-
-// compiled is a combined matcher for a directory plus the metadata needed to
-// explain its decisions. meta is aligned 1:1 with the lines compiled, so a
-// matched pattern's LineNo indexes it directly.
-type compiled struct {
-	matcher *ignore.GitIgnore
-	meta    []patternMeta
-}
-
 // ignoreEngine evaluates paths against the layered ignore rules. Built-in
 // excludes, per-directory .gitignore, and per-directory .awaignore are merged
 // into one ordered pattern list per directory — built-in first, then all
@@ -83,33 +16,36 @@ type compiled struct {
 // layer and deepest file win, and a higher-layer negation can re-include a path
 // a lower layer excluded. Nested patterns are rewritten to root-relative form so
 // a single matcher can evaluate them.
+//
+// gitByDir and awaByDir hold each directory's own rewritten patterns, so they name
+// the effective rule boundaries; cache routes a directory to the compiled matcher
+// that decides for it, which for a directory adding no patterns of its own is
+// literally its nearest ancestor boundary's instance. A compiled matcher is
+// immutable, so many directories can share one, and the expensive regexp state
+// therefore scales with rule boundaries rather than with directory count.
 type ignoreEngine struct {
 	useGitignore bool
 	useAwaignore bool
 
-	builtin  rewritten
-	gitByDir map[string]rewritten
-	awaByDir map[string]rewritten
-	cache    map[string]*compiled
+	builtin  []string
+	gitByDir map[string][]string
+	awaByDir map[string][]string
+	cache    map[string]*ignore.GitIgnore
 }
 
 func newIgnoreEngine(builtinExcludes []string, useGitignore, useAwaignore bool) *ignoreEngine {
 	e := &ignoreEngine{
 		useGitignore: useGitignore,
 		useAwaignore: useAwaignore,
-		gitByDir:     map[string]rewritten{},
-		awaByDir:     map[string]rewritten{},
-		cache:        map[string]*compiled{},
+		gitByDir:     map[string][]string{},
+		awaByDir:     map[string][]string{},
+		cache:        map[string]*ignore.GitIgnore{},
 	}
 	// Built-in excludes are root-relative as written and need no rewriting.
-	for i, line := range builtinExcludes {
-		if !isPattern(line) {
-			continue
+	for _, line := range builtinExcludes {
+		if isPattern(line) {
+			e.builtin = append(e.builtin, line)
 		}
-		e.builtin.lines = append(e.builtin.lines, line)
-		e.builtin.meta = append(e.builtin.meta, patternMeta{
-			layer: layerBuiltin, source: "config", pattern: line, lineNo: i + 1,
-		})
 	}
 	return e
 }
@@ -121,39 +57,40 @@ func newIgnoreEngine(builtinExcludes []string, useGitignore, useAwaignore bool) 
 // called once per in-scope directory as the walk enters it, before the
 // directory's children are evaluated. A read error other than "not found" is
 // returned so a permission failure is not silently treated as "no rules".
+//
+// A load never invalidates anything already cached. A directory's contribution
+// only ever appears in the combined matcher of that virtual directory and its
+// descendants, and no combined matcher is built before the directory it decides
+// for has been loaded: the walk loads the root before deciding anything under it,
+// and loads every other directory — ordinary, followed-symlink, or nested inside a
+// followed subtree — before evaluating its children, while the directory entry
+// itself is decided by its parent's matcher. So a rule found in one subtree can
+// never invalidate an already compiled ancestor or sibling matcher, and compiled
+// matchers stay immutable for the life of the walk.
 func (e *ignoreEngine) loadDirAt(absDir, dirRel string) error {
 	if e.useGitignore {
-		r, err := loadIgnoreFile(absDir, dirRel, ".gitignore", layerGitignore)
+		lines, err := loadIgnoreFile(absDir, dirRel, ".gitignore")
 		if err != nil {
 			return err
 		}
-		if len(r.lines) > 0 {
-			e.gitByDir[dirRel] = r
-			e.invalidateCache()
+		if len(lines) > 0 {
+			e.gitByDir[dirRel] = lines
 		}
 	}
 	if e.useAwaignore {
-		r, err := loadIgnoreFile(absDir, dirRel, ".awaignore", layerAwaignore)
+		lines, err := loadIgnoreFile(absDir, dirRel, ".awaignore")
 		if err != nil {
 			return err
 		}
-		if len(r.lines) > 0 {
-			e.awaByDir[dirRel] = r
-			e.invalidateCache()
+		if len(lines) > 0 {
+			e.awaByDir[dirRel] = lines
 		}
 	}
 	return nil
 }
 
-// invalidateCache drops cached combined matchers. Directories are loaded before
-// their children are evaluated, and a directory's own file is loaded after the
-// directory itself was decided, so the small cost of recompiling on demand keeps
-// the logic simple and correct.
-func (e *ignoreEngine) invalidateCache() {
-	e.cache = map[string]*compiled{}
-}
-
-// decide evaluates rel (a slash path relative to root) for a file or directory.
+// ignores reports whether rel (a slash path relative to root) is excluded by the
+// ignore rules in force for its directory.
 // isDir must report whether rel names a directory, because a directory-only pattern
 // (e.g. "build/") applies to the directory entry itself — not only its descendants —
 // and the underlying matcher only recognizes that when the path is queried in its
@@ -162,60 +99,79 @@ func (e *ignoreEngine) invalidateCache() {
 // whether the directory existed when a baseline was recorded, and keeps a dir-only
 // pattern from ever matching a like-named file. A trailing slash never changes how a
 // non-dir-only pattern matches, so this is safe for every pattern.
-func (e *ignoreEngine) decide(rel string, isDir bool) Decision {
-	dirRel := path.Dir(rel)
-	if dirRel == "." {
-		dirRel = ""
-	}
-	c := e.combinedFor(dirRel)
+func (e *ignoreEngine) ignores(rel string, isDir bool) bool {
 	query := rel
 	if isDir {
 		query = rel + "/"
 	}
-	matched, pat := c.matcher.MatchesPathHow(query)
-	if pat == nil {
-		return Decision{Ignored: false, Rule: Rule{Matched: false}}
-	}
-	m := patternMeta{}
-	if idx := pat.LineNo - 1; idx >= 0 && idx < len(c.meta) {
-		m = c.meta[idx]
-	}
-	return Decision{
-		Ignored: matched,
-		Rule: Rule{
-			Matched: true, Layer: m.layer, Source: m.source,
-			Pattern: m.pattern, LineNo: m.lineNo, Negated: pat.Negate,
-		},
-	}
+	return e.combinedFor(parentDir(rel)).MatchesPath(query)
 }
 
-// combinedFor returns the cached combined matcher for files in directory dirRel,
-// building it from the built-in, .gitignore, and .awaignore contributions of
-// dirRel and all its ancestors, in precedence order.
-func (e *ignoreEngine) combinedFor(dirRel string) *compiled {
+// combinedFor returns the combined matcher deciding for files in directory dirRel.
+// A directory that contributes no patterns of its own has exactly the effective
+// rules of its parent, so it shares its parent's compiled instance rather than
+// compiling an identical one; only a directory that is an effective rule boundary
+// — and the root, which carries the built-in layer — compiles its own. The cache
+// then maps every directory to a matcher, but distinct matchers exist only per
+// boundary.
+func (e *ignoreEngine) combinedFor(dirRel string) *ignore.GitIgnore {
 	if c, ok := e.cache[dirRel]; ok {
 		return c
 	}
-	chain := ancestorChain(dirRel)
-
-	lines := append([]string(nil), e.builtin.lines...)
-	meta := append([]patternMeta(nil), e.builtin.meta...)
-	for _, d := range chain {
-		if r, ok := e.gitByDir[d]; ok {
-			lines = append(lines, r.lines...)
-			meta = append(meta, r.meta...)
-		}
+	var c *ignore.GitIgnore
+	if dirRel == "" || e.contributes(dirRel) {
+		c = e.compileFor(dirRel)
+	} else {
+		c = e.combinedFor(parentDir(dirRel))
 	}
-	for _, d := range chain {
-		if r, ok := e.awaByDir[d]; ok {
-			lines = append(lines, r.lines...)
-			meta = append(meta, r.meta...)
-		}
-	}
-
-	c := &compiled{matcher: ignore.CompileIgnoreLines(lines...), meta: meta}
 	e.cache[dirRel] = c
 	return c
+}
+
+// contributes reports whether dirRel is an effective rule boundary: its own ignore
+// files supplied at least one pattern. Comment-only and empty files leave no
+// contribution behind (loadDirAt stores nothing for them), so they are not
+// boundaries.
+func (e *ignoreEngine) contributes(dirRel string) bool {
+	if _, ok := e.gitByDir[dirRel]; ok {
+		return true
+	}
+	_, ok := e.awaByDir[dirRel]
+	return ok
+}
+
+// parentDir returns the virtual parent of a slash-separated project-relative path:
+// "a/b" yields "a" and a top-level "a" yields the project root "". It is the single
+// spelling of that step, used both to find the directory deciding for a path and to
+// walk a directory up to its nearest ancestor rule boundary.
+//
+// The root is its own parent — parentDir("") is "" — so it is a fixed point, not a
+// terminator. Anything walking up with it must stop at the root on its own;
+// combinedFor does that by always compiling the root rather than resolving past it.
+func parentDir(rel string) string {
+	if d := path.Dir(rel); d != "." {
+		return d
+	}
+	return ""
+}
+
+// compileFor builds the combined matcher for a boundary directory from the
+// built-in, .gitignore, and .awaignore contributions of dirRel and all its
+// ancestors, in precedence order. The whole ordered chain is compiled afresh rather
+// than appended to the parent's matcher: a local .gitignore must still precede an
+// inherited .awaignore, which appending would invert.
+func (e *ignoreEngine) compileFor(dirRel string) *ignore.GitIgnore {
+	chain := ancestorChain(dirRel)
+
+	lines := append([]string(nil), e.builtin...)
+	for _, d := range chain {
+		lines = append(lines, e.gitByDir[d]...)
+	}
+	for _, d := range chain {
+		lines = append(lines, e.awaByDir[d]...)
+	}
+
+	return ignore.CompileIgnoreLines(lines...)
 }
 
 // ancestorChain returns dirRel and all its ancestors, shallowest first, ending
@@ -239,35 +195,28 @@ func ancestorChain(dirRel string) []string {
 	return chain
 }
 
-// loadIgnoreFile reads and rewrites one ignore file. dirRel is the directory
-// holding the file ("" for root); patterns are rewritten to be relative to the
-// project root so a single combined matcher can evaluate them.
-func loadIgnoreFile(absDir, dirRel, name string, l layer) (rewritten, error) {
+// loadIgnoreFile reads one ignore file and returns its pattern lines. dirRel is the
+// directory holding the file ("" for root); patterns are rewritten to be relative to
+// the project root so a single combined matcher can evaluate them. Blank and comment
+// lines are dropped, so a file carrying none leaves no contribution at all.
+func loadIgnoreFile(absDir, dirRel, name string) ([]string, error) {
 	// absDir is an OS filesystem path, so join with filepath; the slash-separated
 	// path helpers elsewhere are only for project-relative keys.
 	data, err := os.ReadFile(filepath.Join(absDir, name))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return rewritten{}, nil
+			return nil, nil
 		}
-		return rewritten{}, err
+		return nil, err
 	}
-	source := name
-	if dirRel != "" {
-		source = dirRel + "/" + name
-	}
-	var r rewritten
-	for i, raw := range strings.Split(string(data), "\n") {
+	var lines []string
+	for _, raw := range strings.Split(string(data), "\n") {
 		if !isPattern(raw) {
 			continue
 		}
-		line := rewritePattern(dirRel, raw)
-		r.lines = append(r.lines, line)
-		r.meta = append(r.meta, patternMeta{
-			layer: l, source: source, pattern: strings.TrimRight(raw, "\r"), lineNo: i + 1,
-		})
+		lines = append(lines, rewritePattern(dirRel, raw))
 	}
-	return r, nil
+	return lines, nil
 }
 
 // isPattern reports whether a raw ignore line carries a pattern (not blank, not a
