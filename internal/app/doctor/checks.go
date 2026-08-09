@@ -95,17 +95,23 @@ func (s *Service) checkCheckpoints(ctx context.Context, layout paths.Layout, str
 		return
 	}
 
+	// One verifier serves the whole walk: blob content is immutable and addressed by
+	// hash, so a hash this walk has already fully verified needs no second read no
+	// matter how many checkpoints reference it. Histories reference the same content
+	// tens of times over, and the verifier is discarded when this walk returns.
+	verifier := newCheckpointBlobVerifier(layout, strict)
+
 	for _, id := range ids {
 		// Honor cancellation mid-walk: a large local history is interruptible rather than
 		// checked to completion. Run re-reads ctx.Err after this check and surfaces it.
 		if ctx.Err() != nil {
 			return
 		}
-		s.checkOneCheckpoint(ctx, layout, repo, id, strict, rep)
+		s.checkOneCheckpoint(ctx, layout, repo, id, verifier, rep)
 	}
 }
 
-func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, repo *checkpointjson.Repo, id checkpoint.CheckpointID, strict bool, rep *report) {
+func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, repo *checkpointjson.Repo, id checkpoint.CheckpointID, verifier *checkpointBlobVerifier, rep *report) {
 	checkpointPath := filepath.Join(layout.CheckpointsDir(), id.String())
 
 	// The header is read for its own integrity, not its content: an unreadable header
@@ -139,10 +145,6 @@ func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, r
 	}
 	defer func() { _ = cur.Close() }()
 
-	// The hasher lets strict mode recompute blob digests; presence checks do not use it.
-	hasher := blake3hash.New()
-	blobs := blobstore.New(layout, hasher)
-
 	before := len(rep.findings)
 	for cur.Next() {
 		rec := cur.Record()
@@ -153,7 +155,7 @@ func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, r
 		if e.Kind != worktree.KindRegular || e.Storage != worktree.StorageBlob {
 			continue // directories, symlinks, and hash-only entries carry no blob
 		}
-		s.verifyBlob(blobs, hasher, e, strict, checkpointPath, rep)
+		verifier.verify(e, checkpointPath, rep)
 	}
 	if err := cur.Err(); err != nil {
 		code, msg := classifyManifestErr(err)
@@ -166,42 +168,114 @@ func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, r
 	}
 }
 
-// verifyBlob reports a missing or (in strict mode) corrupt blob referenced by a
-// checkpoint entry. Presence is the cheap default check; strict mode additionally
-// streams the blob through the checkpoint's hasher and confirms it still matches its
-// content address, catching a blob whose bytes were altered in place.
-func (s *Service) verifyBlob(blobs *blobstore.FS, hasher hashing.Hasher, e worktree.Entry, strict bool, checkpointPath string, rep *report) {
-	present, err := blobs.Has(e.Content)
+// checkpointBlobVerifier verifies the blobs referenced by one checkpoint walk. It owns
+// the store and hasher for that walk and remembers which content hashes it has already
+// verified in full, so content referenced by many checkpoints is read once.
+//
+// Only success is remembered. A failure is deliberately re-checked at every reference:
+// that keeps one actionable finding per damaged location, and stops a transient read
+// error from becoming an invocation-wide verdict. The set therefore grows with unique
+// verified content, never with references, and holds no path, entry, or blob bytes.
+//
+// A blob replaced or removed by an outside actor after this walk verified it is outside
+// the cooperative single-process boundary; immutable content addressed by hash needs no
+// re-reading ceremony for that race.
+type checkpointBlobVerifier struct {
+	blobs    *blobstore.FS
+	hasher   hashing.Hasher
+	strict   bool
+	verified map[hashing.ContentHash]struct{}
+}
+
+func newCheckpointBlobVerifier(layout paths.Layout, strict bool) *checkpointBlobVerifier {
+	// The hasher lets strict mode recompute blob digests; presence checks do not use it.
+	hasher := blake3hash.New()
+	return &checkpointBlobVerifier{
+		blobs:    blobstore.New(layout, hasher),
+		hasher:   hasher,
+		strict:   strict,
+		verified: make(map[hashing.ContentHash]struct{}),
+	}
+}
+
+// verify reports a missing or (in strict mode) corrupt blob referenced by a checkpoint
+// entry. The entry is still read from its own checkpoint's manifest and still carries
+// its own path and subject; only the blob read itself is skipped once the same hash has
+// passed the check this mode selects.
+func (v *checkpointBlobVerifier) verify(e worktree.Entry, checkpointPath string, rep *report) {
+	if _, done := v.verified[e.Content]; done {
+		return
+	}
+	if v.strict {
+		v.verifyContent(e, checkpointPath, rep)
+		return
+	}
+	v.verifyPresence(e, checkpointPath, rep)
+}
+
+// verifyPresence is the default check: the blob must be there, which costs no content
+// read at all.
+func (v *checkpointBlobVerifier) verifyPresence(e worktree.Entry, checkpointPath string, rep *report) {
+	present, err := v.blobs.Has(e.Content)
 	if err != nil {
 		rep.add(finding(doctor.CodeCheckpointMissingBlob, doctor.SeverityError, doctor.SubsystemCheckpoints,
-			checkpointPath, e.Path.String(), "cannot read referenced blob "+e.Content.String()+": "+err.Error(), false))
+			checkpointPath, e.Path.String(), unreadableBlobMessage(e.Content, err), false))
 		return
 	}
 	if !present {
 		rep.add(finding(doctor.CodeCheckpointMissingBlob, doctor.SeverityError, doctor.SubsystemCheckpoints,
-			checkpointPath, e.Path.String(), "checkpoint entry references a missing blob "+e.Content.String(), false))
+			checkpointPath, e.Path.String(), missingBlobMessage(e.Content), false))
 		return
 	}
-	if !strict {
-		return
-	}
-	rc, err := blobs.Open(e.Content)
+	v.verified[e.Content] = struct{}{}
+}
+
+// missingBlobMessage and unreadableBlobMessage name the two ways access to a referenced
+// blob fails. Both modes report through them: the default check learns absence from a
+// false presence answer and strict mode from os.ErrNotExist out of the open that is
+// that same probe, so neither the wording nor the store's own reason can drift apart
+// between them.
+func missingBlobMessage(h hashing.ContentHash) string {
+	return "checkpoint entry references a missing blob " + h.String()
+}
+
+func unreadableBlobMessage(h hashing.ContentHash, err error) string {
+	return "cannot read referenced blob " + h.String() + ": " + err.Error()
+}
+
+// verifyContent is the strict check: the blob is streamed through the walk's hasher and
+// must still match its content address, catching bytes altered in place. The single
+// open is the whole presence check too — it is the same root-anchored, no-follow,
+// regular-file open the presence check performs, and it hands back the very descriptor
+// the bytes are read from, so preceding it with a second traversal would prove nothing
+// the open does not.
+func (v *checkpointBlobVerifier) verifyContent(e worktree.Entry, checkpointPath string, rep *report) {
+	rc, err := v.blobs.Open(e.Content)
 	if err != nil {
+		// This open is the presence probe, so it reports what the presence probe reports:
+		// absence is the ordinary missing-blob damage, and anything else the store
+		// refuses is the same unreadable blob the default check names.
+		msg := unreadableBlobMessage(e.Content, err)
+		if errors.Is(err, os.ErrNotExist) {
+			msg = missingBlobMessage(e.Content)
+		}
 		rep.add(finding(doctor.CodeCheckpointMissingBlob, doctor.SeverityError, doctor.SubsystemCheckpoints,
-			checkpointPath, e.Path.String(), "cannot open referenced blob "+e.Content.String()+": "+err.Error(), false))
+			checkpointPath, e.Path.String(), msg, false))
 		return
 	}
-	got, herr := hasher.HashReader(rc)
+	got, herr := v.hasher.HashReader(rc)
 	_ = rc.Close()
 	if herr != nil {
 		rep.add(finding(doctor.CodeCheckpointMissingBlob, doctor.SeverityError, doctor.SubsystemCheckpoints,
 			checkpointPath, e.Path.String(), "cannot rehash referenced blob "+e.Content.String()+": "+herr.Error(), false))
 		return
 	}
-	if got.String() != e.Content.String() {
+	if got != e.Content {
 		rep.add(finding(doctor.CodeCheckpointMissingBlob, doctor.SeverityError, doctor.SubsystemCheckpoints,
 			checkpointPath, e.Path.String(), "referenced blob is present but does not match its address "+e.Content.String(), false))
+		return
 	}
+	v.verified[e.Content] = struct{}{}
 }
 
 // classifyManifestErr maps a checkpoint-store error to the most specific finding

@@ -23,6 +23,8 @@ import (
 	"awarer/internal/domain/checkpoint"
 	"awarer/internal/domain/config"
 	dom "awarer/internal/domain/doctor"
+	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/paths"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
 	"awarer/internal/infra/blobstore"
@@ -216,23 +218,9 @@ func TestMissingBlobReported(t *testing.T) {
 	layout, _ := e.project.Paths()
 
 	// Delete the blob the checkpoint's calc.go entry references.
-	checkpoints := checkpointjson.NewRepo(layout)
-	var deleted bool
-	for _, ent := range manifestEntries(t, checkpoints, h.ID) {
-		if ent.Storage == worktree.StorageBlob {
-			bp, err := blob.PathFor(ent.Content)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(filepath.Join(layout.BlobsDir(), filepath.FromSlash(bp.Rel()))); err != nil {
-				t.Fatal(err)
-			}
-			deleted = true
-			break
-		}
-	}
-	if !deleted {
-		t.Fatal("no blob entry to delete")
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+	if err := os.Remove(blobPathFor(t, layout, ent.Content)); err != nil {
+		t.Fatal(err)
 	}
 
 	res := e.run(t, noGit(), Request{})
@@ -278,14 +266,8 @@ func TestStrictDetectsTamperedBlob(t *testing.T) {
 	// Overwrite a referenced blob in place: it is present but no longer hashes to
 	// its address. Default doctor only checks presence, so it passes; --strict
 	// recomputes the hash and catches the tampering.
-	checkpoints := checkpointjson.NewRepo(layout)
-	for _, ent := range manifestEntries(t, checkpoints, h.ID) {
-		if ent.Storage == worktree.StorageBlob {
-			bp, _ := blob.PathFor(ent.Content)
-			overwrite(t, filepath.Join(layout.BlobsDir(), filepath.FromSlash(bp.Rel())), "tampered bytes")
-			break
-		}
-	}
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+	overwrite(t, blobPathFor(t, layout, ent.Content), "tampered bytes")
 
 	if res := e.run(t, noGit(), Request{}); res.Health() != dom.HealthOK {
 		t.Fatalf("non-strict doctor should pass on a present (if tampered) blob, got %v", res.Health())
@@ -294,6 +276,292 @@ func TestStrictDetectsTamperedBlob(t *testing.T) {
 	if got := findingsByCode(res, dom.CodeCheckpointMissingBlob); len(got) != 1 {
 		t.Fatalf("strict doctor should flag the tampered blob, got %+v", res.Findings())
 	}
+}
+
+// blobPathFor locates the stored file backing a content hash, so a test can remove or
+// rewrite exactly the blob a checkpoint entry references.
+func blobPathFor(t *testing.T, layout paths.Layout, h hashing.ContentHash) string {
+	t.Helper()
+	bp, err := blob.PathFor(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(layout.BlobsDir(), filepath.FromSlash(bp.Rel()))
+}
+
+// blobEntryFor returns the manifest entry a checkpoint recorded for one worktree path.
+func blobEntryFor(t *testing.T, repo *checkpointjson.Repo, id checkpoint.CheckpointID, path string) worktree.Entry {
+	t.Helper()
+	for _, ent := range manifestEntries(t, repo, id) {
+		if ent.Storage == worktree.StorageBlob && ent.Path.String() == path {
+			return ent
+		}
+	}
+	t.Fatalf("checkpoint %s has no blob entry for %s", id.Short(), path)
+	return worktree.Entry{}
+}
+
+// TestVerifiedBlobSkipsRepeatedIO pins the invocation-local reuse: once a hash has
+// passed its presence check, another reference to the same hash must not read the store
+// again. The oracle is real store state — the blob is deleted between the two
+// verifications, so a repeated read could only report it missing.
+func TestVerifiedBlobSkipsRepeatedIO(t *testing.T) {
+	e := newEnv(t)
+	h := e.checkpointWith(t, e.cfg, map[string]string{"calc.go": "package calc"})
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+
+	v := newCheckpointBlobVerifier(layout, false)
+	rep := &report{}
+	v.verify(ent, "checkpoint", rep)
+	if len(rep.findings) != 0 {
+		t.Fatalf("a present blob must verify cleanly, got %+v", rep.findings)
+	}
+
+	if err := os.Remove(blobPathFor(t, layout, ent.Content)); err != nil {
+		t.Fatal(err)
+	}
+
+	v.verify(ent, "checkpoint", rep)
+	if len(rep.findings) != 0 {
+		t.Fatalf("an already verified hash must not be read again, got %+v", rep.findings)
+	}
+
+	// Control: the deletion really is observable, so the assertion above is about reuse
+	// rather than about a check that cannot fail.
+	fresh := &report{}
+	newCheckpointBlobVerifier(layout, false).verify(ent, "checkpoint", fresh)
+	if len(fresh.findings) != 1 {
+		t.Fatalf("a verifier that has not seen the hash must report the deleted blob, got %+v", fresh.findings)
+	}
+}
+
+// TestStrictVerifiedBlobSkipsRepeatedIO is the strict counterpart: a hash whose content
+// has been rehashed and matched is not opened or rehashed again. The blob is tampered
+// between the two verifications, so a repeated read could only report a mismatch.
+func TestStrictVerifiedBlobSkipsRepeatedIO(t *testing.T) {
+	e := newEnv(t)
+	h := e.checkpointWith(t, e.cfg, map[string]string{"calc.go": "package calc"})
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+
+	v := newCheckpointBlobVerifier(layout, true)
+	rep := &report{}
+	v.verify(ent, "checkpoint", rep)
+	if len(rep.findings) != 0 {
+		t.Fatalf("an intact blob must verify cleanly in strict mode, got %+v", rep.findings)
+	}
+
+	overwrite(t, blobPathFor(t, layout, ent.Content), "tampered bytes")
+
+	v.verify(ent, "checkpoint", rep)
+	if len(rep.findings) != 0 {
+		t.Fatalf("an already rehashed hash must not be read again, got %+v", rep.findings)
+	}
+
+	fresh := &report{}
+	newCheckpointBlobVerifier(layout, true).verify(ent, "checkpoint", fresh)
+	if len(fresh.findings) != 1 {
+		t.Fatalf("a verifier that has not seen the hash must report the tampered blob, got %+v", fresh.findings)
+	}
+}
+
+// TestStrictMissingBlobKeepsMissingMessage pins strict classification of absent
+// content: the single strict open replaces the presence check, so a blob that is simply
+// gone must still be diagnosed as missing rather than as an unreadable one.
+func TestStrictMissingBlobKeepsMissingMessage(t *testing.T) {
+	e := newEnv(t)
+	h := e.checkpointWith(t, e.cfg, map[string]string{"calc.go": "package calc"})
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+	if err := os.Remove(blobPathFor(t, layout, ent.Content)); err != nil {
+		t.Fatal(err)
+	}
+
+	res := e.run(t, noGit(), Request{Strict: true})
+	got := findingsByCode(res, dom.CodeCheckpointMissingBlob)
+	if len(got) != 1 {
+		t.Fatalf("want one missing-blob finding, got %+v", got)
+	}
+	if !strings.Contains(got[0].Message(), "references a missing blob") {
+		t.Fatalf("want the missing-blob message, got %q", got[0].Message())
+	}
+}
+
+// TestUnreadableBlobIsClassifiedInBothModes pins the other side of that classification:
+// a blob the store rejects for a reason other than absence (here its path is no longer a
+// regular file) is unreadable rather than missing, and says so identically in both modes
+// — strict mode reads it through the open that replaced its presence preflight, which is
+// an implementation detail the diagnosis must not expose. Both carry the store's own
+// rejection reason.
+func TestUnreadableBlobIsClassifiedInBothModes(t *testing.T) {
+	e := newEnv(t)
+	h := e.checkpointWith(t, e.cfg, map[string]string{"calc.go": "package calc"})
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), h.ID, "calc.go")
+	path := blobPathFor(t, layout, ent.Content)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	message := map[string]string{}
+	for _, tc := range []struct {
+		name   string
+		strict bool
+	}{
+		{name: "default", strict: false},
+		{name: "strict", strict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := e.run(t, noGit(), Request{Strict: tc.strict})
+			got := findingsByCode(res, dom.CodeCheckpointMissingBlob)
+			if len(got) != 1 {
+				t.Fatalf("want one unreadable-blob finding, got %+v", got)
+			}
+			if !strings.Contains(got[0].Message(), "cannot read referenced blob") {
+				t.Fatalf("want the unreadable-blob message, got %q", got[0].Message())
+			}
+			if !strings.Contains(got[0].Message(), "not a regular file") {
+				t.Fatalf("want the store's own rejection reason, got %q", got[0].Message())
+			}
+			message[tc.name] = got[0].Message()
+		})
+	}
+
+	// Each mode builds this message on its own path, so equality — not a shared prefix —
+	// is what keeps the removed two-step implementation from reappearing as a second
+	// wording.
+	if message["default"] != message["strict"] {
+		t.Fatalf("the modes must report the same damage identically:\n default: %q\n strict:  %q",
+			message["default"], message["strict"])
+	}
+}
+
+// checkpointsSharingBlob records two checkpoints that both reference one piece of
+// content through two entry paths, so a single blob backs four manifest references
+// spread over two checkpoints.
+func (e *env) checkpointsSharingBlob(t *testing.T) (first, second checkpoint.CheckpointHeader) {
+	t.Helper()
+	first = e.checkpointWith(t, e.cfg, map[string]string{"one.go": "package shared", "two.go": "package shared"})
+	second = e.checkpointWith(t, e.cfg, map[string]string{"later.go": "package later"})
+	return first, second
+}
+
+// assertSharedBlobAttribution requires exactly one finding per referencing manifest
+// entry: both entry paths, in both checkpoints, each reported once at its own
+// checkpoint path. Deduplicated output — or a hash recorded before it was verified —
+// collapses this set.
+func assertSharedBlobAttribution(t *testing.T, got []dom.Finding, layout paths.Layout, ids ...checkpoint.CheckpointID) {
+	t.Helper()
+	seen := make(map[[2]string]int, len(got))
+	for _, f := range got {
+		seen[[2]string{f.Path(), f.Subject()}]++
+	}
+	for _, id := range ids {
+		for _, entry := range []string{"one.go", "two.go"} {
+			at := [2]string{filepath.Join(layout.CheckpointsDir(), id.String()), entry}
+			if seen[at] != 1 {
+				t.Fatalf("want exactly one finding for %v, got %d (all: %+v)", at, seen[at], got)
+			}
+		}
+	}
+	if len(seen) != 2*len(ids) {
+		t.Fatalf("unexpected finding locations: %+v", seen)
+	}
+}
+
+// TestReusedBlobStillStreamsEveryCheckpoint pins the two halves of the reuse contract
+// that only show up across checkpoints: one verifier serves the whole walk, and a reused
+// hash stops the blob read only — the second checkpoint's manifest is still opened,
+// streamed, and counted as a passed check. The blob is deleted between the two
+// checkpoints, so nothing but the first checkpoint's success can keep the second clean.
+func TestReusedBlobStillStreamsEveryCheckpoint(t *testing.T) {
+	e := newEnv(t)
+	first, second := e.checkpointsSharingBlob(t)
+	layout, _ := e.project.Paths()
+	repo := checkpointjson.NewRepo(layout)
+	ent := blobEntryFor(t, repo, first.ID, "one.go")
+
+	s := New(noGit())
+	v := newCheckpointBlobVerifier(layout, false)
+	rep := &report{}
+	s.checkOneCheckpoint(context.Background(), layout, repo, first.ID, v, rep)
+	if len(rep.findings) != 0 || rep.passed != 1 {
+		t.Fatalf("the first checkpoint must pass cleanly, got %d passed and %+v", rep.passed, rep.findings)
+	}
+
+	if err := os.Remove(blobPathFor(t, layout, ent.Content)); err != nil {
+		t.Fatal(err)
+	}
+
+	s.checkOneCheckpoint(context.Background(), layout, repo, second.ID, v, rep)
+	if len(rep.findings) != 0 {
+		t.Fatalf("the shared hash was already verified, so it must not be read again: %+v", rep.findings)
+	}
+	if rep.passed != 2 {
+		t.Fatalf("the second checkpoint must still be streamed and counted, got %d passed", rep.passed)
+	}
+
+	// Control: without that earlier success the same checkpoint reports both of its
+	// references to the deleted blob, so the assertions above are about reuse.
+	fresh := &report{}
+	s.checkOneCheckpoint(context.Background(), layout, repo, second.ID, newCheckpointBlobVerifier(layout, false), fresh)
+	if len(fresh.findings) != 2 {
+		t.Fatalf("want both references to the deleted blob reported, got %+v", fresh.findings)
+	}
+}
+
+// TestMissingBlobReportedForEveryDuplicateReference proves reuse never suppresses a
+// damaged location: an absent blob referenced four times is reported four times, each
+// at its own checkpoint and entry path.
+func TestMissingBlobReportedForEveryDuplicateReference(t *testing.T) {
+	e := newEnv(t)
+	first, second := e.checkpointsSharingBlob(t)
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), first.ID, "one.go")
+	if err := os.Remove(blobPathFor(t, layout, ent.Content)); err != nil {
+		t.Fatal(err)
+	}
+
+	res := e.run(t, noGit(), Request{})
+	got := findingsByCode(res, dom.CodeCheckpointMissingBlob)
+	if len(got) != 4 {
+		t.Fatalf("want one missing-blob finding per reference (4), got %d: %+v", len(got), got)
+	}
+	assertSharedBlobAttribution(t, got, layout, first.ID, second.ID)
+	if !res.NeedsAttention() || res.Health() != dom.HealthFailed {
+		t.Fatalf("a missing blob must still fail health, got %v", res.Health())
+	}
+}
+
+// TestStrictMismatchedBlobReportedForEveryDuplicateReference is the strict counterpart:
+// a present blob whose bytes no longer match its address is not a strict success, so it
+// stays retryable and every reference to it is diagnosed.
+func TestStrictMismatchedBlobReportedForEveryDuplicateReference(t *testing.T) {
+	e := newEnv(t)
+	first, second := e.checkpointsSharingBlob(t)
+	layout, _ := e.project.Paths()
+	ent := blobEntryFor(t, checkpointjson.NewRepo(layout), first.ID, "one.go")
+	overwrite(t, blobPathFor(t, layout, ent.Content), "tampered bytes")
+
+	if res := e.run(t, noGit(), Request{}); res.Health() != dom.HealthOK {
+		t.Fatalf("non-strict doctor only checks presence, got %v", res.Health())
+	}
+
+	res := e.run(t, noGit(), Request{Strict: true})
+	got := findingsByCode(res, dom.CodeCheckpointMissingBlob)
+	if len(got) != 4 {
+		t.Fatalf("want one mismatch finding per reference (4), got %d: %+v", len(got), got)
+	}
+	for _, f := range got {
+		if !strings.Contains(f.Message(), "does not match its address") {
+			t.Fatalf("want an address-mismatch message, got %q", f.Message())
+		}
+	}
+	assertSharedBlobAttribution(t, got, layout, first.ID, second.ID)
 }
 
 func TestHashOnlyEntryStaysHealthy(t *testing.T) {
