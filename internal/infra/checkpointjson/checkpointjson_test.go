@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -257,8 +258,8 @@ func TestPutRejectsMalformedBuildBeforeWriting(t *testing.T) {
 
 	// Neither refused write left anything on disk — not even a manifest without its
 	// committing header.
-	if list, _ := repo.ListHeaders(context.Background()); len(list) != 0 {
-		t.Fatalf("malformed checkpoints were persisted: %d", len(list))
+	if health, _ := repo.StoreHealthAll(context.Background()); health.Recorded() != 0 {
+		t.Fatalf("malformed checkpoints were persisted: %d", health.Recorded())
 	}
 	for _, id := range []checkpoint.CheckpointID{bad.id(), weak.id()} {
 		if _, err := os.Stat(filepath.Join(layout.CheckpointsDir(), id.String())); !errors.Is(err, os.ErrNotExist) {
@@ -278,10 +279,11 @@ func TestListNewestFirstWithTieBreak(t *testing.T) {
 	for _, s := range []checkpointFixture{sLowAtT1, sHighAtT1, sOld} {
 		s.put(t, repo)
 	}
-	list, err := repo.ListHeaders(context.Background())
+	health, err := repo.StoreHealthAll(context.Background())
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("StoreHealthAll: %v", err)
 	}
+	list := health.NewestHeaders()
 	if len(list) != 3 {
 		t.Fatalf("len = %d, want 3", len(list))
 	}
@@ -289,17 +291,141 @@ func TestListNewestFirstWithTieBreak(t *testing.T) {
 	if list[0].ID != sHighAtT1.id() || list[1].ID != sLowAtT1.id() || list[2].ID != sOld.id() {
 		t.Fatalf("order = %s, %s, %s", list[0].ID.Short(), list[1].ID.Short(), list[2].ID.Short())
 	}
-	latest, ok, err := repo.LatestHeader(context.Background())
-	if err != nil || !ok || latest.ID != sHighAtT1.id() {
-		t.Fatalf("Latest = %v ok=%v err=%v", latest.ID.Short(), ok, err)
+	latest, ok := health.Latest()
+	if !ok || latest.ID != sHighAtT1.id() {
+		t.Fatalf("Latest = %v ok=%v", latest.ID.Short(), ok)
+	}
+}
+
+// TestStoreHealthNewestPicksTheSameNewestWindow proves the bounded selection and the
+// full sort agree on which checkpoints are newest, including the id tie-break at an
+// equal creation time. The oracle is the full read's own prefix, which is ordered by
+// the aggregate rather than by the bounded heap under test.
+func TestStoreHealthNewestPicksTheSameNewestWindow(t *testing.T) {
+	repo := NewRepo(paths.New(t.TempDir()))
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	t1 := time.Unix(1_700_000_100, 0).UTC()
+	sLowAtT1 := buildCheckpoint(t, idFrom(t, 0x01), t1, false)
+	sHighAtT1 := buildCheckpoint(t, idFrom(t, 0xff), t1, false)
+	sOld := buildCheckpoint(t, idFrom(t, 0x05), t0, false)
+	for _, s := range []checkpointFixture{sLowAtT1, sHighAtT1, sOld} {
+		s.put(t, repo)
+	}
+	full, err := repo.StoreHealthAll(context.Background())
+	if err != nil {
+		t.Fatalf("StoreHealthAll: %v", err)
+	}
+	all := full.NewestHeaders()
+	// A bound of one must land on the tie-break winner, and a bound past the store's
+	// size must return everything without padding or truncating.
+	for _, n := range []int{1, 2, 3, 20} {
+		got, err := repo.StoreHealthNewest(context.Background(), n)
+		if err != nil {
+			t.Fatalf("StoreHealthNewest(%d): %v", n, err)
+		}
+		if got.Recorded() != 3 {
+			t.Errorf("StoreHealthNewest(%d).Recorded() = %d, want the exact readable total 3", n, got.Recorded())
+		}
+		window := got.NewestHeaders()
+		if len(window) != min(n, 3) {
+			t.Fatalf("StoreHealthNewest(%d) retained %d headers, want %d", n, len(window), min(n, 3))
+		}
+		for i, h := range window {
+			if h.ID != all[i].ID {
+				t.Errorf("StoreHealthNewest(%d)[%d] = %s, want %s", n, i, h.ID.Short(), all[i].ID.Short())
+			}
+		}
+	}
+}
+
+// TestStoreHealthNewestRejectsNonPositiveWindow pins the loud boundary: a bounded read
+// with no window is a caller error, never a silent full history.
+func TestStoreHealthNewestRejectsNonPositiveWindow(t *testing.T) {
+	repo := NewRepo(paths.New(t.TempDir()))
+	s := buildCheckpoint(t, idFrom(t, 0x07), time.Unix(1_700_000_000, 0).UTC(), false)
+	s.put(t, repo)
+	for _, n := range []int{0, -1} {
+		health, err := repo.StoreHealthNewest(context.Background(), n)
+		if err == nil {
+			t.Fatalf("StoreHealthNewest(%d) = %d recorded, nil error; want a rejection", n, health.Recorded())
+		}
+	}
+}
+
+// TestStoreHealthOnEmptyStore proves an absent store reads as empty rather than as an
+// error, on both operations.
+func TestStoreHealthOnEmptyStore(t *testing.T) {
+	repo := NewRepo(paths.New(t.TempDir()))
+	full, err := repo.StoreHealthAll(context.Background())
+	if err != nil || full.State() != checkpoint.StoreEmpty || full.Recorded() != 0 {
+		t.Fatalf("StoreHealthAll on an empty store = state %v recorded %d err %v, want empty/0/nil", full.State(), full.Recorded(), err)
+	}
+	bounded, err := repo.StoreHealthNewest(context.Background(), 20)
+	if err != nil || bounded.State() != checkpoint.StoreEmpty || len(bounded.NewestHeaders()) != 0 {
+		t.Fatalf("StoreHealthNewest on an empty store = state %v %d headers err %v, want empty/0/nil",
+			bounded.State(), len(bounded.NewestHeaders()), err)
+	}
+}
+
+// TestStoreHealthNewestCountsRecordsBeyondTheWindow is the honesty guard on the
+// bounded read: the retained window is small, but the scan behind it must still reach
+// every committed record. The unreadable records are deliberately the OLDEST in the
+// store, so a scan that stopped once the newest window filled would report a healthy
+// store — the one answer that must never be given.
+func TestStoreHealthNewestCountsRecordsBeyondTheWindow(t *testing.T) {
+	layout := paths.New(t.TempDir())
+	repo := NewRepo(layout)
+	base := time.Unix(1_700_000_000, 0).UTC()
+
+	// Six readable checkpoints, newest last.
+	var readable []checkpointFixture
+	for i := 0; i < 6; i++ {
+		s := buildCheckpoint(t, idFrom(t, byte(0x10+i)), base.Add(time.Duration(i)*time.Minute), false)
+		s.put(t, repo)
+		readable = append(readable, s)
+	}
+	// One incompatible and one corrupt record, both older than every readable one.
+	incompatible := buildCheckpoint(t, idFrom(t, 0x01), base.Add(-2*time.Minute), false)
+	incompatible.put(t, repo)
+	bumpHeaderSchema(t, repo.headerFor(incompatible.id()), headerSchemaVersion+1)
+
+	corrupt := buildCheckpoint(t, idFrom(t, 0x02), base.Add(-time.Minute), false)
+	corrupt.put(t, repo)
+	corruptHeader := repo.headerFor(corrupt.id())
+	if err := os.Chmod(corruptHeader, 0o644); err != nil {
+		t.Fatalf("chmod header: %v", err)
+	}
+	if err := os.WriteFile(corruptHeader, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("corrupt header: %v", err)
+	}
+
+	health, err := repo.StoreHealthNewest(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("StoreHealthNewest(2): %v", err)
+	}
+	if health.Recorded() != 6 || health.Incompatible() != 1 || health.Corrupt() != 1 {
+		t.Fatalf("counts = recorded %d incompatible %d corrupt %d, want 6/1/1",
+			health.Recorded(), health.Incompatible(), health.Corrupt())
+	}
+	if health.State() != checkpoint.StorePartial {
+		t.Fatalf("State() = %v, want partial", health.State())
+	}
+	window := health.NewestHeaders()
+	if len(window) != 2 {
+		t.Fatalf("retained %d headers, want 2", len(window))
+	}
+	if window[0].ID != readable[5].id() || window[1].ID != readable[4].id() {
+		t.Fatalf("window = %s, %s, want the two newest %s, %s",
+			window[0].ID.Short(), window[1].ID.Short(), readable[5].id().Short(), readable[4].id().Short())
 	}
 }
 
 // TestStoreHealthHonorsCancellation proves the checkpoint header walk honors a cancelled
 // context mid-read rather than reading every header: with checkpoints present, a
-// pre-cancelled context makes StoreHealth (and ListHeaders/LatestHeader, which share the
-// walk) return context.Canceled promptly, so a Ctrl+C during a long local history is an
-// interruption rather than a completed scan.
+// pre-cancelled context makes both store-health reads return context.Canceled promptly,
+// so a Ctrl+C during a long local history is an interruption rather than a completed
+// scan. The bounded read is asked for a window smaller than the store, so a cancellation
+// it reports cannot be an artifact of having finished anyway.
 func TestStoreHealthHonorsCancellation(t *testing.T) {
 	repo := NewRepo(paths.New(t.TempDir()))
 	base := time.Unix(1_700_000_000, 0).UTC()
@@ -312,26 +438,43 @@ func TestStoreHealthHonorsCancellation(t *testing.T) {
 	cancel()
 
 	// The id enumeration itself honors cancellation: it streams the directory in batches and
-	// checks ctx per entry, so listIDs returns context.Canceled rather than materializing the
+	// checks ctx per entry, so the walk returns context.Canceled rather than materializing the
 	// whole directory (and stat-ing every committed header) first. This assertion fails if
-	// cancellation is only checked after a full ReadDir(-1) — the enumerator would then return
-	// the ids with no error and only a caller's later loop would notice the cancellation.
-	if _, err := repo.listIDs(ctx); !errors.Is(err, context.Canceled) {
-		t.Errorf("listIDs err = %v, want context.Canceled (enumeration not interruptible mid-scan?)", err)
+	// cancellation is only checked after a full ReadDir(-1) — the enumerator would then visit
+	// every id with no error and only a caller's later loop would notice the cancellation.
+	if err := repo.eachCommittedID(ctx, func(checkpoint.CheckpointID) error { return nil }); !errors.Is(err, context.Canceled) {
+		t.Errorf("eachCommittedID err = %v, want context.Canceled (enumeration not interruptible mid-scan?)", err)
 	}
 
-	if _, err := repo.StoreHealth(ctx); !errors.Is(err, context.Canceled) {
-		t.Errorf("StoreHealth err = %v, want context.Canceled", err)
+	if _, err := repo.StoreHealthAll(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("StoreHealthAll err = %v, want context.Canceled", err)
 	}
-	if _, err := repo.ListHeaders(ctx); !errors.Is(err, context.Canceled) {
-		t.Errorf("ListHeaders err = %v, want context.Canceled", err)
+	if _, err := repo.StoreHealthNewest(ctx, 1); !errors.Is(err, context.Canceled) {
+		t.Errorf("StoreHealthNewest err = %v, want context.Canceled", err)
 	}
-	if _, _, err := repo.LatestHeader(ctx); !errors.Is(err, context.Canceled) {
-		t.Errorf("LatestHeader err = %v, want context.Canceled", err)
+	if _, err := repo.ListIDs(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("ListIDs err = %v, want context.Canceled", err)
 	}
 	// ResolvePrefix enumerates the ids to match a prefix, so it honors cancellation too.
 	if _, err := repo.ResolvePrefix(ctx, "0"); !errors.Is(err, context.Canceled) {
 		t.Errorf("ResolvePrefix err = %v, want context.Canceled", err)
+	}
+}
+
+// TestEachCommittedIDDoesNotReadACallbackFailureAsAnEmptyStore pins how the walk
+// classifies errors. It reads a missing checkpoints directory as an empty store, and
+// the callback reads real files — so a per-record failure whose cause is "not exist"
+// (a checkpoint deleted mid-scan) must reach the caller as that failure. Reporting a
+// store with checkpoints in it as empty is the one answer that must never be given.
+func TestEachCommittedIDDoesNotReadACallbackFailureAsAnEmptyStore(t *testing.T) {
+	repo := NewRepo(paths.New(t.TempDir()))
+	s := buildCheckpoint(t, idFrom(t, 0x33), time.Unix(1_700_000_000, 0).UTC(), false)
+	s.put(t, repo)
+
+	boom := fmt.Errorf("reading checkpoint header: %w", os.ErrNotExist)
+	err := repo.eachCommittedID(context.Background(), func(checkpoint.CheckpointID) error { return boom })
+	if !errors.Is(err, boom) {
+		t.Fatalf("eachCommittedID err = %v, want the callback's failure (a not-exist cause must not read as an empty store)", err)
 	}
 }
 
@@ -361,24 +504,23 @@ func TestFileAtReservedCheckpointAddressIsCorrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := repo.ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
-		t.Fatalf("List err = %v, want ErrCorruptStore", err)
-	}
-	if _, _, err := repo.LatestHeader(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
-		t.Fatalf("Latest err = %v, want ErrCorruptStore", err)
-	}
-	if _, err := repo.ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
-		t.Fatalf("ListHeaders err = %v, want ErrCorruptStore", err)
+	if _, err := repo.ListIDs(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+		t.Fatalf("ListIDs err = %v, want ErrCorruptStore", err)
 	}
 	if _, err := repo.ResolvePrefix(context.Background(), id.String()[:4]); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("ResolvePrefix err = %v, want ErrCorruptStore", err)
 	}
-	// StoreHealth is the resilient reader, but structural corruption of the id set is
-	// not something it can degrade around: it must fail rather than report an empty
-	// or healthy store.
-	health, err := repo.StoreHealth(context.Background())
+	// The store-health reads are the resilient ones, but structural corruption of the id
+	// set is not something they can degrade around: both must fail rather than report an
+	// empty or healthy store, and the bounded one must not read as healthy just because
+	// its window never needed the bad address.
+	health, err := repo.StoreHealthAll(context.Background())
 	if !errors.Is(err, checkpoint.ErrCorruptStore) {
-		t.Fatalf("StoreHealth err = %v (state %v), want ErrCorruptStore", err, health.State())
+		t.Fatalf("StoreHealthAll err = %v (state %v), want ErrCorruptStore", err, health.State())
+	}
+	bounded, err := repo.StoreHealthNewest(context.Background(), 1)
+	if !errors.Is(err, checkpoint.ErrCorruptStore) {
+		t.Fatalf("StoreHealthNewest err = %v (state %v), want ErrCorruptStore", err, bounded.State())
 	}
 	// And the file is left alone: classifying is not reclaiming.
 	if _, err := os.Stat(filepath.Join(layout.CheckpointsDir(), id.String()+checkpointExt)); err != nil {
@@ -413,12 +555,12 @@ func TestIncompatibleHeaderSchemaIsNotCorrupt(t *testing.T) {
 		}
 	}
 
-	health, err := repo.StoreHealth(context.Background())
+	health, err := repo.StoreHealthAll(context.Background())
 	if err != nil {
-		t.Fatalf("StoreHealth err = %v", err)
+		t.Fatalf("StoreHealthAll err = %v", err)
 	}
 	if health.State() != checkpoint.StoreIncompatible || health.Incompatible() != 1 {
-		t.Fatalf("StoreHealth = state %v incompatible %d, want incompatible/1", health.State(), health.Incompatible())
+		t.Fatalf("StoreHealthAll = state %v incompatible %d, want incompatible/1", health.State(), health.Incompatible())
 	}
 	if health.Recorded() != 0 || !health.AnyUnreadable() {
 		t.Fatalf("an incompatible store reported %d readable / unreadable=%v, want 0/true",
@@ -439,8 +581,12 @@ func bumpHeaderSchema(t *testing.T, headerPath string, version int) {
 
 func TestLatestEmpty(t *testing.T) {
 	repo := NewRepo(paths.New(t.TempDir()))
-	if _, ok, err := repo.LatestHeader(context.Background()); ok || err != nil {
-		t.Fatalf("Latest on empty: ok=%v err=%v", ok, err)
+	health, err := repo.StoreHealthNewest(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("StoreHealthNewest on empty: %v", err)
+	}
+	if _, ok := health.Latest(); ok {
+		t.Fatal("Latest on an empty store reported a checkpoint")
 	}
 }
 
@@ -466,6 +612,66 @@ func TestResolvePrefix(t *testing.T) {
 	// A garbage character is also malformed, distinct from not-found.
 	if _, err := repo.ResolvePrefix(context.Background(), "!!"); err == nil || errors.Is(err, checkpoint.ErrNotFound) {
 		t.Fatalf("garbage prefix err = %v, want a malformed-prefix error", err)
+	}
+}
+
+// TestResolvePrefixAmbiguousAmongManyIDs proves the streamed resolution still counts
+// every match rather than returning the first one it happens to see: two ids share the
+// prefix among unrelated ones, so a resolution that stopped at its first match would
+// report a single confident answer instead of ambiguity.
+func TestResolvePrefixAmbiguousAmongManyIDs(t *testing.T) {
+	repo := NewRepo(paths.New(t.TempDir()))
+	base := time.Unix(1_700_000_000, 0).UTC()
+	for i := 0; i < 3; i++ {
+		s := buildCheckpoint(t, idFrom(t, byte(0x10+i)), base.Add(time.Duration(i)*time.Minute), false)
+		s.put(t, repo)
+	}
+	// Two ids built from 0x00 and 0x01 share their leading character; every other id
+	// in the store starts elsewhere in the alphabet.
+	first := buildCheckpoint(t, idFrom(t, 0x00), base, false)
+	second := buildCheckpoint(t, idFrom(t, 0x01), base.Add(time.Hour), false)
+	first.put(t, repo)
+	second.put(t, repo)
+	shared := first.id().String()[:1]
+	if second.id().String()[:1] != shared {
+		t.Fatalf("fixture ids %s and %s do not share a leading character", first.id().Short(), second.id().Short())
+	}
+
+	_, err := repo.ResolvePrefix(context.Background(), shared)
+	if !errors.Is(err, checkpoint.ErrAmbiguousPrefix) {
+		t.Fatalf("ResolvePrefix(%q) err = %v, want ErrAmbiguousPrefix", shared, err)
+	}
+	// The full id of one of them is still unambiguous in the same store.
+	got, err := repo.ResolvePrefix(context.Background(), second.id().String())
+	if err != nil || got != second.id() {
+		t.Fatalf("ResolvePrefix(full id) = %s err = %v, want %s", got.Short(), err, second.id().Short())
+	}
+}
+
+// TestResolvePrefixFailsOnStructuralCorruptionBesideAMatch proves the prefix scan runs
+// to completion. A matching id and a foreign node on the reserved namespace both exist,
+// so a resolution that stopped at its match could return a checkpoint out of a store
+// this build otherwise refuses to list. The assertion is order-independent: whichever
+// entry the directory yields first, the answer must be corruption.
+func TestResolvePrefixFailsOnStructuralCorruptionBesideAMatch(t *testing.T) {
+	layout := paths.New(t.TempDir())
+	repo := NewRepo(layout)
+	base := time.Unix(1_700_000_000, 0).UTC()
+	for i := 0; i < 3; i++ {
+		s := buildCheckpoint(t, idFrom(t, byte(0x10+i)), base.Add(time.Duration(i)*time.Minute), false)
+		s.put(t, repo)
+	}
+	match := buildCheckpoint(t, idFrom(t, 0x00), base, false)
+	match.put(t, repo)
+
+	foreign := idFrom(t, 0xbb)
+	body := []byte(`{"schema_version":1,"id":"` + foreign.String() + `"}`)
+	if err := os.WriteFile(filepath.Join(layout.CheckpointsDir(), foreign.String()+checkpointExt), body, 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.ResolvePrefix(context.Background(), match.id().String()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+		t.Fatalf("ResolvePrefix over a structurally corrupt store err = %v, want ErrCorruptStore", err)
 	}
 }
 
@@ -528,7 +734,7 @@ func TestRepoRejectsSymlinkCheckpointFile(t *testing.T) {
 	if err := readCheckpoint(repo, s.id()); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("Get at symlink err = %v, want ErrCorruptStore", err)
 	}
-	if _, err := repo.ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+	if _, err := repo.StoreHealthAll(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("List at symlink err = %v, want ErrCorruptStore", err)
 	}
 }

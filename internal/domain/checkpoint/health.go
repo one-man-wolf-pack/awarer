@@ -1,62 +1,9 @@
 package checkpoint
 
-import "sort"
-
-// ReadHealth classifies how one checkpoint record reads back from the store. The
-// zero value is not valid; a ReadFinding can only be built through the two named
-// constructors, so a finding never carries an unclassified health.
-type ReadHealth int
-
-const (
-	// ReadIncompatible is a record whose declared schema this build does not speak. It
-	// is intact, self-describing local evidence awa has no reader for, not damage: the
-	// user resets the store explicitly.
-	ReadIncompatible ReadHealth = iota + 1
-	// ReadCorrupt is a record that will not decode or validate for any reason other
-	// than an incompatible declared schema — genuine durable corruption.
-	ReadCorrupt
+import (
+	"fmt"
+	"slices"
 )
-
-func (h ReadHealth) String() string {
-	switch h {
-	case ReadIncompatible:
-		return "incompatible"
-	case ReadCorrupt:
-		return "corrupt"
-	default:
-		return "unknown"
-	}
-}
-
-// ReadFinding records one unreadable checkpoint: its id (always known, since the id
-// is the on-disk address the listing walks), whether it is incompatible or corrupt,
-// and a human detail. Its fields are unexported and there is no open, health-taking
-// constructor: a finding is built through NewIncompatibleReadFinding or
-// NewCorruptReadFinding, so an invalid or unclassified read-health is unrepresentable
-// rather than a caller-discipline hazard — a store's derived state can never key off
-// a zero-value health.
-type ReadFinding struct {
-	id     CheckpointID
-	health ReadHealth
-	detail string
-}
-
-// NewIncompatibleReadFinding records a checkpoint whose declared schema this build
-// does not speak. detail carries the underlying decode error.
-func NewIncompatibleReadFinding(id CheckpointID, detail string) ReadFinding {
-	return ReadFinding{id: id, health: ReadIncompatible, detail: detail}
-}
-
-// NewCorruptReadFinding records a checkpoint that reads back as genuine durable
-// corruption: malformed data, a broken invariant, or data claiming the current schema
-// that the strict reader rejected. detail carries the underlying decode error.
-func NewCorruptReadFinding(id CheckpointID, detail string) ReadFinding {
-	return ReadFinding{id: id, health: ReadCorrupt, detail: detail}
-}
-
-func (f ReadFinding) ID() CheckpointID   { return f.id }
-func (f ReadFinding) Health() ReadHealth { return f.health }
-func (f ReadFinding) Detail() string     { return f.detail }
 
 // StoreState is the derived, overall read state of a checkpoint store. It is the
 // closed vocabulary the machine-readable surfaces must keep distinguishable so
@@ -105,105 +52,115 @@ func (s StoreState) Valid() bool {
 	}
 }
 
-// CheckpointStoreHealth aggregates one read pass over a checkpoint store: the
-// headers that read back cleanly (newest-first) and a finding for each record that
-// did not. State is derived from these, never set by hand, so the reported verdict
-// always matches the evidence. It is the resilient counterpart to ListHeaders: a
-// single unreadable record becomes a finding here rather than collapsing the whole
-// listing.
+// StoreReadCounts is the exact tally of one complete read pass over a checkpoint
+// store: how many records read back cleanly, how many declare a schema this build
+// does not speak, and how many are genuine durable corruption. Every committed
+// record lands in exactly one of the three, so the counts describe the whole store
+// regardless of how many headers the pass was asked to retain.
+//
+// The fields are named rather than positional so a producer cannot silently swap
+// the incompatible and corrupt tallies — the two the store policy treats most
+// differently.
+type StoreReadCounts struct {
+	Readable     int
+	Incompatible int
+	Corrupt      int
+}
+
+// CheckpointStoreHealth aggregates one read pass over a checkpoint store: the exact
+// per-class counts of every committed record, plus the newest readable headers the
+// pass was asked to retain. State is derived from the counts, never set by hand and
+// never from the retained window, so a caller that asked for one header still gets
+// the whole store's verdict rather than a verdict about its window.
+//
+// The retained window is a subset of the readable records — NewestHeaders is at most
+// Recorded long — so a caller must read totals from the counters and only entries
+// from the window.
 type CheckpointStoreHealth struct {
-	headers  []CheckpointHeader
-	findings []ReadFinding
+	counts StoreReadCounts
+	newest []CheckpointHeader
 }
 
-// NewCheckpointStoreHealth builds a health aggregate from the readable headers and
-// the per-record findings. Headers are sorted newest-first with a deterministic
-// id tie-breaker (matching ListHeaders) and both slices are copied, so a later
-// mutation of the inputs cannot change a built aggregate.
-func NewCheckpointStoreHealth(headers []CheckpointHeader, findings []ReadFinding) CheckpointStoreHealth {
-	hs := make([]CheckpointHeader, len(headers))
-	copy(hs, headers)
-	sort.Slice(hs, func(i, j int) bool {
-		if !hs[i].CreatedAt.Equal(hs[j].CreatedAt) {
-			return hs[i].CreatedAt.After(hs[j].CreatedAt)
-		}
-		return hs[i].ID.String() > hs[j].ID.String()
-	})
-	fs := make([]ReadFinding, len(findings))
-	copy(fs, findings)
-	return CheckpointStoreHealth{headers: hs, findings: fs}
+// NewCheckpointStoreHealth builds a health aggregate from the exact counts of a
+// complete read pass and the readable headers that pass retained. The headers are
+// sorted newest-first with the deterministic id tie-breaker and copied, so a later
+// mutation of the input cannot change a built aggregate and the caller never has to
+// order them itself.
+//
+// Two producer bugs are refused here rather than described. A count below zero is not
+// a tally of anything: a negative unreadable class cancels a real one, so AnyUnreadable
+// reads false and the verdict comes out healthy for a store whose records failed, and a
+// negative readable count reports a store smaller than empty. And keeping more headers
+// than Readable would let one aggregate report an empty store that still has a latest,
+// or a "showing N of M" with M below N. The counts and the window come from the same
+// pass, so either mismatch is a violated programmer invariant and fails loudly here
+// rather than surfacing as a contradictory verdict downstream.
+func NewCheckpointStoreHealth(counts StoreReadCounts, newest []CheckpointHeader) CheckpointStoreHealth {
+	if counts.Readable < 0 || counts.Incompatible < 0 || counts.Corrupt < 0 {
+		panic(fmt.Sprintf("checkpoint store health: read counts cannot be negative (readable %d, incompatible %d, corrupt %d)",
+			counts.Readable, counts.Incompatible, counts.Corrupt))
+	}
+	if len(newest) > counts.Readable {
+		panic(fmt.Sprintf("checkpoint store health: %d retained headers exceed the %d readable records they are a window over",
+			len(newest), counts.Readable))
+	}
+	hs := slices.Clone(newest)
+	slices.SortFunc(hs, NewestFirst)
+	return CheckpointStoreHealth{counts: counts, newest: hs}
 }
 
-// Headers returns the readable checkpoint headers, newest-first. The slice is a copy.
-func (h CheckpointStoreHealth) Headers() []CheckpointHeader {
-	out := make([]CheckpointHeader, len(h.headers))
-	copy(out, h.headers)
-	return out
+// NewestHeaders returns the retained readable headers, newest-first. It is the
+// requested window, not the whole store: its length is bounded by what the operation
+// was asked to keep, so a total must come from Recorded rather than from this slice.
+// The slice is a copy.
+func (h CheckpointStoreHealth) NewestHeaders() []CheckpointHeader {
+	return slices.Clone(h.newest)
 }
 
-// Findings returns the per-record findings for unreadable checkpoints. The slice is a copy.
-func (h CheckpointStoreHealth) Findings() []ReadFinding {
-	out := make([]ReadFinding, len(h.findings))
-	copy(out, h.findings)
-	return out
-}
-
-// Recorded reports how many checkpoints read back cleanly. It is deliberately the
-// readable count, not the on-disk count, so a caller cannot report an unreadable
-// store as an empty one by reading this alone — Unreadable carries the rest.
-func (h CheckpointStoreHealth) Recorded() int { return len(h.headers) }
+// Recorded reports how many checkpoints read back cleanly across the whole store. It
+// is deliberately the readable count, not the on-disk count, so a caller cannot
+// report an unreadable store as an empty one by reading this alone — Unreadable
+// carries the rest.
+func (h CheckpointStoreHealth) Recorded() int { return h.counts.Readable }
 
 // Unreadable reports how many checkpoints could not be read.
-func (h CheckpointStoreHealth) Unreadable() int { return len(h.findings) }
+func (h CheckpointStoreHealth) Unreadable() int { return h.counts.Incompatible + h.counts.Corrupt }
 
 // Incompatible reports how many unreadable checkpoints declare a schema this build
 // does not speak.
-func (h CheckpointStoreHealth) Incompatible() int { return h.countHealth(ReadIncompatible) }
+func (h CheckpointStoreHealth) Incompatible() int { return h.counts.Incompatible }
 
 // Corrupt reports how many unreadable checkpoints are corrupt.
-func (h CheckpointStoreHealth) Corrupt() int { return h.countHealth(ReadCorrupt) }
-
-func (h CheckpointStoreHealth) countHealth(want ReadHealth) int {
-	n := 0
-	for _, f := range h.findings {
-		if f.health == want {
-			n++
-		}
-	}
-	return n
-}
+func (h CheckpointStoreHealth) Corrupt() int { return h.counts.Corrupt }
 
 // AnyUnreadable reports whether any checkpoint could not be read.
-func (h CheckpointStoreHealth) AnyUnreadable() bool { return len(h.findings) > 0 }
+func (h CheckpointStoreHealth) AnyUnreadable() bool { return h.Unreadable() > 0 }
 
-// Latest returns the newest readable checkpoint header, or ok false when none read
-// back cleanly. A caller must not treat ok false as "no checkpoints" when
+// Latest returns the newest readable checkpoint header, or ok false when the pass
+// retained none. A caller must not treat ok false as "no checkpoints" when
 // AnyUnreadable is true: the newest record may itself be unreadable, and ordering
 // unreadable records against readable ones is impossible without their headers.
 func (h CheckpointStoreHealth) Latest() (CheckpointHeader, bool) {
-	if len(h.headers) == 0 {
+	if len(h.newest) == 0 {
 		return CheckpointHeader{}, false
 	}
-	return h.headers[0], true
+	return h.newest[0], true
 }
 
-// State derives the overall store verdict from the counts: empty when nothing
+// State derives the overall store verdict from the exact counts: empty when nothing
 // exists, healthy when everything read cleanly, partial when some read and some did
-// not, and — when nothing readable remains — incompatible only if every failure is an
-// incompatible schema, otherwise corrupt. The incompatible case fails closed: it
-// requires every finding to be classified incompatible rather than merely the absence
-// of a corrupt one, so an unclassified finding (unrepresentable through the
-// constructors, but guarded here anyway) degrades a store to corrupt, never to the
-// milder verdict.
+// not, and — when nothing readable remains — incompatible only if no unreadable
+// record is corrupt, otherwise corrupt. The incompatible case fails closed: a single
+// corrupt record degrades a store to corrupt, never to the milder verdict.
 func (h CheckpointStoreHealth) State() StoreState {
 	switch {
-	case len(h.headers) == 0 && len(h.findings) == 0:
+	case h.counts.Readable == 0 && h.Unreadable() == 0:
 		return StoreEmpty
-	case len(h.findings) == 0:
+	case h.Unreadable() == 0:
 		return StoreHealthy
-	case len(h.headers) > 0:
+	case h.counts.Readable > 0:
 		return StorePartial
-	case h.Incompatible() == len(h.findings):
+	case h.counts.Corrupt == 0:
 		return StoreIncompatible
 	default:
 		return StoreCorrupt

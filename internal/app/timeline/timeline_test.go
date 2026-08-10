@@ -13,13 +13,24 @@ import (
 	"awarer/internal/domain/runcache"
 )
 
+// fakeSnaps satisfies the timeline's checkpoint port and records that the timeline
+// asked for the full history. counts carries the store-wide tallies independently of
+// headers, so a test can prove the timeline reports totals from the counts.
 type fakeSnaps struct {
-	headers  []checkpoint.CheckpointHeader
-	findings []checkpoint.ReadFinding
+	headers []checkpoint.CheckpointHeader
+	counts  checkpoint.StoreReadCounts
+	calls   *int
 }
 
-func (f fakeSnaps) StoreHealth(context.Context) (checkpoint.CheckpointStoreHealth, error) {
-	return checkpoint.NewCheckpointStoreHealth(f.headers, f.findings), nil
+func (f fakeSnaps) StoreHealthAll(context.Context) (checkpoint.CheckpointStoreHealth, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	counts := f.counts
+	if counts.Readable == 0 {
+		counts.Readable = len(f.headers)
+	}
+	return checkpoint.NewCheckpointStoreHealth(counts, f.headers), nil
 }
 
 type fakeRuns struct{ recs []timeline.RunRecord }
@@ -72,6 +83,35 @@ func recordedRun(t *testing.T, at time.Time, reuse runcache.ReuseState, withAfte
 		e.After = &runcache.Observation{Manifest: runcache.ManifestRef{File: "after.manifest.jsonl", TreeHash: h}}
 	}
 	return timeline.RunRecord{ID: id, Entry: e}
+}
+
+// TestTimelineRequestsTheFullHistory is the boundedness oracle for the explicit
+// timeline: it is the one checkpoint reader allowed to retain every header, so it must
+// name the full operation exactly once. Routing it to a bounded read fails here (the
+// full read is never invoked) as well as at the port, which declares only this
+// operation. It also proves the skipped count comes from the store-wide tally rather
+// than from the retained headers.
+func TestTimelineRequestsTheFullHistory(t *testing.T) {
+	base := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	checkpoints := fakeSnaps{
+		headers: []checkpoint.CheckpointHeader{header(t, base.Add(time.Hour)), header(t, base)},
+		counts:  checkpoint.StoreReadCounts{Readable: 2, Incompatible: 3},
+		calls:   &calls,
+	}
+	res, err := timeline.New(checkpoints, nil, nil, nil, nil).Run(context.Background(), timeline.Request{Limit: 0})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("full store health requested %d times, want exactly 1", calls)
+	}
+	if res.Total != 2 {
+		t.Errorf("total = %d, want the 2 merged entries", res.Total)
+	}
+	if res.Skipped != 3 {
+		t.Errorf("skipped = %d, want the store-wide incompatible count 3", res.Skipped)
+	}
 }
 
 func TestTimelineMergesAndLabels(t *testing.T) {

@@ -93,26 +93,52 @@ func BenchmarkDecodeHeader(b *testing.B) {
 	}
 }
 
-// BenchmarkListManyCheckpoints measures listing a store's headers (the path behind
-// `awa log` and `awa status`). Each checkpoint is written with a real ten-record
-// manifest that the measured loop never reads: the fixture is sized that way on
-// purpose, so the numbers show header listing scaling with the number of
-// checkpoints and not with how large their manifests are.
-func BenchmarkListManyCheckpoints(b *testing.B) {
+// benchStoreSize is how many checkpoints the store-health benchmarks build. It is a
+// committed fixture size, chosen to stay quick in ordinary runs; the long-history
+// numbers this refactor was measured against were taken by raising it locally, not by
+// making every `go test -bench` run pay for them.
+const benchStoreSize = 500
+
+// benchStore writes n checkpoints, each with a real ten-record manifest the measured
+// loops never read: the fixture is sized that way on purpose, so the numbers show
+// header reading scaling with the number of checkpoints and not with how large their
+// manifests are. Building the store is outside the measured region.
+func benchStore(b *testing.B, n int) *Repo {
+	b.Helper()
 	repo := NewRepo(paths.New(b.TempDir()))
-	for i := 0; i < 500; i++ {
+	for i := 0; i < n; i++ {
 		s := benchCheckpoint(b, 10)
-		// Each checkpoint needs a distinct id and time so the listing has real work.
+		// Each checkpoint needs a distinct id and time so the read has real work.
 		s.build.ID = benchID(b, i)
 		s.build.CreatedAt = time.Unix(1_700_000_000+int64(i), 0).UTC()
 		if err := s.putErr(repo); err != nil {
 			b.Fatal(err)
 		}
 	}
+	return repo
+}
+
+// BenchmarkStoreHealthAll measures the explicit full-history read (`awa log --all`):
+// every committed header is read and every readable one retained.
+func BenchmarkStoreHealthAll(b *testing.B) {
+	repo := benchStore(b, benchStoreSize)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := repo.ListHeaders(context.Background()); err != nil {
+	for b.Loop() {
+		if _, err := repo.StoreHealthAll(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkStoreHealthNewest measures the habitual bounded read (`awa log`, `awa
+// status`) over the same store. It reads exactly as many headers as the full case —
+// honesty requires that — so the comparison against BenchmarkStoreHealthAll shows what
+// bounding the retained window costs or saves, not a shorter scan.
+func BenchmarkStoreHealthNewest(b *testing.B) {
+	repo := benchStore(b, benchStoreSize)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := repo.StoreHealthNewest(context.Background(), 20); err != nil {
 			b.Fatal(err)
 		}
 	}

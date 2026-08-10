@@ -1,13 +1,13 @@
 package checkpointjson
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"awarer/internal/domain/checkpoint"
@@ -266,6 +266,11 @@ func (r *Repo) OpenManifest(id checkpoint.CheckpointID) (worktree.ManifestStream
 // stored filenames so it does not decode every checkpoint, and it is strict: no
 // match is ErrNotFound and more than one is ErrAmbiguousPrefix, so a short id is
 // only ever acted on when it is unambiguous.
+//
+// The scan runs to completion rather than stopping at the first match: structural
+// corruption anywhere in the id namespace must stay visible, and stopping early would
+// resolve a reference out of a store this build has already refused to list. It
+// retains one matched id and a count, never the matching set.
 func (r *Repo) ResolvePrefix(ctx context.Context, prefix string) (checkpoint.CheckpointID, error) {
 	// Reject malformed input (empty, too long, bad characters) distinctly from a
 	// well-formed prefix that matches nothing, so a blank or garbage reference is
@@ -273,124 +278,150 @@ func (r *Repo) ResolvePrefix(ctx context.Context, prefix string) (checkpoint.Che
 	if err := checkpoint.ValidateIDPrefix(prefix); err != nil {
 		return checkpoint.CheckpointID{}, err
 	}
-	// listIDs streams the directory and honors cancellation during the scan; the prefix
-	// match below is an in-memory pass over the ids it returned.
-	ids, err := r.listIDs(ctx)
-	if err != nil {
+	var match checkpoint.CheckpointID
+	matches := 0
+	if err := r.eachCommittedID(ctx, func(id checkpoint.CheckpointID) error {
+		if strings.HasPrefix(id.String(), prefix) {
+			matches++
+			match = id
+		}
+		return nil
+	}); err != nil {
 		return checkpoint.CheckpointID{}, err
 	}
-	var matches []string
-	for _, id := range ids {
-		if strings.HasPrefix(id, prefix) {
-			matches = append(matches, id)
-		}
-	}
-	switch len(matches) {
+	switch matches {
 	case 0:
 		return checkpoint.CheckpointID{}, fmt.Errorf("%w: %s", checkpoint.ErrNotFound, prefix)
 	case 1:
-		return checkpoint.ParseCheckpointID(matches[0])
+		return match, nil
 	default:
-		return checkpoint.CheckpointID{}, fmt.Errorf("%w: %s matches %d checkpoints", checkpoint.ErrAmbiguousPrefix, prefix, len(matches))
+		return checkpoint.CheckpointID{}, fmt.Errorf("%w: %s matches %d checkpoints", checkpoint.ErrAmbiguousPrefix, prefix, matches)
 	}
 }
 
-// ListHeaders returns every checkpoint's header newest-first, without materializing
-// any manifest. The order matches List.
-func (r *Repo) ListHeaders(ctx context.Context) ([]checkpoint.CheckpointHeader, error) {
-	ids, err := r.listIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]checkpoint.CheckpointHeader, 0, len(ids))
-	for _, idStr := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		id, err := checkpoint.ParseCheckpointID(idStr)
-		if err != nil {
-			continue
-		}
-		h, err := r.Header(id)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
-			return out[i].CreatedAt.After(out[j].CreatedAt)
-		}
-		return out[i].ID.String() > out[j].ID.String()
+// StoreHealthAll classifies the store's read health and retains every readable
+// header. It is the explicit full-history read: the retained headers grow with the
+// store, which is why it is a separate named operation rather than a default.
+func (r *Repo) StoreHealthAll(ctx context.Context) (checkpoint.CheckpointStoreHealth, error) {
+	var headers []checkpoint.CheckpointHeader
+	counts, err := r.scanHealth(ctx, func(h checkpoint.CheckpointHeader) {
+		headers = append(headers, h)
 	})
-	return out, nil
-}
-
-// StoreHealth reads every checkpoint header and classifies the store's read health,
-// collecting the readable headers alongside a finding for each unreadable record. It
-// is the resilient counterpart to ListHeaders: where ListHeaders collapses the whole
-// listing on the first bad header, this reports the readable checkpoints and, per
-// unreadable one, whether it is an incompatible schema or corrupt — so a caller can
-// tell empty, healthy, partial, incompatible, and corrupt stores apart instead of
-// mistaking an unreadable store for an empty one. Structural corruption that makes
-// the id set itself unreadable (a foreign node on a reserved address) still fails
-// loudly through listIDs. A per-record read error that is neither an incompatible
-// schema nor store corruption — an I/O or permission failure — is surfaced as an
-// error rather than silently labeled, since doctor's header read draws that line for
-// the depth checks and status must not report an inaccessible record as merely
-// absent.
-func (r *Repo) StoreHealth(ctx context.Context) (checkpoint.CheckpointStoreHealth, error) {
-	idStrs, err := r.listIDs(ctx)
 	if err != nil {
 		return checkpoint.CheckpointStoreHealth{}, err
 	}
-	var headers []checkpoint.CheckpointHeader
-	var findings []checkpoint.ReadFinding
-	for _, s := range idStrs {
-		if err := ctx.Err(); err != nil {
-			return checkpoint.CheckpointStoreHealth{}, err
-		}
-		id, err := checkpoint.ParseCheckpointID(s)
-		if err != nil {
-			// listIDs only ever returns parseable ids; skip defensively.
-			continue
-		}
+	return checkpoint.NewCheckpointStoreHealth(counts, headers), nil
+}
+
+// StoreHealthNewest classifies the store's read health and retains at most the newest
+// readable headers. The scan is identical to StoreHealthAll's — every committed header
+// is still read and counted, so a record that fails after the window has filled still
+// changes the verdict — only the retained history is bounded, to newest plus one
+// directory batch.
+//
+// A non-positive bound is a caller error rather than a silent "all": the whole point
+// of naming this operation is that the retained window is chosen deliberately.
+func (r *Repo) StoreHealthNewest(ctx context.Context, newest int) (checkpoint.CheckpointStoreHealth, error) {
+	if newest <= 0 {
+		return checkpoint.CheckpointStoreHealth{}, fmt.Errorf("checkpoint store health: newest header window must be positive, got %d", newest)
+	}
+	w := newestWindow{limit: newest}
+	counts, err := r.scanHealth(ctx, w.keep)
+	if err != nil {
+		return checkpoint.CheckpointStoreHealth{}, err
+	}
+	return checkpoint.NewCheckpointStoreHealth(counts, w.headers), nil
+}
+
+// scanHealth walks every committed checkpoint exactly once, reading each header and
+// tallying it as readable, incompatible, or corrupt, offering every readable header to
+// keep. It is the one health implementation both named operations project from, so a
+// bounded caller and a full caller can never disagree about the store's condition.
+//
+// A per-record read error that is neither an incompatible schema nor store corruption
+// — an I/O or permission failure — is surfaced as an error rather than silently
+// labeled, since doctor's header read draws that line for the depth checks and status
+// must not report an inaccessible record as merely absent.
+func (r *Repo) scanHealth(ctx context.Context, keep func(checkpoint.CheckpointHeader)) (checkpoint.StoreReadCounts, error) {
+	var counts checkpoint.StoreReadCounts
+	err := r.eachCommittedID(ctx, func(id checkpoint.CheckpointID) error {
 		h, err := r.Header(id)
 		switch {
 		case err == nil:
-			headers = append(headers, h)
+			counts.Readable++
+			keep(h)
 		case errors.Is(err, checkpoint.ErrIncompatibleFormat):
-			findings = append(findings, checkpoint.NewIncompatibleReadFinding(id, err.Error()))
+			counts.Incompatible++
 		case errors.Is(err, checkpoint.ErrCorruptStore):
-			findings = append(findings, checkpoint.NewCorruptReadFinding(id, err.Error()))
+			counts.Corrupt++
 		default:
-			return checkpoint.CheckpointStoreHealth{}, err
+			return err
 		}
+		return nil
+	})
+	if err != nil {
+		return checkpoint.StoreReadCounts{}, err
 	}
-	return checkpoint.NewCheckpointStoreHealth(headers, findings), nil
+	return counts, nil
+}
+
+// newestWindow retains the newest limit headers offered to it, in no particular
+// order: an oldest-first heap keeps the eviction candidate at the root, so the walk
+// neither sorts nor holds more than limit headers. Final ordering belongs to
+// CheckpointStoreHealth, so the heap only has to answer "which retained header is the
+// oldest" — one use of checkpoint.NewestFirst, not a second tie-break rule.
+type newestWindow struct {
+	limit   int
+	headers oldestFirstHeap
+}
+
+func (w *newestWindow) keep(h checkpoint.CheckpointHeader) {
+	switch {
+	case len(w.headers) < w.limit:
+		heap.Push(&w.headers, h)
+	case checkpoint.NewestFirst(h, w.headers[0]) < 0:
+		// The window is full and this header is newer than the oldest kept: evict it.
+		w.headers[0] = h
+		heap.Fix(&w.headers, 0)
+	}
+}
+
+// oldestFirstHeap is a heap of checkpoint headers whose root is the oldest, so a
+// bounded newest-window walk can find its eviction candidate in constant time.
+type oldestFirstHeap []checkpoint.CheckpointHeader
+
+func (h oldestFirstHeap) Len() int { return len(h) }
+func (h oldestFirstHeap) Less(i, j int) bool {
+	return checkpoint.NewestFirst(h[i], h[j]) > 0
+}
+func (h oldestFirstHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *oldestFirstHeap) Push(x any)   { *h = append(*h, x.(checkpoint.CheckpointHeader)) }
+func (h *oldestFirstHeap) Pop() any {
+	old := *h
+	n := len(old)
+	last := old[n-1]
+	*h = old[:n-1]
+	return last
 }
 
 // ListIDs returns the ids of all committed checkpoints without decoding their
-// headers, mirroring runstore.ListRefs. Unlike ListHeaders it does not fail when a
-// single header is corrupt: it reports the durable structure (which checkpoints
-// exist) so a diagnostic like "awa doctor" can then read each header individually
-// and surface a corrupt one as a finding rather than losing every checkpoint to one
-// bad file. Structural corruption that makes the set itself unreadable — a dual
-// layout, or a non-directory at a checkpoint address — still fails loudly.
+// headers, mirroring runstore.ListRefs. Unlike the health reads it classifies
+// nothing: it reports the durable structure (which checkpoints exist) so a complete
+// maintenance pass like "awa doctor" or gc planning can then read each header
+// individually and surface a corrupt one as a finding rather than losing every
+// checkpoint to one bad file. Structural corruption that makes the set itself
+// unreadable — a dual layout, or a non-directory at a checkpoint address — still fails
+// loudly.
+//
+// It is the one place the whole id set is retained, and it is retained because those
+// callers must produce a plan covering every stored checkpoint.
 func (r *Repo) ListIDs(ctx context.Context) ([]checkpoint.CheckpointID, error) {
-	idStrs, err := r.listIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]checkpoint.CheckpointID, 0, len(idStrs))
-	for _, s := range idStrs {
-		id, err := checkpoint.ParseCheckpointID(s)
-		if err != nil {
-			// listIDs only ever returns parseable ids, so this is unreachable; skip
-			// defensively rather than abort the whole listing.
-			continue
-		}
+	var out []checkpoint.CheckpointID
+	if err := r.eachCommittedID(ctx, func(id checkpoint.CheckpointID) error {
 		out = append(out, id)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -419,23 +450,11 @@ func (r *Repo) Delete(id checkpoint.CheckpointID) error {
 	return nil
 }
 
-// LatestHeader returns the newest checkpoint's header, or ok=false when none exist.
-func (r *Repo) LatestHeader(ctx context.Context) (checkpoint.CheckpointHeader, bool, error) {
-	all, err := r.ListHeaders(ctx)
-	if err != nil {
-		return checkpoint.CheckpointHeader{}, false, err
-	}
-	if len(all) == 0 {
-		return checkpoint.CheckpointHeader{}, false, nil
-	}
-	return all[0], true, nil
-}
-
-// listIDs returns the id strings of every committed checkpoint in the directory. It
-// reads only directory entries (no JSON decoding): an "<id>/" directory holding a
-// header.json is a committed checkpoint. A directory without a header is a crashed,
-// uncommitted publish and is skipped rather than reported. An entry that does not
-// parse as an id is unrelated to this store and is ignored.
+// eachCommittedID calls fn with the id of every committed checkpoint in the
+// directory. It reads only directory entries (no JSON decoding): an "<id>/" directory
+// holding a header.json is a committed checkpoint. A directory without a header is a
+// crashed, uncommitted publish and is skipped rather than reported. An entry that does
+// not parse as an id is unrelated to this store and is ignored.
 //
 // The checkpoints directory reserves the id namespace, and a checkpoint's only
 // address is its directory. A node of any other shape on that namespace — a symlink
@@ -444,17 +463,26 @@ func (r *Repo) LatestHeader(ctx context.Context) (checkpoint.CheckpointHeader, b
 // layout signature and never opened: this build has one reader, and the alternative —
 // an unrecognized artifact silently skipped — would let a store full of them read
 // back as empty, which is the one answer that must never be given.
-func (r *Repo) listIDs(ctx context.Context) ([]string, error) {
+//
+// This is the sole owner of checkpoint address grammar: id collection, prefix
+// matching, and the health scans all project from it and none of them reimplement the
+// rules above.
+func (r *Repo) eachCommittedID(ctx context.Context, fn func(checkpoint.CheckpointID) error) error {
 	relDir, err := fsx.RelUnder(r.root, r.dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var ids []string
+	// A callback error is kept apart from the enumeration's own, because the tail below
+	// reads a missing directory as an empty store. fn reads real files — a header read
+	// that fails with a not-exist cause must surface as that failure, never as "this
+	// store holds no checkpoints", the one answer that must never be given.
+	var fnErr error
 	// Stream the directory in bounded batches and check cancellation per entry, so a large
 	// checkpoint history is interruptible mid-scan rather than materialized in full first —
-	// the per-entry committed-header stat is real I/O that scales with the store. Read
-	// errors and callback corruption pass through storeCorrupt unchanged (it transforms only
-	// symlink/not-directory open rejections), so a cancelled or corrupt scan keeps its error.
+	// the per-entry committed-header stat is real I/O that scales with the store. The
+	// enumeration's own errors pass through storeCorrupt unchanged (it transforms only
+	// symlink/not-directory open rejections), so a cancelled or structurally corrupt scan
+	// keeps its error.
 	err = fsx.EachDirEntryNoFollow(r.root, relDir, func(e os.DirEntry) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -463,7 +491,7 @@ func (r *Repo) listIDs(ctx context.Context) ([]string, error) {
 		// A bare id name is the address of a checkpoint directory. It must be a
 		// directory: a symlink or other node occupying that address is store tampering,
 		// surfaced here as corruption rather than silently skipped.
-		if _, err := checkpoint.ParseCheckpointID(name); err == nil {
+		if id, err := checkpoint.ParseCheckpointID(name); err == nil {
 			if !e.IsDir() {
 				return fmt.Errorf("%w: %s occupies a checkpoint directory address but is not a directory (%s)", checkpoint.ErrCorruptStore, name, e.Type())
 			}
@@ -472,7 +500,10 @@ func (r *Repo) listIDs(ctx context.Context) ([]string, error) {
 				return err
 			}
 			if ok {
-				ids = append(ids, name)
+				if err := fn(id); err != nil {
+					fnErr = err
+					return err
+				}
 			}
 			return nil
 		}
@@ -485,11 +516,14 @@ func (r *Repo) listIDs(ctx context.Context) ([]string, error) {
 		}
 		return nil
 	})
+	if fnErr != nil {
+		return fnErr
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil
 		}
-		return nil, storeCorrupt(r.dir, err)
+		return storeCorrupt(r.dir, err)
 	}
-	return ids, nil
+	return nil
 }

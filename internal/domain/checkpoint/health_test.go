@@ -1,6 +1,9 @@
 package checkpoint
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func idByte(t *testing.T, b byte) CheckpointID {
 	t.Helper()
@@ -17,27 +20,25 @@ func idByte(t *testing.T, b byte) CheckpointID {
 }
 
 func TestStoreStateDerivation(t *testing.T) {
-	incompatible := NewIncompatibleReadFinding(idByte(t, 1), "old field")
-	corrupt := NewCorruptReadFinding(idByte(t, 2), "bad json")
 	header := CheckpointHeader{ID: idByte(t, 3)}
 
 	cases := []struct {
-		name     string
-		headers  []CheckpointHeader
-		findings []ReadFinding
-		want     StoreState
+		name    string
+		counts  StoreReadCounts
+		headers []CheckpointHeader
+		want    StoreState
 	}{
-		{"empty", nil, nil, StoreEmpty},
-		{"healthy", []CheckpointHeader{header}, nil, StoreHealthy},
-		{"partial", []CheckpointHeader{header}, []ReadFinding{incompatible}, StorePartial},
-		{"partial-with-corrupt", []CheckpointHeader{header}, []ReadFinding{corrupt}, StorePartial},
-		{"incompatible-only", nil, []ReadFinding{incompatible}, StoreIncompatible},
-		{"corrupt-only", nil, []ReadFinding{corrupt}, StoreCorrupt},
-		{"mixed-unreadable-is-corrupt", nil, []ReadFinding{incompatible, corrupt}, StoreCorrupt},
+		{"empty", StoreReadCounts{}, nil, StoreEmpty},
+		{"healthy", StoreReadCounts{Readable: 1}, []CheckpointHeader{header}, StoreHealthy},
+		{"partial", StoreReadCounts{Readable: 1, Incompatible: 1}, []CheckpointHeader{header}, StorePartial},
+		{"partial-with-corrupt", StoreReadCounts{Readable: 1, Corrupt: 1}, []CheckpointHeader{header}, StorePartial},
+		{"incompatible-only", StoreReadCounts{Incompatible: 1}, nil, StoreIncompatible},
+		{"corrupt-only", StoreReadCounts{Corrupt: 1}, nil, StoreCorrupt},
+		{"mixed-unreadable-is-corrupt", StoreReadCounts{Incompatible: 1, Corrupt: 1}, nil, StoreCorrupt},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewCheckpointStoreHealth(tc.headers, tc.findings)
+			h := NewCheckpointStoreHealth(tc.counts, tc.headers)
 			if got := h.State(); got != tc.want {
 				t.Fatalf("State() = %v, want %v", got, tc.want)
 			}
@@ -48,25 +49,93 @@ func TestStoreStateDerivation(t *testing.T) {
 	}
 }
 
-// TestStoreStateUnknownHealthFailsClosed guards the defensive derivation: the public
-// constructors make an unclassified read-health unrepresentable, but if one ever
-// reached State() (built here in-package via the raw struct), a store of only such
-// findings must degrade to corrupt — fail closed — never to disposable incompatible.
-func TestStoreStateUnknownHealthFailsClosed(t *testing.T) {
-	unknown := ReadFinding{id: idByte(t, 1), health: 0, detail: "unclassified"}
-	h := NewCheckpointStoreHealth(nil, []ReadFinding{unknown})
-	if got := h.State(); got != StoreCorrupt {
-		t.Fatalf("State() with an unclassified finding = %v, want corrupt (fail closed)", got)
+// TestStoreStateIgnoresRetainedWindowSize is the boundedness guard on the aggregate:
+// a bounded caller retains one header out of a large, partially unreadable store, and
+// the verdict must still describe the store rather than the window. Poison values are
+// pairwise distinct so a verdict computed from the wrong field is visible.
+func TestStoreStateIgnoresRetainedWindowSize(t *testing.T) {
+	h := NewCheckpointStoreHealth(
+		StoreReadCounts{Readable: 500, Incompatible: 7, Corrupt: 3},
+		[]CheckpointHeader{{ID: idByte(t, 3)}},
+	)
+	if got := h.State(); got != StorePartial {
+		t.Fatalf("State() = %v, want partial", got)
+	}
+	if h.Recorded() != 500 {
+		t.Fatalf("Recorded() = %d, want the exact readable count 500", h.Recorded())
+	}
+	if len(h.NewestHeaders()) != 1 {
+		t.Fatalf("NewestHeaders() length = %d, want the retained window 1", len(h.NewestHeaders()))
+	}
+}
+
+// TestStoreHealthRejectsImpossibleConstruction guards the construction invariants. Each
+// case is an aggregate that could not come from a real read pass and whose verdict
+// would contradict its own evidence: a negative unreadable class cancels a real one, so
+// the store reads healthy while records failed; a negative readable count reports a
+// store smaller than empty; and a window wider than Readable would show more entries
+// than the total it is drawn from. All fail at construction rather than downstream.
+func TestStoreHealthRejectsImpossibleConstruction(t *testing.T) {
+	cases := []struct {
+		name    string
+		counts  StoreReadCounts
+		headers []CheckpointHeader
+	}{
+		{"negative readable", StoreReadCounts{Readable: -1}, nil},
+		{"negative incompatible cancels a corrupt record", StoreReadCounts{Readable: 2, Incompatible: -1, Corrupt: 1}, nil},
+		{"negative corrupt cancels an incompatible record", StoreReadCounts{Readable: 2, Incompatible: 1, Corrupt: -1}, nil},
+		{"window wider than readable", StoreReadCounts{Readable: 1}, []CheckpointHeader{{ID: idByte(t, 3)}, {ID: idByte(t, 4)}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("building a health aggregate from %+v with %d header(s) did not panic; the invariant is not enforced",
+						tc.counts, len(tc.headers))
+				}
+			}()
+			NewCheckpointStoreHealth(tc.counts, tc.headers)
+		})
+	}
+}
+
+// TestStoreHealthOrdersRetainedWindowNewestFirst proves the aggregate — not its
+// producer — owns the returned order, including the id tie-break for equal creation
+// times. The expected order is written out by hand rather than derived from the same
+// comparison the constructor uses.
+func TestStoreHealthOrdersRetainedWindowNewestFirst(t *testing.T) {
+	older := time.Unix(1_700_000_000, 0).UTC()
+	newer := older.Add(time.Minute)
+	// Two headers share the newer timestamp, so the id tie-break decides between them.
+	lowID, highID := idByte(t, 1), idByte(t, 2)
+	if lowID.String() > highID.String() {
+		lowID, highID = highID, lowID
+	}
+	h := NewCheckpointStoreHealth(
+		StoreReadCounts{Readable: 3},
+		[]CheckpointHeader{
+			{ID: idByte(t, 3), CreatedAt: older},
+			{ID: lowID, CreatedAt: newer},
+			{ID: highID, CreatedAt: newer},
+		},
+	)
+	got := h.NewestHeaders()
+	want := []CheckpointID{highID, lowID, idByte(t, 3)}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("NewestHeaders()[%d] = %s, want %s", i, got[i].ID.Short(), id.Short())
+		}
+	}
+	latest, ok := h.Latest()
+	if !ok || latest.ID != highID {
+		t.Fatalf("Latest() = (%s, %v), want (%s, true)", latest.ID.Short(), ok, highID.Short())
 	}
 }
 
 func TestStoreHealthCounts(t *testing.T) {
 	h := NewCheckpointStoreHealth(
+		StoreReadCounts{Readable: 2, Incompatible: 1, Corrupt: 1},
 		[]CheckpointHeader{{ID: idByte(t, 3)}, {ID: idByte(t, 4)}},
-		[]ReadFinding{
-			NewIncompatibleReadFinding(idByte(t, 1), "a"),
-			NewCorruptReadFinding(idByte(t, 2), "b"),
-		},
 	)
 	if h.Recorded() != 2 || h.Unreadable() != 2 || h.Incompatible() != 1 || h.Corrupt() != 1 {
 		t.Fatalf("recorded=%d unreadable=%d incompatible=%d corrupt=%d, want 2/2/1/1",

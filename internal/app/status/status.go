@@ -299,7 +299,7 @@ func (r Result) Degradation(component string) (DegradationView, bool) {
 //
 // ctx is the root cancellable context. Status is the fast bounded dashboard, so
 // cancellation is checked at the boundaries between subsystems AND threaded into the
-// store reads that scale with local history: the checkpoint header walk (StoreHealth)
+// store reads that scale with local history: the checkpoint header walk (StoreHealthNewest)
 // and the run enumeration (CountRefs/ListRefsNewest) honor ctx in their per-record loops,
 // so a Ctrl+C during one long read returns promptly rather than finishing it. The tiny
 // fixed newest-sample decode loop stays ceremony-free; its cost is capped at
@@ -394,7 +394,11 @@ func checkpointSubsystem(ctx context.Context, layout paths.Layout) (Subsystem, [
 			"checkpoint store directory is missing; run awa doctor to inspect, or "+paths.ResetEvidenceHint())))
 	}
 
-	health, err := checkpointjson.NewRepo(layout).StoreHealth(ctx)
+	// Status reports counts plus the single canonical latest, so it asks the store to
+	// retain exactly one header. The scan behind it still reads every committed header,
+	// so the recorded/unreadable/incompatible counts below are the whole store's, not
+	// the window's.
+	health, err := checkpointjson.NewRepo(layout).StoreHealthNewest(ctx, 1)
 	if err != nil {
 		token, detail := classifyStoreReadError(err, "checkpoint store")
 		return apply(degradedVerdict(mustDegrade(evidence.ComponentCheckpoints, token, detail)))

@@ -184,8 +184,12 @@ type Result struct {
 // Checkpoints reports the checkpoint store's read health so the timeline degrades on
 // the same incompatible/corrupt policy as "awa log": incompatible records are skipped and
 // counted, a corrupt record fails the whole command.
+//
+// It names the full-history operation deliberately. The timeline is the explicit
+// complete view — every checkpoint carries a "@-N" position and a change count against
+// its predecessor — so it is the one checkpoint reader that retains every header.
 type Checkpoints interface {
-	StoreHealth(ctx context.Context) (checkpoint.CheckpointStoreHealth, error)
+	StoreHealthAll(ctx context.Context) (checkpoint.CheckpointStoreHealth, error)
 }
 
 // RunRecord is one recorded run for the timeline: a healthy entry, a corrupt id, or an
@@ -261,14 +265,14 @@ type Request struct {
 // damage and fails loud with ErrCorruptStore — the same incompatible/corrupt line "awa
 // log" draws, so the full view and the default view stay consistent.
 func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
-	health, err := s.checkpoints.StoreHealth(ctx)
+	health, err := s.checkpoints.StoreHealthAll(ctx)
 	if err != nil {
 		return Result{}, err
 	}
 	if n := health.Corrupt(); n > 0 {
 		return Result{}, fmt.Errorf("%w: %d checkpoint(s) have corrupt metadata", checkpoint.ErrCorruptStore, n)
 	}
-	headers := health.Headers()
+	headers := health.NewestHeaders()
 
 	var entries []TimelineEntry
 	// Checkpoints, newest-first. @-N indexing matches awa log / state references.

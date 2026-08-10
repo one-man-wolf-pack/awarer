@@ -40,12 +40,15 @@ var (
 // Repository stores and retrieves immutable checkpoint records. Implemented by the
 // checkpointjson filesystem adapter.
 //
-// The contract is stream-first by design on both sides: reads expose header reads
-// (Header/ListHeaders/LatestHeader/StoreHealth) and a re-openable record stream
-// (OpenManifest), and the write path is PutManifest, which streams the records. There
-// is no accessor anywhere — on this interface or on the adapter — that materializes a
-// whole checkpoint by an ordinary name, so no caller can load an unbounded manifest
-// without saying so at the call site.
+// The contract is stream-first by design on both sides: reads expose one header read
+// (Header), one bounded store-health read (StoreHealthNewest), and a re-openable record
+// stream (OpenManifest), and the write path is PutManifest, which streams the records.
+// There is no accessor anywhere — on this interface or on the adapter — that
+// materializes a whole checkpoint by an ordinary name, so no caller can load an
+// unbounded manifest without saying so at the call site. History cardinality obeys the
+// same rule from the other direction: this port carries only the bounded health read, so
+// a consumer that genuinely needs every header declares its own narrow port for the
+// adapter's full operation rather than finding one waiting here.
 //
 // It carries no delete: no holder of this port removes a published checkpoint.
 // Reclamation does, and gc calls Delete on the checkpointjson adapter directly.
@@ -69,22 +72,25 @@ type Repository interface {
 	// ErrNotFound / ErrAmbiguousPrefix. It enumerates the stored ids to match the prefix,
 	// so it takes a context and honors cancellation mid-scan on a large store.
 	ResolvePrefix(ctx context.Context, prefix string) (CheckpointID, error)
-	// ListHeaders returns every checkpoint's header newest-first with a deterministic
-	// tie-breaker, without materializing any manifest. It reads one header per stored
-	// checkpoint, so it takes a context and honors cancellation between records: a
-	// large local history is interruptible mid-read, returning ctx.Err().
-	ListHeaders(ctx context.Context) ([]CheckpointHeader, error)
-	// StoreHealth reads every checkpoint's header and classifies the store's read
-	// health, collecting the readable headers (newest-first) alongside a per-record
-	// finding for each unreadable one (incompatible schema vs corrupt). Unlike
-	// ListHeaders it does not collapse the whole store when a single record cannot be
-	// read, so a diagnostic surface can tell empty, healthy, partial, incompatible, and
-	// corrupt stores apart. Structural corruption that makes the id set itself
-	// unreadable (a foreign node on a reserved checkpoint address) still fails
-	// loudly as an error. It reads one header per checkpoint, so it takes a context and
-	// checks cancellation between records.
-	StoreHealth(ctx context.Context) (CheckpointStoreHealth, error)
-	// LatestHeader returns the newest checkpoint's header; ok is false when none exist.
-	// It walks the headers to find the newest, so it takes a context and is interruptible.
-	LatestHeader(ctx context.Context) (h CheckpointHeader, ok bool, err error)
+	// StoreHealthNewest reads one header per committed checkpoint and classifies each
+	// unreadable one (incompatible schema vs corrupt) into exact counts rather than
+	// collapsing the whole store on the first bad record, so a diagnostic surface can
+	// tell empty, healthy, partial, incompatible, and corrupt stores apart. Structural
+	// corruption that makes the id set itself unreadable (a foreign node on a reserved
+	// checkpoint address) still fails loudly as an error, as does a read failure that is
+	// neither an incompatible schema nor store corruption. It takes a context and honors
+	// cancellation between records.
+	//
+	// It retains at most the newest readable headers, newest-first. newest must be
+	// positive; a non-positive bound is a caller error, never a silent "all".
+	//
+	// The bound is a retention window, not a health sample: the scan still inspects every
+	// committed header exactly once, so an incompatible or corrupt record — or a
+	// cancellation — after the window has filled still changes the result. Totals
+	// therefore come from the counts, never from the retained window.
+	//
+	// This port carries no full-history read. The concrete adapter has one, and the only
+	// consumer that needs it — the timeline — declares its own one-method port for it, so
+	// a holder of this broad interface cannot retain every header by naming a method here.
+	StoreHealthNewest(ctx context.Context, newest int) (CheckpointStoreHealth, error)
 }

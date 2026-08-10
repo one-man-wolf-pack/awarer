@@ -376,9 +376,13 @@ func TestRestoreNeverMovesLatestOrCreatesACheckpoint(t *testing.T) {
 	h := setup(t)
 	id := h.generatorRewrite()
 	repo := checkpointjson.NewRepo(h.layout)
-	before, err := repo.ListHeaders(context.Background())
+	before, err := repo.StoreHealthAll(context.Background())
 	if err != nil {
-		t.Fatalf("list headers: %v", err)
+		t.Fatalf("store health: %v", err)
+	}
+	beforeLatest, ok := before.Latest()
+	if !ok {
+		t.Fatal("no checkpoint recorded before the restore")
 	}
 
 	res := h.run(t, id.String(), h.selection("generated/client"), true)
@@ -386,19 +390,16 @@ func TestRestoreNeverMovesLatestOrCreatesACheckpoint(t *testing.T) {
 		t.Fatalf("outcome = %s", res.Result.Outcome())
 	}
 
-	after, err := repo.ListHeaders(context.Background())
+	after, err := repo.StoreHealthAll(context.Background())
 	if err != nil {
-		t.Fatalf("list headers: %v", err)
+		t.Fatalf("store health: %v", err)
 	}
-	if len(after) != len(before) {
-		t.Fatalf("restore changed the checkpoint count from %d to %d", len(before), len(after))
+	if after.Recorded() != before.Recorded() {
+		t.Fatalf("restore changed the checkpoint count from %d to %d", before.Recorded(), after.Recorded())
 	}
-	latest, ok, err := repo.LatestHeader(context.Background())
-	if err != nil {
-		t.Fatalf("latest: %v", err)
-	}
-	if !ok || latest.ID != before[0].ID {
-		t.Errorf("restore moved latest to %v, want %s", latest.ID, before[0].ID)
+	latest, ok := after.Latest()
+	if !ok || latest.ID != beforeLatest.ID {
+		t.Errorf("restore moved latest to %v, want %s", latest.ID, beforeLatest.ID)
 	}
 }
 

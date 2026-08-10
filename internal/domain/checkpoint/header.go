@@ -3,6 +3,7 @@ package checkpoint
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"awarer/internal/domain/config"
@@ -125,6 +126,27 @@ type CheckpointHeader struct {
 	Git                   *GitMetadata
 	Stats                 CheckpointStats
 	RecordCount           int
+}
+
+// NewestFirst orders checkpoint headers newest-first: recorded creation time
+// descending, then id descending so equal timestamps still have one deterministic
+// order. It owns that rule for every read of store health — the full sort and any
+// bounded newest-window selection share it, so the two can never disagree on which
+// checkpoint is newer.
+//
+// It is not yet the rule's only implementation: gc retention orders its own
+// checkpoint records (createdAt, id) by the same comparison without reaching this
+// function, so until that duplication is retired a change here must be mirrored there
+// — otherwise the newest checkpoint the reads resolve and the newest one retention
+// protects can drift apart. Folding gc onto this comparison is deferred.
+func NewestFirst(a, b CheckpointHeader) int {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		if a.CreatedAt.After(b.CreatedAt) {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(b.ID.String(), a.ID.String())
 }
 
 // Build projects the header's non-derived metadata back into a CheckpointBuild,

@@ -306,9 +306,13 @@ func TestCheckpointCreatesCheckpointWithBlob(t *testing.T) {
 		t.Fatalf("BlobsWritten = %d, want 1", res.BlobsWritten)
 	}
 
-	got, ok, err := h.checkpoints.LatestHeader(context.Background())
-	if err != nil || !ok {
-		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	health, err := h.checkpoints.StoreHealthNewest(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("store health: %v", err)
+	}
+	got, ok := health.Latest()
+	if !ok {
+		t.Fatal("Latest: no checkpoint recorded")
 	}
 	if got.ID != res.Header.ID {
 		t.Fatalf("persisted id %s != returned %s", got.ID, res.Header.ID)
@@ -492,9 +496,9 @@ func TestMissingBlobChangedBytesAborts(t *testing.T) {
 		t.Fatalf("err = %v, want ErrHashMismatch", err)
 	}
 	// Only the first checkpoint exists; the aborted one published nothing new.
-	list, _ := h.checkpoints.ListHeaders(context.Background())
-	if len(list) != 1 {
-		t.Fatalf("checkpoint count = %d, want 1 (aborted checkpoint must not publish)", len(list))
+	health, _ := h.checkpoints.StoreHealthAll(context.Background())
+	if health.Recorded() != 1 {
+		t.Fatalf("checkpoint count = %d, want 1 (aborted checkpoint must not publish)", health.Recorded())
 	}
 
 	// The abort must have invalidated the stale index entry, so a retry re-hashes
@@ -504,8 +508,8 @@ func TestMissingBlobChangedBytesAborts(t *testing.T) {
 	if retry.BlobsWritten != 1 {
 		t.Fatalf("retry BlobsWritten = %d, want 1 (re-hashed after invalidation)", retry.BlobsWritten)
 	}
-	if list, _ := h.checkpoints.ListHeaders(context.Background()); len(list) != 2 {
-		t.Fatalf("after successful retry: %d checkpoints, want 2", len(list))
+	if health, _ := h.checkpoints.StoreHealthAll(context.Background()); health.Recorded() != 2 {
+		t.Fatalf("after successful retry: %d checkpoints, want 2", health.Recorded())
 	}
 }
 

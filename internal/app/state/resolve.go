@@ -34,7 +34,7 @@ var (
 	// diagnostic rather than "record one first".
 	ErrLatestUnreadable = errors.New("latest checkpoint cannot be resolved: the checkpoint store is partially unreadable")
 	// ErrLatestIncompatible and ErrLatestCorrupt refine ErrLatestUnreadable with the reason
-	// the store cannot be ordered, classified from the same single StoreHealth read pass
+	// the store cannot be ordered, classified from the same single store-health read pass
 	// (never a second racy read). Both wrap ErrLatestUnreadable, so any caller that only
 	// distinguishes "the store is partially unreadable" (e.g. the changes/diff exit-code
 	// mapping) keeps working unchanged, while the external-state provider can map incompatible
@@ -580,56 +580,81 @@ func (r *Resolver) resolveRestoreObservation(ctx context.Context, ref Ref) (*Res
 	}, nil
 }
 
-// readableHeaders returns every checkpoint header newest-first, but only when the
-// whole store reads cleanly. It is the one home of the policy that position-based
-// references (latest, @-N) order by recorded creation time — a value only a readable
-// header carries — so a single unreadable record makes every position ambiguous and
-// the store must be resolved or reinitialized first. That case fails with
-// ErrLatestUnreadable rather than letting a caller silently count from a store it
-// cannot fully order or claim it is empty.
-func (r *Resolver) readableHeaders(ctx context.Context) ([]checkpoint.CheckpointHeader, error) {
-	health, err := r.deps.Checkpoints.StoreHealth(ctx)
+// readableHealth reads the store's health retaining the newest headers a positional
+// reference needs, but returns it only when the whole store reads cleanly. It is the
+// one home of the policy that position-based references (latest, @-N) order by
+// recorded creation time — a value only a readable header carries — so a single
+// unreadable record makes every position ambiguous and the store must be resolved or
+// reinitialized first. That case fails with ErrLatestUnreadable rather than letting a
+// caller silently count from a store it cannot fully order or claim it is empty.
+//
+// The bounded window does not weaken that check: the scan behind it still reads every
+// committed header, so an unreadable record older than the requested window is still
+// counted and still rejects the reference.
+func (r *Resolver) readableHealth(ctx context.Context, newest int) (checkpoint.CheckpointStoreHealth, error) {
+	health, err := r.deps.Checkpoints.StoreHealthNewest(ctx, newest)
 	if err != nil {
-		return nil, err
+		return checkpoint.CheckpointStoreHealth{}, err
 	}
 	if health.AnyUnreadable() {
 		// Classify the reason from the same read pass: a corrupt record makes the store
 		// corrupt (fail-closed), otherwise every unreadable record is merely incompatible.
 		if health.Corrupt() > 0 {
-			return nil, ErrLatestCorrupt
+			return checkpoint.CheckpointStoreHealth{}, ErrLatestCorrupt
 		}
-		return nil, ErrLatestIncompatible
+		return checkpoint.CheckpointStoreHealth{}, ErrLatestIncompatible
 	}
-	return health.Headers(), nil
+	return health, nil
 }
 
 // latestReadable returns the newest checkpoint header, or ErrNoCheckpoints for an
-// empty store. It inherits the fully-readable-store requirement from readableHeaders.
+// empty store. It needs one header, so it asks for one, and inherits the
+// fully-readable-store requirement from readableHealth.
 func (r *Resolver) latestReadable(ctx context.Context) (checkpoint.CheckpointHeader, error) {
-	all, err := r.readableHeaders(ctx)
+	health, err := r.readableHealth(ctx, 1)
 	if err != nil {
 		return checkpoint.CheckpointHeader{}, err
 	}
-	if len(all) == 0 {
+	// Emptiness is the store-wide count's answer, not the retained window's: a window
+	// that came back short would otherwise report the far more inviting "no checkpoints
+	// exist" for a store that has them, sending a user to record one instead of to the
+	// broken read.
+	if health.Recorded() == 0 {
 		return checkpoint.CheckpointHeader{}, ErrNoCheckpoints
 	}
-	return all[0], nil
+	latest, ok := health.Latest()
+	if !ok {
+		return checkpoint.CheckpointHeader{}, fmt.Errorf("checkpoint store reported %d readable checkpoint(s) but retained no header for latest", health.Recorded())
+	}
+	return latest, nil
 }
 
-// resolveAtN resolves @-N against the newest-first checkpoint list, inheriting the
-// fully-readable-store requirement from readableHeaders.
+// resolveAtN resolves @-N against the newest-first checkpoint headers, asking for
+// exactly the N the position needs and inheriting the fully-readable-store
+// requirement from readableHealth. The out-of-range check uses the exact readable
+// total, not the retained window, so a position past the oldest checkpoint reports the
+// store's real size.
 func (r *Resolver) resolveAtN(ctx context.Context, ref Ref) (*ResolvedState, error) {
-	all, err := r.readableHeaders(ctx)
+	health, err := r.readableHealth(ctx, ref.N)
 	if err != nil {
 		return nil, err
 	}
-	if len(all) == 0 {
+	if health.Recorded() == 0 {
 		return nil, ErrNoCheckpoints
 	}
-	if ref.N > len(all) {
-		return nil, fmt.Errorf("%w: %s names position %d but only %d checkpoint(s) exist", ErrOutOfRange, ref.Display, ref.N, len(all))
+	if ref.N > health.Recorded() {
+		return nil, fmt.Errorf("%w: %s names position %d but only %d checkpoint(s) exist", ErrOutOfRange, ref.Display, ref.N, health.Recorded())
 	}
-	return r.fromHeader(all[ref.N-1], ref.Display)
+	// The position exists, so the read was asked to retain a window that reaches it.
+	// Index that window by its own length rather than by the store-wide count, which
+	// describes more records than the window holds: a store that returned a shorter
+	// window than requested is a broken read contract and must say so, not resolve the
+	// wrong checkpoint or index past the retained headers.
+	window := health.NewestHeaders()
+	if ref.N > len(window) {
+		return nil, fmt.Errorf("checkpoint store returned %d of the %d newest headers needed to resolve %s", len(window), ref.N, ref.Display)
+	}
+	return r.fromHeader(window[ref.N-1], ref.Display)
 }
 
 // resolveCheckpointPrefix resolves a token the parser already proved is a

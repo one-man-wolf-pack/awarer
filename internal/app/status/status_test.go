@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"awarer/internal/app/initcmd"
+	"awarer/internal/domain/checkpoint"
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/evidence"
 	"awarer/internal/domain/hashing"
@@ -18,6 +19,7 @@ import (
 	"awarer/internal/domain/runcache"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
+	"awarer/internal/infra/checkpointjson"
 	"awarer/internal/infra/projfs"
 	"awarer/internal/infra/runstore"
 	"awarer/internal/scantest"
@@ -123,6 +125,101 @@ func TestRunReportsHonestStatus(t *testing.T) {
 	}
 	if res.RunCache.State != "store-empty" {
 		t.Errorf("run_cache.state = %q, want store-empty", res.RunCache.State)
+	}
+}
+
+// commitStatusCheckpoint publishes one minimal checkpoint into the project's store, so
+// a test can populate a checkpoint history larger than the header window status
+// retains. It writes through the production repository, so the records are exactly what
+// status reads back.
+func commitStatusCheckpoint(t *testing.T, layout paths.Layout, idByte byte, created time.Time) checkpoint.CheckpointID {
+	t.Helper()
+	id, err := checkpoint.NewCheckpointID(strings.NewReader(strings.Repeat(string(rune('a'+idByte%26)), 32)))
+	if err != nil {
+		t.Fatalf("NewCheckpointID: %v", err)
+	}
+	cfgHash := hashing.ConfigHashFromTree(blake3hash.New().HashBytes([]byte("cfg")))
+	build := checkpoint.CheckpointBuild{
+		ID:                   id,
+		CreatedAt:            created,
+		Root:                 layout.Root(),
+		CommandCwd:           ".",
+		AwaVersion:           "0.0.0-dev",
+		ScanConfigHash:       cfgHash,
+		CheckpointPolicyHash: cfgHash,
+		TrustMode:            config.TrustNormal,
+	}
+	if _, err := checkpointjson.NewRepo(layout).PutManifest(context.Background(), build, scantest.CanonicalStream(nil, nil)); err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	return id
+}
+
+// TestCheckpointStatusCountsAllButRetainsTheNewest proves the bounded checkpoint read
+// stays honest: status keeps one header, so it must report the newest one, while the
+// recorded count describes the whole store. A window that kept an arbitrary header
+// instead of the newest, or a total taken from the window, fails here.
+func TestCheckpointStatusCountsAllButRetainsTheNewest(t *testing.T) {
+	p, root := openProject(t)
+	layout := paths.New(root)
+	base := time.Unix(1_700_000_000, 0).UTC()
+	var newest checkpoint.CheckpointID
+	for i := 0; i < 5; i++ {
+		newest = commitStatusCheckpoint(t, layout, byte(i), base.Add(time.Duration(i)*time.Minute))
+	}
+
+	res, err := Run(context.Background(), p, mustResolved(t, config.Defaults()))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Checkpoints.Recorded != 5 {
+		t.Errorf("Recorded = %d, want the store-wide total 5", res.Checkpoints.Recorded)
+	}
+	if res.Checkpoints.Latest == nil {
+		t.Fatal("Latest = nil, want the newest checkpoint")
+	}
+	if res.Checkpoints.Latest.ID != newest.String() {
+		t.Errorf("Latest = %s, want the newest %s", res.Checkpoints.Latest.ID, newest.Short())
+	}
+	if res.Checkpoints.State != "healthy" {
+		t.Errorf("checkpoints.state = %q, want healthy", res.Checkpoints.State)
+	}
+}
+
+// TestCheckpointStatusSeesUnreadableRecordsOutsideTheWindow is the completeness guard
+// on the bounded read: the incompatible record is the oldest in the store, so a scan
+// that stopped once its one-header window filled would report a healthy store with a
+// resolvable latest — exactly the answer status must never give.
+func TestCheckpointStatusSeesUnreadableRecordsOutsideTheWindow(t *testing.T) {
+	p, root := openProject(t)
+	layout := paths.New(root)
+	base := time.Unix(1_700_000_000, 0).UTC()
+	stale := commitStatusCheckpoint(t, layout, 0, base)
+	for i := 1; i < 4; i++ {
+		commitStatusCheckpoint(t, layout, byte(i), base.Add(time.Duration(i)*time.Minute))
+	}
+	// Declare a schema this build does not speak on the oldest record.
+	header := filepath.Join(layout.CheckpointsDir(), stale.String(), "header.json")
+	if err := os.Chmod(header, 0o644); err != nil {
+		t.Fatalf("chmod header: %v", err)
+	}
+	if err := os.WriteFile(header, []byte(`{"schema_version":99}`), 0o644); err != nil {
+		t.Fatalf("rewrite header: %v", err)
+	}
+
+	res, err := Run(context.Background(), p, mustResolved(t, config.Defaults()))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Checkpoints.Recorded != 3 || res.Checkpoints.Unreadable != 1 || res.Checkpoints.Incompatible != 1 {
+		t.Fatalf("counts = recorded %d unreadable %d incompatible %d, want 3/1/1",
+			res.Checkpoints.Recorded, res.Checkpoints.Unreadable, res.Checkpoints.Incompatible)
+	}
+	if res.Checkpoints.Latest != nil {
+		t.Errorf("a degraded store reported latest %+v, want it omitted", res.Checkpoints.Latest)
+	}
+	if res.Checkpoints.State != "read-partial" {
+		t.Errorf("checkpoints.state = %q, want read-partial", res.Checkpoints.State)
 	}
 }
 

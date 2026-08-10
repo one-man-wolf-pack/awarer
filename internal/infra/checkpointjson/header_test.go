@@ -399,7 +399,7 @@ func TestCheckpointRejectsSymlinkAtDirAddress(t *testing.T) {
 	id := idFrom(t, 0x20)
 	link := filepath.Join(layout.CheckpointsDir(), id.String())
 	mustSymlink(t, t.TempDir(), link)
-	if _, err := repo.ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+	if _, err := repo.StoreHealthAll(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("List with symlink at dir address err = %v, want ErrCorruptStore", err)
 	}
 	if _, err := repo.ResolvePrefix(context.Background(), id.String()); !errors.Is(err, checkpoint.ErrCorruptStore) {

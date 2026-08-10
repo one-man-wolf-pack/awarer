@@ -28,7 +28,7 @@ func TestRepoListRejectsSymlinkedCheckpointsDir(t *testing.T) {
 	layout := paths.New(t.TempDir())
 	symlinkCheckpointsDir(t, layout) // checkpoints -> empty outside directory
 	repo := NewRepo(layout)
-	if _, err := repo.ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+	if _, err := repo.StoreHealthAll(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("List through symlinked checkpoints dir err = %v, want ErrCorruptStore", err)
 	}
 }
@@ -43,7 +43,7 @@ func TestRepoListRejectsNonDirectoryCheckpoints(t *testing.T) {
 	if err := os.WriteFile(layout.CheckpointsDir(), []byte("not a dir"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRepo(layout).ListHeaders(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
+	if _, err := NewRepo(layout).StoreHealthAll(context.Background()); !errors.Is(err, checkpoint.ErrCorruptStore) {
 		t.Fatalf("List with a file at checkpoints/ err = %v, want ErrCorruptStore", err)
 	}
 }
