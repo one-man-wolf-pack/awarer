@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -231,15 +232,14 @@ func (p *planner) planCheckpoints(commitCutoff time.Time, committedOK bool) (map
 		})
 	}
 
-	// Deterministic newest-first order: created time descending, then id descending
-	// as a stable tiebreak, so latest and keep-last are reproducible across plan and
-	// execute.
+	// Chronological position is the checkpoint domain's to define, so latest and
+	// keep-last resolve the newest record through the same owner the reads use rather
+	// than through a retention-local rule that could drift from it. Ids are unique store
+	// identities, so no two live records compare equal on both axes and the sort needs no
+	// stability to be reproducible across plan and execute.
 	live := liveRecords(records)
-	sort.SliceStable(live, func(i, j int) bool {
-		if !live[i].createdAt.Equal(live[j].createdAt) {
-			return live[i].createdAt.After(live[j].createdAt)
-		}
-		return live[i].id.String() > live[j].id.String()
+	slices.SortFunc(live, func(a, b checkpointRecord) int {
+		return checkpoint.CompareNewestFirst(a.createdAt, a.id, b.createdAt, b.id)
 	})
 
 	keepLast := p.req.KeepLast(p.cfg.GC.KeepLastCheckpoints)

@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"bytes"
+	"cmp"
 	"io"
 	"testing"
 	"time"
@@ -183,6 +184,49 @@ func TestDirtySummaryValidate(t *testing.T) {
 	}
 	if err := (DirtySummary{Modified: -1}).Validate(); err == nil {
 		t.Error("negative count should be rejected")
+	}
+}
+
+// TestCompareNewestFirstOrdersTimeThenIDDescending proves the one comparison the
+// checkpoint domain owns for chronological position: a later creation time is newer,
+// and only on an exact tie does the lexically larger id win. Every expectation is
+// written out by hand — the wanted direction is stated per case, never computed through
+// the comparison under test — and each pair is checked in both argument orders so a
+// reversed sign cannot pass as a symmetric result.
+func TestCompareNewestFirstOrdersTimeThenIDDescending(t *testing.T) {
+	early := time.Unix(1_700_000_000, 0).UTC()
+	late := time.Unix(1_700_000_060, 0).UTC()
+	// The same instant carried in another zone: chronological position is the instant,
+	// not the wall clock it is displayed in.
+	lateElsewhere := late.In(time.FixedZone("plus-two", 2*60*60))
+	// idByte repeats one alphabet character, so "111…" is lexically below "222…".
+	lowID, highID := idByte(t, 1), idByte(t, 2)
+
+	cases := []struct {
+		name string
+		aAt  time.Time
+		aID  CheckpointID
+		bAt  time.Time
+		bID  CheckpointID
+		want int // wanted sign: -1 when a is newer, +1 when b is, 0 for the same record
+	}{
+		{name: "later time is newer", aAt: late, aID: lowID, bAt: early, bID: lowID, want: -1},
+		{name: "later time outranks a larger id", aAt: late, aID: lowID, bAt: early, bID: highID, want: -1},
+		{name: "equal time picks the larger id", aAt: late, aID: highID, bAt: late, bID: lowID, want: -1},
+		{name: "equal instant across zones still picks the larger id", aAt: lateElsewhere, aID: highID, bAt: late, bID: lowID, want: -1},
+		{name: "same time and id compare equal", aAt: late, aID: highID, bAt: late, bID: highID, want: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cmp.Compare(CompareNewestFirst(tc.aAt, tc.aID, tc.bAt, tc.bID), 0)
+			if got != tc.want {
+				t.Fatalf("CompareNewestFirst sign = %d, want %d", got, tc.want)
+			}
+			mirrored := cmp.Compare(CompareNewestFirst(tc.bAt, tc.bID, tc.aAt, tc.aID), 0)
+			if mirrored != -tc.want {
+				t.Fatalf("mirrored CompareNewestFirst sign = %d, want %d", mirrored, -tc.want)
+			}
+		})
 	}
 }
 

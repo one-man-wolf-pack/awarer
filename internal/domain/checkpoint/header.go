@@ -128,25 +128,32 @@ type CheckpointHeader struct {
 	RecordCount           int
 }
 
-// NewestFirst orders checkpoint headers newest-first: recorded creation time
-// descending, then id descending so equal timestamps still have one deterministic
-// order. It owns that rule for every read of store health — the full sort and any
-// bounded newest-window selection share it, so the two can never disagree on which
-// checkpoint is newer.
+// CompareNewestFirst is the checkpoint domain's single answer to "which of these two
+// checkpoints is newer": recorded creation time descending, then id descending so equal
+// timestamps still have one deterministic order. It takes the two facts chronological
+// position is made of rather than a header, so a caller holding only a checkpoint's
+// creation time and id — gc retention does — asks the same owner as a caller holding a
+// full header, and reads can never disagree with retention about which record is newest.
 //
-// It is not yet the rule's only implementation: gc retention orders its own
-// checkpoint records (createdAt, id) by the same comparison without reaching this
-// function, so until that duplication is retired a change here must be mirrored there
-// — otherwise the newest checkpoint the reads resolve and the newest one retention
-// protects can drift apart. Folding gc onto this comparison is deferred.
-func NewestFirst(a, b CheckpointHeader) int {
-	if !a.CreatedAt.Equal(b.CreatedAt) {
-		if a.CreatedAt.After(b.CreatedAt) {
+// The result follows the standard cmp convention (negative when a sorts before b), so it
+// is directly usable by slices.SortFunc and heap comparisons without any caller
+// reversing an axis by hand.
+func CompareNewestFirst(aCreatedAt time.Time, aID CheckpointID, bCreatedAt time.Time, bID CheckpointID) int {
+	if !aCreatedAt.Equal(bCreatedAt) {
+		if aCreatedAt.After(bCreatedAt) {
 			return -1
 		}
 		return 1
 	}
-	return strings.Compare(b.ID.String(), a.ID.String())
+	return strings.Compare(bID.String(), aID.String())
+}
+
+// NewestFirst orders checkpoint headers newest-first. It is the header-shaped
+// convenience for store-health reads — the full sort and any bounded newest-window
+// selection share it — and holds no ordering rule of its own: every timestamp and id
+// fact belongs to CompareNewestFirst.
+func NewestFirst(a, b CheckpointHeader) int {
+	return CompareNewestFirst(a.CreatedAt, a.ID, b.CreatedAt, b.ID)
 }
 
 // Build projects the header's non-derived metadata back into a CheckpointBuild,

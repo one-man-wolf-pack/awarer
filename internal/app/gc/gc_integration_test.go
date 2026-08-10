@@ -381,6 +381,64 @@ func TestExpiredCheckpointsDeletedLatestKept(t *testing.T) {
 	}
 }
 
+// TestEqualTimestampKeepLastProtectsTheCheckpointReadsCallLatest pins the one case where
+// reads and retention could disagree: two checkpoints recorded at the identical instant,
+// where the id tie-break alone decides which is newest. The checkpoint the repository
+// resolves as latest must be exactly the one keep-last 1 protects, and its twin must be
+// deletable under otherwise identical policy — a reversed tie-break in either path would
+// retain and delete the opposite records.
+func TestEqualTimestampKeepLastProtectsTheCheckpointReadsCallLatest(t *testing.T) {
+	e := newEnv(t)
+	ts := time.Unix(1_700_000_000, 0).UTC()
+	e.writeFiles(t, map[string]string{"a.go": "package a // unique"})
+	first := e.checkpointAt(t, ts)
+	e.writeFiles(t, map[string]string{"b.go": "package b // unique"})
+	second := e.checkpointAt(t, ts)
+	if !first.CreatedAt.Equal(second.CreatedAt) {
+		t.Fatalf("fixture needs one shared creation time, got %s and %s", first.CreatedAt, second.CreatedAt)
+	}
+	// Checkpoint ids are random, so which one is lexically larger is decided here by a
+	// plain string comparison rather than by the ordering under test.
+	newer, older := first, second
+	if newer.ID.String() < older.ID.String() {
+		newer, older = older, newer
+	}
+
+	layout, _ := e.project.Paths()
+	checkpoints := checkpointjson.NewRepo(layout)
+	health, err := checkpoints.StoreHealthAll(context.Background())
+	if err != nil {
+		t.Fatalf("StoreHealthAll: %v", err)
+	}
+	latest, ok := health.Latest()
+	if !ok || latest.ID != newer.ID {
+		t.Fatalf("repository latest = %s (ok=%v), want the lexically larger id %s", latest.ID.Short(), ok, newer.ID.Short())
+	}
+
+	now := ts.Add(time.Hour)
+	pl := e.plan(t, now, nil, reqKeepLast(t, 1))
+
+	retained := candidatesOf(pl, gcdom.KindCheckpoint, gcdom.ActionRetain)
+	if len(retained) != 1 || retained[0].ID() != newer.ID.String() || retained[0].Reason() != gcdom.ReasonCheckpointLatest {
+		t.Fatalf("want only %s retained as latest, got %+v", newer.ID.Short(), retained)
+	}
+	dels := candidatesOf(pl, gcdom.KindCheckpoint, gcdom.ActionDelete)
+	if len(dels) != 1 || dels[0].ID() != older.ID.String() || dels[0].Reason() != gcdom.ReasonCheckpointExpired {
+		t.Fatalf("want only %s eligible as expired, got %+v", older.ID.Short(), dels)
+	}
+
+	res := e.execute(t, now, nil, pl)
+	if es := res.ExecSummary(); es.Failed != 0 {
+		t.Fatalf("execution had %d failures", es.Failed)
+	}
+	if _, err := checkpoints.Header(newer.ID); err != nil {
+		t.Fatalf("the checkpoint reads call latest must survive: %v", err)
+	}
+	if _, err := checkpoints.Header(older.ID); err == nil {
+		t.Fatalf("checkpoint %s should be deleted", older.ID.Short())
+	}
+}
+
 func TestUnreachableBlobSweptReferencedKept(t *testing.T) {
 	e := newEnv(t)
 	e.writeFiles(t, map[string]string{"a.go": "package a // unique-AAA", "common.go": "package common // shared"})
