@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,36 @@ type harness struct {
 	root        string
 	blobs       *blobstore.FS
 	checkpoints *checkpointjson.Repo
+	content     *recordingContent
+}
+
+// recordingContent is the production direct-content reader with a log in front of it.
+// It owns the one fact no production instrumentation should have to expose: which
+// entries were read by reopening a recorded path. Delegating rather than faking keeps
+// the verification real, so a test that asserts a rejection still asserts the shared
+// reader's rejection.
+//
+// Absence from the log means only "not read through this reader"; reading it as "went
+// through the retained opener instead" requires the precondition requireNoStoredBlobs
+// documents and asserts.
+type recordingContent struct {
+	inner *worktreefs.ContentReader
+	paths []string
+}
+
+func (c *recordingContent) Open(path worktree.RelPath, observed worktree.StatSignature) (io.ReadCloser, error) {
+	c.paths = append(c.paths, path.String())
+	return c.inner.Open(path, observed)
+}
+
+// asked reports whether the direct reader was consulted for path.
+func (c *recordingContent) asked(path string) bool {
+	for _, p := range c.paths {
+		if p == path {
+			return true
+		}
+	}
+	return false
 }
 
 func setup(t *testing.T) *harness {
@@ -62,6 +93,7 @@ func setup(t *testing.T) *harness {
 
 	blobs := blobstore.New(layout, hasher)
 	checkpoints := checkpointjson.NewRepo(layout)
+	content := &recordingContent{inner: worktreefs.NewContentReader(layout.Root())}
 	deps := Deps{
 		Scanner:     scanner.New(worktreefs.New(), hasher, idx),
 		Index:       idx,
@@ -69,11 +101,137 @@ func setup(t *testing.T) *harness {
 		Blobs:       blobs,
 		Checkpoints: checkpoints,
 		Git:         fakeGit{},
+		Content:     content,
 		Now:         func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		Rand:        rand.Reader,
 		Version:     "test",
 	}
-	return &harness{svc: New(deps), deps: deps, project: project, root: root, blobs: blobs, checkpoints: checkpoints}
+	return &harness{svc: New(deps), deps: deps, project: project, root: root, blobs: blobs, checkpoints: checkpoints, content: content}
+}
+
+// scan runs one scan under exactly the retention mode production derives from cfg, so
+// an assertion about what a checkpoint retains is an assertion about the mapping the
+// service actually uses.
+func (h *harness) scan(t *testing.T, cfg config.Config) scanner.Result {
+	t.Helper()
+	res, err := h.deps.Scanner.Scan(context.Background(), h.project, cfg, cfg.HistoryScanScope(), scanner.Options{
+		Now:     h.deps.Now(),
+		Sources: sourceRetention(cfg),
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	t.Cleanup(func() { _ = res.Close() })
+	return res
+}
+
+// scannedEntries drains a scan's manifest and returns its entries, so an assertion can
+// ask about every path the scan actually recorded rather than a hand-listed subset.
+func scannedEntries(t *testing.T, scan scanner.Result) []worktree.Entry {
+	t.Helper()
+	cur, err := scan.Manifest().Open(context.Background())
+	if err != nil {
+		t.Fatalf("open scan manifest: %v", err)
+	}
+	defer func() { _ = cur.Close() }()
+	var out []worktree.Entry
+	for cur.Next() {
+		if e, ok := cur.Record().Entry(); ok {
+			out = append(out, e)
+		}
+	}
+	if err := cur.Err(); err != nil {
+		t.Fatalf("drain scan manifest: %v", err)
+	}
+	return out
+}
+
+// requireNoStoredBlobs pins the precondition every post-scan rejection test depends on.
+// The blob store is content-addressed and idempotent: a blob already present is verified
+// against its own address and reused, and the entry's content source is never opened at
+// all. Only an absent blob makes materialization actually reach for source bytes, which
+// is the only situation in which a post-scan substitution can be detected. Asserting it
+// keeps that dependency executable rather than a claim in a comment.
+//
+// This covers blobs stored before the test runs. The other half of the precondition —
+// that no earlier entry in the same pass publishes the same content — belongs to the
+// fixture; see followFixture.
+func (h *harness) requireNoStoredBlobs(t *testing.T) {
+	t.Helper()
+	stored, err := h.blobs.List()
+	if err != nil {
+		t.Fatalf("list blobs: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("precondition failed: %d blobs already stored, so materialization would reuse them without opening any source", len(stored))
+	}
+}
+
+// materialize drives the streaming manifest source to completion and returns its
+// terminal error, if any. Materialization happens as records are pulled, so this is how
+// a per-entry rejection surfaces.
+func (h *harness) materialize(t *testing.T, cfg config.Config, scan scanner.Result) error {
+	t.Helper()
+	src := &manifestSource{svc: h.svc, cfg: cfg, scan: scan}
+	cur, err := src.Open(context.Background())
+	if err != nil {
+		t.Fatalf("open manifest source: %v", err)
+	}
+	for cur.Next() {
+	}
+	cerr := cur.Err()
+	_ = cur.Close()
+	return cerr
+}
+
+// followFixture writes the worktree every followed-provenance test needs: two ordinary
+// files, one file reached through a file symlink, and one reached below a followed
+// directory symlink. hidden/equal.txt and hidden/dir2/inner.txt hold bytes identical to
+// the terminals the links point at, so a repoint substitutes content that would satisfy
+// any hash check and must be rejected on provenance alone.
+//
+// The terminals live under an excluded directory deliberately: it is requireNoStoredBlobs'
+// precondition carried into the fixture, since scanning them as entries in their own
+// right would publish the same bytes earlier in the pass and leave nothing to read.
+func (h *harness) followFixture(t *testing.T) config.Config {
+	t.Helper()
+	scantest.RequireSymlinks(t)
+	h.writeFile(t, "plain.txt", "plain")
+	h.writeFile(t, "pkg/a.txt", "alpha")
+	h.writeFile(t, "hidden/real.txt", "followed-bytes")
+	h.writeFile(t, "hidden/equal.txt", "followed-bytes")
+	h.writeFile(t, "hidden/dir/inner.txt", "descendant-bytes")
+	h.writeFile(t, "hidden/dir2/inner.txt", "descendant-bytes")
+	h.symlink(t, "link.txt", "hidden/real.txt")
+	h.symlink(t, "dirlink", "hidden/dir")
+
+	cfg := defaultsStoring()
+	cfg.Scope.FollowSymlinks = true
+	cfg.Scope.ExtraExcludes = []string{"hidden"}
+	return cfg
+}
+
+// symlink creates one fixture link. Its callers gate on scantest.RequireSymlinks
+// first, so a failure here is a broken fixture, not an unsupported platform, and must
+// fail rather than skip — a skip would quietly retire the whole followed-provenance
+// suite.
+func (h *harness) symlink(t *testing.T, name, target string) {
+	t.Helper()
+	if err := os.Symlink(target, filepath.Join(h.root, filepath.FromSlash(name))); err != nil {
+		t.Fatalf("linking %s -> %s: %v", name, target, err)
+	}
+}
+
+// repoint replaces an existing symlink with one pointing somewhere else.
+func (h *harness) repoint(t *testing.T, name, target string) {
+	t.Helper()
+	p := filepath.Join(h.root, filepath.FromSlash(name))
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, p); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (h *harness) writeFile(t *testing.T, name, content string) {
@@ -351,22 +509,23 @@ func TestMissingBlobChangedBytesAborts(t *testing.T) {
 	}
 }
 
-// TestMaterializeRejectsPostScanShapeSwap proves materialization reads through the
-// scan's verified content source, not a plain re-open by path: replacing a scanned
+// TestMaterializeRejectsPostScanShapeSwap proves an ordinary entry is reopened through
+// the shared verified reader rather than by a plain path open: replacing a scanned
 // regular file with a symlink to an out-of-root file holding the same bytes (same
-// content hash) is rejected, even though a plain os.Open would follow it and the
-// hash would match.
+// content hash) is rejected, even though a plain os.Open would follow it and the hash
+// would match. The scan retained no source for a.txt, so the rejection is the reader's
+// alone.
 func TestMaterializeRejectsPostScanShapeSwap(t *testing.T) {
 	h := setup(t)
 	h.writeFile(t, "a.txt", "secret")
 
-	// Scan first so the verified opener for a.txt is captured.
-	scanCfg := defaultsStoring()
-	scan, err := h.deps.Scanner.Scan(context.Background(), h.project, scanCfg, scanCfg.HistoryScanScope(), scanner.Options{Now: h.deps.Now(), NeedContentSources: true})
-	if err != nil {
-		t.Fatalf("Scan: %v", err)
+	cfg := defaultsStoring()
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+	p, _ := worktree.ParseRelPath("a.txt")
+	if _, ok := scan.Source(p); ok {
+		t.Fatal("a content-enabled checkpoint scan must retain no source for a directly-reached file")
 	}
-	defer func() { _ = scan.Close() }()
 
 	// Swap a.txt for a symlink to an out-of-root file with identical bytes.
 	outside := t.TempDir()
@@ -382,19 +541,266 @@ func TestMaterializeRejectsPostScanShapeSwap(t *testing.T) {
 		t.Skipf("symlinks unsupported: %v", err)
 	}
 
-	// Drive the streaming manifest source: materialization happens as records are
-	// pulled, so the shape swap surfaces as the cursor's terminal error.
-	src := &manifestSource{svc: h.svc, cfg: defaultsStoring(), scan: scan}
-	cur, err := src.Open(context.Background())
-	if err != nil {
-		t.Fatalf("open manifest source: %v", err)
-	}
-	for cur.Next() {
-	}
-	err = cur.Err()
-	_ = cur.Close()
-	if err == nil || !strings.Contains(err.Error(), "changed during scan") {
+	if err := h.materialize(t, cfg, scan); err == nil || !strings.Contains(err.Error(), "changed during scan") {
 		t.Fatalf("materialize after shape swap err = %v, want a \"changed during scan\" rejection", err)
+	}
+}
+
+// TestMaterializeRejectsPostScanStatSubstitution proves the shared reader also checks
+// the node it opened against the stat the entry recorded: with the blob absent so the
+// source really is read, a file replaced after the scan by a different regular file at
+// the same path is refused on the descriptor, before any hashing, so the failure is an
+// observation change rather than a hash mismatch discovered afterwards.
+func TestMaterializeRejectsPostScanStatSubstitution(t *testing.T) {
+	h := setup(t)
+	h.writeFile(t, "a.txt", "secret")
+
+	cfg := defaultsStoring()
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+
+	apath := filepath.Join(h.root, "a.txt")
+	if err := os.Remove(apath); err != nil {
+		t.Fatal(err)
+	}
+	h.writeFile(t, "a.txt", "a decidedly longer replacement body")
+
+	err := h.materialize(t, cfg, scan)
+	if err == nil || !strings.Contains(err.Error(), "changed during scan") {
+		t.Fatalf("materialize after stat substitution err = %v, want a \"changed during scan\" rejection", err)
+	}
+	if errors.Is(err, blob.ErrHashMismatch) {
+		t.Fatalf("substitution should be refused at the open, not after hashing: %v", err)
+	}
+}
+
+// TestContentDisabledRetainsNoSourceAndNeverOpensContent proves a checkpoint that
+// stores no file contents asks neither source owner for bytes: the scan keeps no
+// content source at all, and the direct reader is never consulted during
+// materialization. Hashing during the scan itself is untouched and is not the claim
+// here — the entries still carry their content hashes.
+func TestContentDisabledRetainsNoSourceAndNeverOpensContent(t *testing.T) {
+	h := setup(t)
+	h.writeFile(t, "a.txt", "alpha")
+	h.writeFile(t, "pkg/b.txt", "beta")
+
+	cfg := defaultsStoring()
+	cfg.Checkpoint.StoreFileContents = false
+
+	// The scan production would take for this configuration retains nothing.
+	scan := h.scan(t, cfg)
+	for _, e := range scannedEntries(t, scan) {
+		if _, ok := scan.Source(e.Path); ok {
+			t.Fatalf("content-disabled checkpoint scan retained a source for %s", e.Path)
+		}
+	}
+
+	res := h.run(t, Request{Config: cfg})
+	if len(h.content.paths) != 0 {
+		t.Fatalf("content-disabled checkpoint opened %v through the direct reader", h.content.paths)
+	}
+	if res.BlobsWritten != 0 || res.BlobsReused != 0 {
+		t.Fatalf("blobs written=%d reused=%d, want none when contents are disabled", res.BlobsWritten, res.BlobsReused)
+	}
+	for _, e := range h.loaded(t, res.Header.ID).entries {
+		if e.Kind != worktree.KindRegular {
+			continue
+		}
+		if e.Storage != worktree.StorageHashOnly {
+			t.Errorf("%s storage = %v, want hash-only", e.Path, e.Storage)
+		}
+		if e.Content.IsZero() {
+			t.Errorf("%s lost its content hash; the scan must still hash what it reads", e.Path)
+		}
+	}
+}
+
+// TestOrdinaryMaterializationNeedsNoRetainedSource proves the ordinary path works with
+// nothing retained: a content-enabled checkpoint of directly-reached files keeps no
+// source and writes every blob through the shared reader.
+func TestOrdinaryMaterializationNeedsNoRetainedSource(t *testing.T) {
+	h := setup(t)
+	h.writeFile(t, "a.txt", "alpha")
+	h.writeFile(t, "pkg/b.txt", "beta")
+
+	cfg := defaultsStoring()
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+	for _, e := range scannedEntries(t, scan) {
+		if _, ok := scan.Source(e.Path); ok {
+			t.Fatalf("a worktree with no followed entry retained a source for %s", e.Path)
+		}
+	}
+
+	res := h.run(t, Request{Config: cfg})
+	if res.BlobsWritten != 2 {
+		t.Fatalf("BlobsWritten = %d, want 2", res.BlobsWritten)
+	}
+	for _, want := range []string{"a.txt", "pkg/b.txt"} {
+		if !h.content.asked(want) {
+			t.Errorf("%s was not read through the direct content reader (asked: %v)", want, h.content.paths)
+		}
+	}
+	for _, e := range h.loaded(t, res.Header.ID).entries {
+		if e.Kind != worktree.KindRegular {
+			continue
+		}
+		if e.Storage != worktree.StorageBlob {
+			t.Errorf("%s storage = %v, want blob", e.Path, e.Storage)
+			continue
+		}
+		if has, _ := h.blobs.Has(e.Content); !has {
+			t.Errorf("%s published a blob reference the store does not hold", e.Path)
+		}
+	}
+}
+
+// TestFollowedEntriesUseTheRetainedOpener proves the split holds on a worktree that has
+// both kinds: the direct reader's log holds the directly-reached files only. Routing a
+// followed entry through it would put that virtual path in the log and fail here.
+func TestFollowedEntriesUseTheRetainedOpener(t *testing.T) {
+	h := setup(t)
+	cfg := h.followFixture(t)
+
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+	for _, followed := range []string{"link.txt", "dirlink/inner.txt"} {
+		p, _ := worktree.ParseRelPath(followed)
+		if _, ok := scan.Source(p); !ok {
+			t.Fatalf("followed entry %s has no retained source", followed)
+		}
+	}
+
+	res := h.run(t, Request{Config: cfg})
+	// Four distinct contents, so four blobs are written. Without this the assertions
+	// below would also hold for entries that were never materialized at all.
+	if res.BlobsWritten != 4 {
+		t.Fatalf("BlobsWritten = %d, want 4", res.BlobsWritten)
+	}
+	for _, followed := range []string{"link.txt", "dirlink/inner.txt"} {
+		if h.content.asked(followed) {
+			t.Errorf("followed entry %s was read through the direct content reader", followed)
+		}
+	}
+	for _, direct := range []string{"plain.txt", "pkg/a.txt"} {
+		if !h.content.asked(direct) {
+			t.Errorf("ordinary entry %s was not read through the direct content reader (asked: %v)", direct, h.content.paths)
+		}
+	}
+}
+
+// TestFollowedFileLinkRepointRejected proves a followed file entry is validated against
+// the chain the walk observed. The link is repointed after the scan to a terminal whose
+// bytes are identical, so nothing about the content would betray the substitution — and
+// the direct reader, which would resolve the new target's path just as happily, is never
+// asked.
+func TestFollowedFileLinkRepointRejected(t *testing.T) {
+	h := setup(t)
+	cfg := h.followFixture(t)
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+
+	h.repoint(t, "link.txt", "hidden/equal.txt")
+
+	err := h.materialize(t, cfg, scan)
+	if err == nil || !strings.Contains(err.Error(), "changed during scan") || !strings.Contains(err.Error(), "link.txt") {
+		t.Fatalf("materialize after followed-link repoint err = %v, want link.txt rejected as \"changed during scan\"", err)
+	}
+	if h.content.asked("link.txt") {
+		t.Errorf("the repointed followed entry was consulted through the direct content reader: %v", h.content.paths)
+	}
+}
+
+// TestFollowedDirectoryAncestorRepointRejected proves the same for an entry whose
+// followed provenance is an ancestor, not its own final component: repointing the
+// directory symlink it was reached through to a directory holding a byte-identical file
+// at the same name must be rejected, and again without ever consulting the direct reader
+// for that virtual path.
+func TestFollowedDirectoryAncestorRepointRejected(t *testing.T) {
+	h := setup(t)
+	cfg := h.followFixture(t)
+	scan := h.scan(t, cfg)
+	h.requireNoStoredBlobs(t)
+
+	h.repoint(t, "dirlink", "hidden/dir2")
+
+	err := h.materialize(t, cfg, scan)
+	if err == nil || !strings.Contains(err.Error(), "changed during scan") || !strings.Contains(err.Error(), "dirlink/inner.txt") {
+		t.Fatalf("materialize after followed-ancestor repoint err = %v, want dirlink/inner.txt rejected as \"changed during scan\"", err)
+	}
+	if h.content.asked("dirlink/inner.txt") {
+		t.Errorf("the entry below the repointed directory link was consulted through the direct content reader: %v", h.content.paths)
+	}
+}
+
+// TestMissingFollowedSourceFailsLoudly proves the absence of a followed entry's
+// retained opener is treated as the wiring fault it is, and that the fault is raised
+// before the blob store is asked to do anything. There is no fallback: the virtual path
+// still resolves to a readable regular file with the recorded bytes, and the direct
+// reader is still refused.
+//
+// The sharp case is "blob already stored": a check that lived inside the store, or that
+// only ran when bytes were needed, would let a mis-wired retention mode pass silently on
+// every checkpoint after the first. Both cases must fail identically.
+func TestMissingFollowedSourceFailsLoudly(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		prestore bool
+	}{
+		{name: "blob absent", prestore: false},
+		{name: "blob already stored and verified", prestore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := setup(t)
+			cfg := h.followFixture(t)
+			if tc.prestore {
+				// One correctly-wired checkpoint first, so every blob this manifest
+				// references is already present.
+				h.run(t, Request{Config: cfg})
+				h.content.paths = nil
+			}
+			stored, err := h.blobs.List()
+			if err != nil {
+				t.Fatalf("list blobs: %v", err)
+			}
+			if (len(stored) > 0) != tc.prestore {
+				t.Fatalf("precondition failed: %d blobs stored, prestore=%v", len(stored), tc.prestore)
+			}
+
+			// A scan that kept nothing, paired with a policy that stores contents — the
+			// state a mis-wired retention mode would produce.
+			scan, err := h.deps.Scanner.Scan(context.Background(), h.project, cfg, cfg.HistoryScanScope(), scanner.Options{
+				Now:     h.deps.Now(),
+				Sources: scanner.RetainNoSources,
+			})
+			if err != nil {
+				t.Fatalf("Scan: %v", err)
+			}
+			defer func() { _ = scan.Close() }()
+
+			merr := h.materialize(t, cfg, scan)
+			if merr == nil || !strings.Contains(merr.Error(), "no retained traversal-verified content source") {
+				t.Fatalf("materialize without a followed source err = %v, want a loud wiring failure", merr)
+			}
+			if h.content.asked("link.txt") || h.content.asked("dirlink/inner.txt") {
+				t.Errorf("a followed entry fell back to the direct content reader: %v", h.content.paths)
+			}
+		})
+	}
+}
+
+// TestSourceRetentionFollowsCheckpointPolicy pins the mapping the service derives from
+// the effective configuration, so a change to it is a change to this oracle rather than
+// a silent widening of what every checkpoint retains.
+func TestSourceRetentionFollowsCheckpointPolicy(t *testing.T) {
+	storing := defaultsStoring()
+	if got := sourceRetention(storing); got != scanner.RetainFollowedSources {
+		t.Errorf("store_file_contents=true retention = %v, want followed-only", got)
+	}
+	notStoring := defaultsStoring()
+	notStoring.Checkpoint.StoreFileContents = false
+	if got := sourceRetention(notStoring); got != scanner.RetainNoSources {
+		t.Errorf("store_file_contents=false retention = %v, want none", got)
 	}
 }
 

@@ -684,6 +684,19 @@ func (r *Resolver) fromHeader(h checkpoint.CheckpointHeader, requested string) (
 	}, nil
 }
 
+// nowSourceRetention maps a "now" context to what its scan must retain. A content
+// read against this state is addressed by an arbitrary current path (diff asks for one
+// entry at a time, with no publication boundary at which a reopen could be substituted
+// for the scan's own opener), so it retains every blob-intent source rather than only
+// the followed ones a checkpoint cannot rebuild. A content-free comparison retains
+// nothing.
+func nowSourceRetention(now NowContext) scanner.SourceRetention {
+	if now.NeedContent {
+		return scanner.RetainAllSources
+	}
+	return scanner.RetainNoSources
+}
+
 // resolveNow runs an ephemeral, read-only scan of the current workspace. It
 // publishes no checkpoint, materializes no blobs, and persists nothing to the
 // worktree index: comparison commands compare state, they do not warm durable
@@ -692,7 +705,7 @@ func (r *Resolver) fromHeader(h checkpoint.CheckpointHeader, requested string) (
 // unavailable, stale, or corrupt index degrades to re-hashing rather than failing
 // the comparison. Only a cancelled context is fail-fast.
 func (r *Resolver) resolveNow(ctx context.Context, now NowContext) (*ResolvedState, error) {
-	res, err := r.deps.Scanner.Scan(ctx, now.Project, now.Config, now.Config.HistoryScanScope(), scanner.Options{AllowSkippedInputs: true, NeedContentSources: now.NeedContent, ReadOnly: true, FailOnObservationChange: now.RequireStableObservation})
+	res, err := r.deps.Scanner.Scan(ctx, now.Project, now.Config, now.Config.HistoryScanScope(), scanner.Options{AllowSkippedInputs: true, Sources: nowSourceRetention(now), ReadOnly: true, FailOnObservationChange: now.RequireStableObservation})
 	if err != nil {
 		// A strict observation that aborted because an in-scope input moved is not a
 		// generic scan failure: surface it as the typed unstable-observation error so the

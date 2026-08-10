@@ -46,6 +46,18 @@ type IndexInvalidator interface {
 	Invalidate(ctx context.Context, path worktree.RelPath) error
 }
 
+// DirectContent opens the current bytes of one ordinary — directly reached, not
+// symlink-followed — worktree file from the identity the scan recorded for it. It is
+// defined here, by the one use case that needs the capability, rather than in the
+// domain or a shared catalogue: the scanner does not need it, and nothing else does.
+//
+// Its contract is that reopening from a recorded RelPath and StatSignature is not a
+// weaker read: a path whose shape or node changed since the observation is refused
+// rather than read. A followed entry is never its business; contentSource owns why.
+type DirectContent interface {
+	Open(path worktree.RelPath, observed worktree.StatSignature) (io.ReadCloser, error)
+}
+
 // LockAcquirer takes a presence lock for the duration of the checkpoint write so
 // a concurrent destructive gc treats the in-flight blobs and checkpoint as protected
 // state. Acquire returns a release function the caller defers; it never blocks on
@@ -62,6 +74,11 @@ type Deps struct {
 	Blobs       blob.Store
 	Checkpoints checkpoint.Repository
 	Git         GitProvider
+	// Content opens an ordinary blob-intent file's bytes when materialization needs
+	// them. It is required rather than optional: the policy that decides whether
+	// contents are stored arrives with each Request, not with these deps, so a service
+	// built without this reader is mis-wired, not configured for a narrower mode.
+	Content DirectContent
 	// Index is the same worktree index the scanner reuses hashes from, held here so
 	// a reused hash that materialization proves wrong can be invalidated. It is
 	// optional: a nil index simply means no invalidation (and, in the scanner, no
@@ -98,6 +115,8 @@ func New(d Deps) *Service {
 		panic("checkpointcmd.New: checkpoint repository must not be nil")
 	case d.Git == nil:
 		panic("checkpointcmd.New: git provider must not be nil")
+	case d.Content == nil:
+		panic("checkpointcmd.New: direct content reader must not be nil")
 	case d.Now == nil:
 		panic("checkpointcmd.New: clock must not be nil")
 	case d.Rand == nil:
@@ -147,10 +166,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		defer func() { _ = release() }()
 	}
 
-	// Checkpoint materializes blob content, so it retains the verified content
-	// openers. The scan's manifest is bounded (it spills past the sorter buffer); the
-	// Result is closed once the checkpoint is persisted, releasing any spill files.
-	scanResult, err := s.deps.Scanner.Scan(ctx, req.Project, req.Config, req.Config.HistoryScanScope(), scanner.Options{Now: s.deps.Now(), NeedContentSources: true})
+	// The scan retains only the content openers this checkpoint cannot rebuild (see
+	// contentSource). Its manifest is bounded (it spills past the sorter buffer), and
+	// Close releases those spill files once the checkpoint is persisted; the retained
+	// openers are ordinary process-local values that go with the Result itself.
+	scanResult, err := s.deps.Scanner.Scan(ctx, req.Project, req.Config, req.Config.HistoryScanScope(), scanner.Options{Now: s.deps.Now(), Sources: sourceRetention(req.Config)})
 	if err != nil {
 		return Result{}, err
 	}
@@ -195,6 +215,20 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	return Result{Header: header, BlobsWritten: source.written, BlobsReused: source.reused, GitWarning: gitWarning}, nil
 }
 
+// sourceRetention maps the effective checkpoint policy to what the scan must keep:
+// nothing when no content is ever read after the scan, and followed sources only when
+// it is — see contentSource for why that is the whole set.
+//
+// It is application policy read off an already-effective configuration. It does not
+// enter the scan's identity and adds no configuration surface: the same worktree under
+// the same scan config produces the same tree hash either way.
+func sourceRetention(cfg config.Config) scanner.SourceRetention {
+	if cfg.Checkpoint.StoreFileContents {
+		return scanner.RetainFollowedSources
+	}
+	return scanner.RetainNoSources
+}
+
 // manifestSource produces the final checkpoint manifest as a re-openable stream:
 // the scan's records with the store_file_contents policy applied and blobs
 // materialized as each blob-intent regular entry passes by. The repository
@@ -223,13 +257,13 @@ func (m *manifestSource) Open(ctx context.Context) (worktree.ManifestCursor, err
 // materializeEntry applies the store_file_contents policy to one entry and writes
 // the blob it requires. A blob-intent regular entry becomes a stored blob when
 // contents are stored, or a hash-only entry (no blob) when they are not; every
-// other storage intent passes through unchanged. Blobs are read through the scan's
-// verified content source for the entry — the same shape-, root-escape-, and
-// symlink-chain-checked opener the walk used to hash — never a plain re-open by
-// path, so a post-scan swap to a different shape or an out-of-root target is
-// rejected rather than materialized. A hash mismatch — the file changed since the
-// scan — aborts loudly so no checkpoint references bytes that were not actually
-// stored.
+// other storage intent passes through unchanged.
+//
+// It owns what happens when a write fails: a post-scan substitution and a hash mismatch
+// both abort loudly, and a mismatch also drops the stale index mapping, so no checkpoint
+// references bytes that were not actually stored. It does not decide how the bytes are
+// read — contentSource does — nor whether they are read at all, which is the store's
+// call.
 func (m *manifestSource) materializeEntry(ctx context.Context, e worktree.Entry) (worktree.Entry, error) {
 	if e.Kind != worktree.KindRegular || e.Storage != worktree.StorageBlob {
 		return e, nil
@@ -240,12 +274,9 @@ func (m *manifestSource) materializeEntry(ctx context.Context, e worktree.Entry)
 		// not the tree hash.
 		return worktree.NewRegularEntry(e.Path, e.Content, worktree.StorageHashOnly, e.Stat, e.Traversal)
 	}
-	open, ok := m.scan.Source(e.Path)
-	if !ok {
-		// A blob-intent regular entry must carry a verified source from the scan. Its
-		// absence is a wiring error, not a worktree condition — fail loudly rather than
-		// fall back to an unchecked re-open by path.
-		return worktree.Entry{}, fmt.Errorf("no verified content source for %q; refusing to materialize via an unchecked re-open", e.Path)
+	open, err := m.contentSource(e)
+	if err != nil {
+		return worktree.Entry{}, err
 	}
 	_, wrote, merr := m.svc.deps.Blobs.Materialize(e.Content, open)
 	if merr != nil {
@@ -281,6 +312,39 @@ func (m *manifestSource) materializeEntry(ctx context.Context, e worktree.Entry)
 		m.reused++
 	}
 	return e, nil
+}
+
+// contentSource is where this package's source-ownership rule lives; the surrounding
+// comments state their local contracts and defer here.
+//
+// One fact decides everything: how the walk reached the file. It returns a capability,
+// not a read — the content-addressed store calls the opener only when the blob is
+// absent, so for an already-stored blob none of this runs.
+//
+// A followed entry is read only through the opener the walk retained for it, which
+// replays every raw symlink target the traversal observed and re-resolves to the
+// terminal it validated. Its record carries none of that, so nothing here could
+// reconstruct it. There is deliberately no fallback to the direct reader: a repointed
+// link whose new target holds the same bytes at the same virtual path would sail through
+// one, which is exactly the substitution the retained opener exists to catch. A missing
+// opener is an internal wiring fault, caught here before the store is asked to do
+// anything, so a mis-wired retention mode fails loudly instead of passing quietly on
+// every checkpoint whose blobs already exist.
+//
+// An ordinary direct entry closes over nothing its record does not already carry, so it
+// is reopened through the Content port from exactly that path and stat and reaches the
+// same primitive the walk's own closure ended in. It asks the scan for nothing, which is
+// why the scan retains nothing for it.
+func (m *manifestSource) contentSource(e worktree.Entry) (func() (io.ReadCloser, error), error) {
+	if e.Traversal.Followed {
+		open, ok := m.scan.Source(e.Path)
+		if !ok {
+			return nil, fmt.Errorf("no retained traversal-verified content source for followed entry %q; refusing to materialize it through a direct re-open", e.Path)
+		}
+		return open, nil
+	}
+	path, observed := e.Path, e.Stat
+	return func() (io.ReadCloser, error) { return m.svc.deps.Content.Open(path, observed) }, nil
 }
 
 // materializingCursor wraps the scan's manifest cursor, applying the checkpoint

@@ -113,6 +113,7 @@ func (e *env) checkpointAt(t testing.TB, ts time.Time) checkpoint.CheckpointHead
 		Blobs:       blobstore.New(layout, hasher),
 		Checkpoints: checkpointjson.NewRepo(layout),
 		Git:         fakeCapture{},
+		Content:     worktreefs.NewContentReader(layout.Root()),
 		Now:         func() time.Time { return ts },
 		Rand:        rand.Reader,
 		Version:     "test",

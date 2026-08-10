@@ -9,13 +9,10 @@ import (
 // ContentReader opens the current bytes of one worktree file on demand, through
 // exactly the verified traversal a walk uses for the same file.
 //
-// It exists so a caller that needs the content of a few observed paths does not have
-// to make the observation retain an opener for every file it scanned. A scan retains
-// one closure per blob-intent regular entry when asked to (checkpoint and diff need
-// that: they consume the whole scope), but restore needs the bytes of its selection
-// only, and its selection is normally a tiny part of the project. Reconstructing an
-// opener from the identity the observation already recorded keeps that cost
-// proportional to the selection instead of to the worktree.
+// It exists so a caller does not have to make the observation retain an opener for
+// every file it scanned. Restore needs the bytes of its selection only, and a checkpoint
+// reopens its ordinary files here too; both then retain openers only for what this
+// reader cannot rebuild, rather than for the whole worktree.
 //
 // The verification is not weaker for being late: openVerifiedRegularAt protects every
 // path component against a symlink swap and then confirms, on the opened descriptor,

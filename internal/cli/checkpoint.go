@@ -31,6 +31,10 @@ import (
 // repository, and the git provider. It returns a cleanup that closes the index,
 // which the caller must defer. checkpoint is the first real consumer of the
 // scanner, so this is the one place that assembles it.
+//
+// The direct content reader is anchored at the same root the walker walks, so an
+// ordinary entry reopened from its recorded path at materialization time travels the
+// identical verified traversal the walk's own opener would have.
 func buildCheckpointService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config) (*checkpointcmd.Service, func(), error) {
 	hasher := blake3hash.New()
 	idx, err := sqliteindex.Open(layout.IndexesDir())
@@ -44,6 +48,7 @@ func buildCheckpointService(ctx context.Context, layout paths.Layout, cfg domain
 		Blobs:       blobstore.New(layout, hasher),
 		Checkpoints: checkpointjson.NewRepo(layout),
 		Git:         gitmeta.New(layout.Root()),
+		Content:     worktreefs.NewContentReader(layout.Root()),
 		Now:         time.Now,
 		Rand:        rand.Reader,
 		Version:     app.VersionString(),

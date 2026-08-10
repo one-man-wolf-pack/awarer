@@ -59,9 +59,9 @@ func TestScanSpillMatchesInMemory(t *testing.T) {
 	}
 }
 
-// TestScanSpillContentSourcesWork proves that when a spilling scan retains content
-// sources, the verified openers still resolve and read the right bytes — the content
-// path is unaffected by whether the manifest spilled.
+// TestScanSpillContentSourcesWork proves that when a spilling scan retains every
+// content source, the verified openers still resolve and read the right bytes — the
+// content path is unaffected by whether the manifest spilled.
 func TestScanSpillContentSourcesWork(t *testing.T) {
 	root := t.TempDir()
 	proj := scantest.InitProject(t, root)
@@ -72,8 +72,8 @@ func TestScanSpillContentSourcesWork(t *testing.T) {
 	svc := scanner.New(worktreefs.New(), blake3hash.New(), nil)
 
 	res, err := svc.Scan(context.Background(), proj, cfg, cfg.HistoryScanScope(), scanner.Options{
-		BufferRecords:      3,
-		NeedContentSources: true,
+		BufferRecords: 3,
+		Sources:       scanner.RetainAllSources,
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -99,6 +99,76 @@ func TestScanSpillContentSourcesWork(t *testing.T) {
 	}
 	if string(got) != "bytes-05\n" {
 		t.Errorf("content = %q, want %q", got, "bytes-05\n")
+	}
+}
+
+// TestSpillFollowedOnlySourcesSurviveAndOrdinaryHasNone proves the followed-only
+// retention mode over a real worktree that spills: after the sort has gone to disk, the
+// two entries whose provenance cannot be rebuilt — a file reached through a file
+// symlink, and a file reached below a followed directory symlink — still open and read
+// their bytes through their retained openers, while the ordinary file next to them has
+// no retained source at all. Spilling changes what backs the manifest, never who owns
+// the content sources.
+func TestSpillFollowedOnlySourcesSurviveAndOrdinaryHasNone(t *testing.T) {
+	scantest.RequireSymlinks(t)
+	root := t.TempDir()
+	proj := scantest.InitProject(t, root)
+	scantest.Write(t, root, "plain.txt", "plain bytes\n")
+	scantest.Write(t, root, "real.txt", "followed file bytes\n")
+	scantest.Write(t, root, "dir/inner.txt", "followed descendant bytes\n")
+	scantest.Symlink(t, root, "link.txt", "real.txt")
+	scantest.Symlink(t, root, "dirlink", "dir")
+	// Enough filler to make a tiny sorter buffer actually spill.
+	for i := 0; i < 20; i++ {
+		scantest.Write(t, root, fmt.Sprintf("filler/f%02d.txt", i), fmt.Sprintf("filler-%02d\n", i))
+	}
+
+	cfg := config.Defaults()
+	cfg.Scope.FollowSymlinks = true
+	svc := scanner.New(worktreefs.New(), blake3hash.New(), nil)
+	res, err := svc.Scan(context.Background(), proj, cfg, cfg.HistoryScanScope(), scanner.Options{
+		BufferRecords: 3,
+		Sources:       scanner.RetainFollowedSources,
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	defer func() { _ = res.Close() }()
+
+	for _, tc := range []struct{ path, want string }{
+		{"link.txt", "followed file bytes\n"},
+		{"dirlink/inner.txt", "followed descendant bytes\n"},
+	} {
+		p, err := worktree.ParseRelPath(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open, ok := res.Source(p)
+		if !ok {
+			t.Fatalf("followed entry %s lost its retained source after a spilling scan", tc.path)
+		}
+		rc, err := open()
+		if err != nil {
+			t.Fatalf("open %s: %v", tc.path, err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.path, err)
+		}
+		if string(got) != tc.want {
+			t.Errorf("%s content = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	for _, ordinary := range []string{"plain.txt", "real.txt", "dir/inner.txt"} {
+		p, err := worktree.ParseRelPath(ordinary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := res.Source(p); ok {
+			t.Errorf("followed-only scan retained a source for the directly-reached %s", ordinary)
+		}
 	}
 }
 

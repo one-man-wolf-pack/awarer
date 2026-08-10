@@ -325,11 +325,11 @@ func sourceOf(rs *state.ResolvedState) (restore.Source, error) {
 // time, and a destructive operation planned from an inconsistent snapshot is not
 // evidence at all, so the observation is refused outright.
 //
-// NeedContentSources is deliberately absent. It would make the observation retain a
-// closure per blob-intent regular entry — a cost scaling with the project rather than
-// with the selection — and it would tie undo evidence to the storage policy, since it
-// retains nothing for an entry the scan recorded hash-only. Apply reads the bytes it
-// must preserve through the WorktreeContent port instead.
+// Content-source retention is deliberately left at none. Retaining any would make the
+// observation hold a closure per blob-intent regular entry — a cost scaling with the
+// project rather than with the selection — and it would tie undo evidence to the
+// storage policy, since it retains nothing for an entry the scan recorded hash-only.
+// Apply reads the bytes it must preserve through the WorktreeContent port instead.
 func currentScanOptions() scanner.Options {
 	return scanner.Options{
 		AllowSkippedInputs:      true,

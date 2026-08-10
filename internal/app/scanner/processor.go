@@ -41,12 +41,12 @@ type processor struct {
 	// The authoritative count and taint come from the reducer.
 	samples []worktree.SkippedSample
 	// sources holds the verified content opener the walk built for each blob-intent
-	// regular entry, keyed by RelPath string, but only when the caller needs content
-	// (checkpoint materialization, diff). Post-scan blob materialization reads through
-	// these — applying the same shape, root-escape, and symlink-chain checks the walk
-	// used to hash — rather than re-opening by path, which would bypass them. It is nil
-	// (never populated) for scans that only need the tree identity, so run, status, and
-	// changes never retain an opener per file.
+	// regular entry the scan's SourceRetention mode selected, keyed by RelPath string.
+	// Post-scan reads go through these — applying the same shape, root-escape, and
+	// symlink-chain checks the walk used to hash — rather than re-opening by path,
+	// which would bypass them. It is created on the first selected entry and stays nil
+	// otherwise, so a scan that selects nothing (and a followed-only scan of a worktree
+	// with no followed blob entry) retains not even an empty registry.
 	sources map[string]func() (io.ReadCloser, error)
 }
 
@@ -175,14 +175,30 @@ func (p *processor) visitRegular(n worktree.Node) error {
 	if err != nil {
 		return err
 	}
-	// Retain the walk's verified opener for blob-intent entries so a later
-	// materialization reads the same checked source, not a plain re-open by path — but
-	// only when the caller needs content (p.sources is nil otherwise, so read-only scans
-	// never accumulate an opener per file). visitRegular has guaranteed n.Open is non-nil.
-	if storage == worktree.StorageBlob && p.sources != nil {
+	// Decided here, on the finished record, because both facts the choice needs — the
+	// storage intent and how the node was reached — are only settled now. The exact
+	// opener the walk validated is kept, never a wrapper or a copy of what it closed
+	// over. visitRegular has guaranteed n.Open is non-nil.
+	if storage == worktree.StorageBlob && p.retainSource(e) {
+		if p.sources == nil {
+			p.sources = map[string]func() (io.ReadCloser, error){}
+		}
 		p.sources[n.Path.String()] = n.Open
 	}
 	return p.addEntry(e)
+}
+
+// retainSource reports whether e's verified content opener must outlive the walk, per
+// the scan's SourceRetention mode.
+func (p *processor) retainSource(e worktree.Entry) bool {
+	switch p.opts.Sources {
+	case RetainAllSources:
+		return true
+	case RetainFollowedSources:
+		return e.Traversal.Followed
+	default:
+		return false
+	}
 }
 
 // readAndHash opens the file and streams it through the hasher. visitRegular has

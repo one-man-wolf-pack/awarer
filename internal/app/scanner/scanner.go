@@ -75,9 +75,9 @@ func newService(walker worktree.Walker, hasher hashing.Hasher) *Service {
 // files past it, so a scan of millions of paths never materializes a full entry
 // slice. When the scan spilled, those temp files live until Close, so every caller
 // that holds a Result must Close it when done. sources carries the verified content
-// openers for blob-intent regular entries, but only for scans that asked for content
-// (checkpoint, diff); it is nil for identity-only scans (run, status, changes), so
-// those never retain an opener per file.
+// openers the scan's SourceRetention mode selected, and is nil when the mode selected
+// none — so an identity-only scan (run, status, changes) and a checkpoint of a
+// followed-symlink-free worktree both retain no opener at all.
 type Result struct {
 	sorted  manifestsort.Sorted
 	meta    worktree.ScanMetadata
@@ -89,9 +89,10 @@ type Result struct {
 // a scan that fit in memory and is safe to call more than once.
 func (r Result) Close() error { return r.sorted.Close() }
 
-// Source returns the verified content opener the walk built for a regular entry,
-// or false if the path has none (an identity-only scan, or any non-blob-intent or
-// non-regular entry).
+// Source returns the verified content opener the walk built for a regular entry, or
+// false if the scan's SourceRetention mode kept none for that path. False is an
+// ordinary answer, not a fault: under RetainFollowedSources every directly-reached
+// entry gives it.
 func (r Result) Source(p worktree.RelPath) (func() (io.ReadCloser, error), bool) {
 	if r.sources == nil {
 		return nil, false
@@ -136,6 +137,44 @@ func (r Result) SkippedSummary(maxSamples int) worktree.SkippedFacts {
 	return facts
 }
 
+// SourceRetention selects which of the walk's verified content openers a scan keeps
+// past the walk, for a later step that must read the bytes through the same checked
+// traversal the walk used. It is a closed set of exactly the three retention policies
+// the product has, so a caller states which one it means instead of a boolean that
+// answers only "all or nothing".
+type SourceRetention int
+
+const (
+	// RetainNoSources keeps no opener at all and creates no source map. It is the zero
+	// value, so a scan that never says otherwise — run, status, changes, and any
+	// checkpoint that stores no file contents — cannot accidentally accumulate an
+	// opener per file.
+	RetainNoSources SourceRetention = iota
+	// RetainAllSources keeps the opener of every blob-intent regular entry, direct or
+	// followed. It is for a caller whose later reads are addressed by arbitrary current
+	// path with no publication boundary at which a reopen could be substituted — the
+	// current-state resolver behind diff.
+	RetainAllSources
+	// RetainFollowedSources keeps the opener only of a blob-intent regular entry
+	// reached through one or more symlinks. Such an opener is bound to facts the walk
+	// observed and no record persists — every raw link target on the chain and the
+	// validated terminal — so it cannot be rebuilt from an entry's path and stat, while
+	// an ordinary direct entry's can.
+	RetainFollowedSources
+)
+
+// Valid reports whether r is one of the defined retention modes. The scan boundary
+// checks it before walking, so an unrecognized value fails loudly rather than being
+// silently treated as "retain none" (a quiet loss of content) or "retain all" (a quiet
+// loss of the bound this mode exists to keep).
+func (r SourceRetention) Valid() bool {
+	switch r {
+	case RetainNoSources, RetainAllSources, RetainFollowedSources:
+		return true
+	}
+	return false
+}
+
 // Options tunes a single scan.
 type Options struct {
 	// AllowSkippedInputs, when true, downgrades an unreadable regular file to a
@@ -150,11 +189,10 @@ type Options struct {
 	// notably "run explain", which reasons about cacheability without holding a
 	// presence lock, so it must never race a collector rebuilding the index.
 	ReadOnly bool
-	// NeedContentSources, when true, retains a verified content opener per blob-intent
-	// regular entry so a later step can materialize or diff file content
-	// (checkpoint, diff). It defaults false: identity-only scans (run, status,
-	// changes) never read content, so they must not accumulate an opener per file.
-	NeedContentSources bool
+	// Sources selects which verified content openers the scan retains for a later
+	// step that reads file content (checkpoint materialization, diff). It defaults to
+	// RetainNoSources, so a scan that only needs the tree identity retains nothing.
+	Sources SourceRetention
 	// FailOnObservationChange makes a regular input that changed between the walk's stat
 	// and its read abort the scan with worktree.ErrObservationChanged instead of being
 	// tolerated as a skipped input. It is for a strict point-in-time "now" observation
@@ -212,6 +250,12 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	if err := scope.Validate(); err != nil {
 		return Result{}, err
 	}
+	// Checked here, before anything is walked or persisted: an unrecognized retention
+	// mode is a wiring fault, and letting it reach the walk would decide what the scan
+	// keeps by whichever branch the switch happened to fall through to.
+	if !opts.Sources.Valid() {
+		return Result{}, fmt.Errorf("scanner: unknown content-source retention mode %d", int(opts.Sources))
+	}
 	startedAt := resolveNow(opts)
 	randSrc := opts.Rand
 	if randSrc == nil {
@@ -230,9 +274,6 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 		opts:    opts,
 		maxSize: cfg.Hashing.MaxFileSize.Bytes(),
 		sorter:  manifestsort.New(opts.BufferRecords, layout.TmpDir()),
-	}
-	if opts.NeedContentSources {
-		proc.sources = map[string]func() (io.ReadCloser, error){}
 	}
 
 	// Pass 1: walk, feeding each record into the bounded external sorter (which
