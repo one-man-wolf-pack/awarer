@@ -225,6 +225,78 @@ func TestMaterializeOpenFailureLeavesNoBlob(t *testing.T) {
 	assertTmpEmpty(t, layout)
 }
 
+// countingHasher wraps the real hasher and records which capability the store
+// reached for, so a test can tell a read-and-digest apart from a tee through a
+// digest writer without inspecting source text. readErr, when set, makes HashReader
+// fail so the verification error path can be driven without corrupting a blob.
+type countingHasher struct {
+	inner      *blake3hash.Hasher
+	newWriters int
+	hashReads  int
+	readErr    error
+}
+
+func (h *countingHasher) NewWriter() (io.Writer, func() hashing.ContentHash) {
+	h.newWriters++
+	return h.inner.NewWriter()
+}
+
+func (h *countingHasher) HashReader(r io.Reader) (hashing.ContentHash, error) {
+	h.hashReads++
+	if h.readErr != nil {
+		return hashing.ContentHash{}, h.readErr
+	}
+	return h.inner.HashReader(r)
+}
+
+// storeWithPublishedBlob publishes content through a counting hasher and returns the
+// store, the counter, and the blob's address. The counters are zeroed before it
+// returns: publishing is setup, so every call a test observes afterwards belongs to
+// the already-present branch it is actually measuring.
+func storeWithPublishedBlob(t *testing.T, content []byte) (*FS, *countingHasher, hashing.ContentHash) {
+	t.Helper()
+	hasher := &countingHasher{inner: blake3hash.New()}
+	store := New(paths.New(t.TempDir()), hasher)
+	expected := hashOf(t, hasher.inner, content)
+	if _, written, err := store.Materialize(expected, opener(content)); err != nil || !written {
+		t.Fatalf("publishing blob: written=%v err=%v", written, err)
+	}
+	hasher.newWriters, hasher.hashReads = 0, 0
+	return store, hasher, expected
+}
+
+func TestVerifyExistingReadsThroughHashReader(t *testing.T) {
+	content := []byte("already stored")
+	store, hasher, expected := storeWithPublishedBlob(t, content)
+
+	if _, written, err := store.Materialize(expected, opener(content)); err != nil || written {
+		t.Fatalf("second write: written=%v err=%v", written, err)
+	}
+	if hasher.hashReads != 1 {
+		t.Fatalf("HashReader calls = %d, want 1", hasher.hashReads)
+	}
+	if hasher.newWriters != 0 {
+		t.Fatalf("NewWriter calls = %d, want 0: verification must not own a digest writer", hasher.newWriters)
+	}
+}
+
+func TestVerifyExistingPropagatesReadFailure(t *testing.T) {
+	content := []byte("readable once")
+	store, hasher, expected := storeWithPublishedBlob(t, content)
+
+	sentinel := errors.New("stored blob unreadable")
+	hasher.readErr = sentinel
+	_, _, err := store.Materialize(expected, opener(content))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the read failure preserved", err)
+	}
+	// A blob that could not be read is unverified, not proven corrupt: misreporting
+	// it as corruption would send a user to store repair for an I/O fault.
+	if errors.Is(err, blob.ErrCorruptBlob) {
+		t.Fatalf("err = %v, want a read failure rather than ErrCorruptBlob", err)
+	}
+}
+
 func assertTmpEmpty(t *testing.T, layout paths.Layout) {
 	t.Helper()
 	entries, err := os.ReadDir(layout.TmpDir())

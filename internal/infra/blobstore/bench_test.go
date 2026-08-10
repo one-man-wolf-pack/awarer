@@ -37,3 +37,53 @@ func benchMaterialize(b *testing.B, size int) {
 
 func BenchmarkMaterialize1KiB(b *testing.B) { benchMaterialize(b, 1<<10) }
 func BenchmarkMaterialize1MiB(b *testing.B) { benchMaterialize(b, 1<<20) }
+
+// BenchmarkMaterializeExistingBlob measures the idempotent path: a blob that is
+// already published is read back from disk and verified before it is reused. The
+// benchmark above cannot stand in for it — it feeds new content from a bytes.Reader,
+// so it never reaches the stored-file read this path performs. Here the source is the
+// published blob itself, an actual *os.File, which is what decides how the verifying
+// copy dispatches.
+func BenchmarkMaterializeExistingBlob(b *testing.B) {
+	cases := []struct {
+		name string
+		size int
+	}{
+		{"4KiB", 4 << 10},
+		{"1MiB", 1 << 20},
+	}
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			hasher := blake3hash.New()
+			store := New(paths.New(b.TempDir()), hasher)
+			content := benchContent(c.size)
+			h, err := hasher.HashReader(bytes.NewReader(content))
+			if err != nil {
+				b.Fatalf("hashing fixture: %v", err)
+			}
+			// Publishing the blob is fixture setup, so it stays outside the timed loop:
+			// every measured iteration must take the already-present branch.
+			if _, written, err := store.Materialize(h, opener(content)); err != nil || !written {
+				b.Fatalf("publishing fixture blob: written=%v err=%v", written, err)
+			}
+			// An existing blob is verified from the store, never from the source, so
+			// reaching this opener would mean the benchmark measures the wrong path.
+			noSource := func() (io.ReadCloser, error) {
+				b.Fatal("source opened for an already-present blob")
+				return nil, nil
+			}
+			b.ReportAllocs()
+			b.SetBytes(int64(c.size))
+			for b.Loop() {
+				if _, written, err := store.Materialize(h, noSource); err != nil || written {
+					b.Fatalf("reusing existing blob: written=%v err=%v", written, err)
+				}
+			}
+		})
+	}
+}
+
+func benchContent(size int) []byte {
+	filler := []byte("the quick brown fox\n")
+	return bytes.Repeat(filler, size/len(filler)+1)[:size]
+}

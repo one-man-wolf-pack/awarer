@@ -20,12 +20,13 @@ import (
 	"awarer/internal/infra/fsx"
 )
 
-// streamHasher is the slice of a hasher the store needs: a streaming digest it
-// can tee content through. It is a local interface (not the domain Hasher port)
-// so the store depends only on the one capability it uses; the blake3hash.Hasher
-// satisfies it.
+// streamHasher is the slice of a hasher the store needs: a streaming digest to tee
+// new content through, and a direct read-and-digest for verifying stored content. It
+// is a local interface (not the domain Hasher port) so the store depends only on the
+// capabilities it actually uses; the blake3hash.Hasher satisfies it.
 type streamHasher interface {
 	NewWriter() (io.Writer, func() hashing.ContentHash)
+	HashReader(r io.Reader) (hashing.ContentHash, error)
 }
 
 // blobPerm is the mode for a published blob. Blobs are immutable, so they are
@@ -316,17 +317,21 @@ func (s *FS) Materialize(expected hashing.ContentHash, open func() (io.ReadClose
 // verifyExisting streams an already-stored blob back through the hasher and
 // confirms it hashes to its address. A mismatch is store corruption, reported as
 // ErrCorruptBlob so the checkpoint aborts rather than referencing bad bytes.
+//
+// There is nothing to tee into here, so the read goes through HashReader rather than
+// a local copy into NewWriter: the hasher then owns the copy and its reusable scratch,
+// instead of every verified blob allocating a copy buffer of its own.
 func (s *FS) verifyExisting(expected hashing.ContentHash) error {
 	rc, err := s.Open(expected)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	hw, finalize := s.hasher.NewWriter()
-	if _, err := io.Copy(hw, rc); err != nil {
+	got, err := s.hasher.HashReader(rc)
+	if err != nil {
 		return fmt.Errorf("reading stored blob: %w", err)
 	}
-	if got := finalize(); got != expected {
+	if got != expected {
 		return fmt.Errorf("%w: blob at %s hashes to %s", blob.ErrCorruptBlob, expected, got)
 	}
 	return nil
