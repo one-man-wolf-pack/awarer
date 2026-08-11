@@ -12,26 +12,11 @@ import (
 	"awarer/internal/domain/worktree"
 )
 
-// TestFollowedContentUnderNonCanonicalRoot proves a followed entry is still readable
-// when the caller's root is spelled in a form the platform does not consider
-// canonical. Windows keeps a second spelling of every name — a folded case here, an
-// 8.3 component in a path like C:\Users\RUNNER~1\AppData\Local\Temp — and
-// filepath.EvalSymlinks normalizes both while a hop-by-hop resolution preserves what
-// the caller wrote. A walker that recorded a followed terminal through one of those
-// and re-derived it through the other rejected every followed read as "changed during
-// scan", and because a "now" scan tolerates unreadable inputs the file did not fail
-// the scan: it silently left the manifest.
-//
-// The two shapes here are the two ways a followed regular entry is produced: a link
-// straight to a file, whose terminal follow() canonicalizes, and a file under a
-// followed directory symlink, whose real path is built from the canonicalized
-// directory. Both are asserted by reading their content, because content is the only
-// place the recorded and re-derived paths are compared.
-//
-// This is a Windows test not because the walker branches on the platform — it does
-// not — but because the divergence it pins needs a filesystem that folds spelling,
-// and on the Unix systems the rest of the suite runs the two resolutions agree by
-// construction, so the same fixture would pass with the bug in place.
+// TestFollowedContentUnderNonCanonicalRoot is Windows-only although the walker does not
+// branch on the platform: it needs a filesystem that holds a second spelling of a name
+// (a folded case here, an 8.3 component in a path like C:\Users\RUNNER~1\...), and on
+// the Unix systems the rest of the suite runs, a recorded terminal and a re-derived one
+// agree by construction — so the same fixture would pass however they were resolved.
 func TestFollowedContentUnderNonCanonicalRoot(t *testing.T) {
 	requireSymlinks(t)
 
@@ -53,11 +38,6 @@ func TestFollowedContentUnderNonCanonicalRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The scan is driven through a spelling of the same directory that the platform
-	// resolves to a different string. Asserted rather than assumed: on a volume with
-	// per-directory case sensitivity enabled this vehicle produces no divergence, and
-	// a test that quietly walked a canonical root would report green having exercised
-	// nothing the Unix lanes do not already cover.
 	root := filepath.Join(base, "PROJECT")
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {

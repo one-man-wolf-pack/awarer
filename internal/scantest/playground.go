@@ -62,11 +62,10 @@ func BuildPlainGo(tb testing.TB, root string) {
 
 // requireSymlinksEnv turns a missing symlink capability from a skip into a failure.
 // The windows-portability and freebsd-portability lanes set it, because those lanes
-// exist to prove platform symlink behavior: a run that quietly skipped every symlink
-// case and reported green would be worse than no lane at all, since it would look
-// like evidence. A developer running the suite on a machine without the privilege
-// still gets a named skip. This mirrors the helpers of the same purpose in fsx,
-// worktreemut and worktreefs, so the lanes' setting reaches the fixtures too.
+// exist to prove platform symlink behavior: a fixture that quietly skipped every
+// symlink case and reported green would be worse than no lane at all, since it would
+// look like evidence. A developer running the suite on a machine without the
+// privilege still gets a named skip.
 const requireSymlinksEnv = "AWA_REQUIRE_SYMLINK_TESTS"
 
 // endWithoutSymlinks ends a test that cannot create a symlink — fatally where
