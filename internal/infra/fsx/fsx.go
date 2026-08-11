@@ -153,26 +153,23 @@ func ReadDirNoFollow(root, relDir string) ([]os.DirEntry, error) {
 	return f.ReadDir(-1)
 }
 
-// dirEntryBatch bounds how many directory entries EachDirEntryNoFollow reads per
+// dirEntryBatch bounds how many directory entries the streaming iterators read per
 // syscall, so streaming a very large directory holds only a batch in memory at once.
 const dirEntryBatch = 1024
 
-// EachDirEntryNoFollow streams the entries of the directory at relDir under root to fn,
-// reading them in bounded batches from the same no-follow directory descriptor
-// ReadDirNoFollow opens (see it for the safety rationale). Unlike ReadDirNoFollow it
-// never materializes the whole listing, so a directory holding a very large number of
-// entries costs O(batch) memory rather than O(entries) — the property bounded callers
-// (run-cache count and newest-first iteration) rely on when many entries share one
-// shard. fn returning an error stops the walk and propagates it; a missing directory
-// surfaces as the OpenDirNoFollow error.
-func EachDirEntryNoFollow(root, relDir string, fn func(os.DirEntry) error) error {
-	f, err := OpenDirNoFollow(root, relDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
+// EachDirEntryAt streams the entries of an already-open directory to fn in bounded
+// batches, so a directory holding a very large number of entries costs O(batch) memory
+// rather than O(entries). fn returning an error stops the walk and propagates it, as
+// does a read error.
+//
+// It takes a descriptor rather than a path because a caller may have opened the
+// directory under rules of its own — the project root as a trusted anchor, or a
+// worktree name that is legal on the platform but not a store-style relative path. Path
+// grammar therefore stays with the callers that need it, and this operation owns only
+// the batching. The caller opened the descriptor and still closes it.
+func EachDirEntryAt(dir *os.File, fn func(os.DirEntry) error) error {
 	for {
-		batch, rerr := f.ReadDir(dirEntryBatch)
+		batch, rerr := dir.ReadDir(dirEntryBatch)
 		for _, e := range batch {
 			if ferr := fn(e); ferr != nil {
 				return ferr
@@ -185,6 +182,23 @@ func EachDirEntryNoFollow(root, relDir string, fn func(os.DirEntry) error) error
 			return rerr
 		}
 	}
+}
+
+// EachDirEntryNoFollow streams the entries of the directory at relDir under root to fn,
+// reading them from the same no-follow directory descriptor ReadDirNoFollow opens (see
+// it for the safety rationale) through EachDirEntryAt's bounded batches. Unlike
+// ReadDirNoFollow it never materializes the whole listing, so a directory holding a very
+// large number of entries costs O(batch) memory rather than O(entries) — the property
+// bounded callers (run-cache count and newest-first iteration) rely on when many entries
+// share one shard. fn returning an error stops the walk and propagates it; a missing
+// directory surfaces as the OpenDirNoFollow error.
+func EachDirEntryNoFollow(root, relDir string, fn func(os.DirEntry) error) error {
+	f, err := OpenDirNoFollow(root, relDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return EachDirEntryAt(f, fn)
 }
 
 // PublishBytesNoFollow atomically and exclusively writes data as name inside relDir

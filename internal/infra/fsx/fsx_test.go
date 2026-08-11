@@ -236,6 +236,64 @@ func TestEachDirEntryNoFollowPropagatesFnError(t *testing.T) {
 	}
 }
 
+// TestEachDirEntryAtStreamsACallerOwnedDescriptor proves the descriptor iterator on its
+// own terms: it delivers every batch, propagates a callback error, and leaves the
+// descriptor open for the caller that opened it — the ownership a caller relies on when
+// it decided for itself how the directory could safely be opened.
+func TestEachDirEntryAtStreamsACallerOwnedDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	// Comfortably more than one batch, so delivery is proved across the boundary.
+	const n = dirEntryBatch*2 + 7
+	for i := 0; i < n; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmtName(i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// openDir gives each case its own descriptor, since a directory that has been read
+	// to the end cannot be portably rewound for a second pass.
+	openDir := func(t *testing.T) *os.File {
+		t.Helper()
+		f, err := os.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	// stillOpen fails unless the descriptor is usable, which it is not once closed:
+	// every operation on a closed *os.File reports ErrClosed.
+	stillOpen := func(t *testing.T, f *os.File) {
+		t.Helper()
+		if _, err := f.Stat(); err != nil {
+			t.Fatalf("descriptor after iteration = %v, want it left open for its owner", err)
+		}
+	}
+
+	t.Run("every batch reaches the callback", func(t *testing.T) {
+		f := openDir(t)
+		seen := 0
+		if err := EachDirEntryAt(f, func(os.DirEntry) error {
+			seen++
+			return nil
+		}); err != nil {
+			t.Fatalf("EachDirEntryAt = %v, want success", err)
+		}
+		if seen != n {
+			t.Fatalf("visited %d entries, want %d", seen, n)
+		}
+		stillOpen(t, f)
+	})
+
+	t.Run("a callback error stops the walk", func(t *testing.T) {
+		f := openDir(t)
+		sentinel := errors.New("stop")
+		if err := EachDirEntryAt(f, func(os.DirEntry) error { return sentinel }); !errors.Is(err, sentinel) {
+			t.Fatalf("err = %v, want the propagated callback error", err)
+		}
+		stillOpen(t, f)
+	})
+}
+
 func fmtName(i int) string {
 	return "f" + string(rune('a'+i%26)) + "-" + itoa(i)
 }
