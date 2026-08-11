@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -214,9 +215,156 @@ func TestFindNestedMarkerHonesty(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
-		if scan := findNestedMarker(root, nestedScanCap); !scan.incomplete {
+		scan := findNestedMarker(root, nestedScanCap)
+		if !scan.incomplete {
 			t.Errorf("scan over an unreadable subtree = %+v, want incomplete", scan)
 		}
+		// The detail must locate the subtree, not just report a refusal: a bare component
+		// name repeats all over a real worktree, so the user could not act on it.
+		if !strings.Contains(scan.detail, "a/b") {
+			t.Errorf("incomplete detail = %q, want it to name the unreadable subtree a/b", scan.detail)
+		}
+	}
+}
+
+// TestFindNestedMarkerAcrossEntryBatches proves the scan keeps reading a directory past
+// the first streamed entry batch: a sibling set far wider than one batch is still
+// traversed to the nested marker below it, so a wide directory cannot silently truncate
+// the search into a false clean absence.
+func TestFindNestedMarkerAcrossEntryBatches(t *testing.T) {
+	root := t.TempDir()
+	wide := filepath.Join(root, "wide")
+	deep := filepath.Join(wide, "deep")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Comfortably more than one entry batch of plain files around the one subdirectory
+	// that leads to the marker.
+	for i := 0; i < 2100; i++ {
+		if err := os.WriteFile(filepath.Join(wide, fmt.Sprintf("f%05d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := filepath.Join(deep, paths.Dir)
+	if err := os.MkdirAll(marker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if scan := findNestedMarker(root, nestedScanCap); scan.marker != marker {
+		t.Errorf("scan over a file-heavy directory = %+v, want the marker at %s", scan, marker)
+	}
+}
+
+// TestFindNestedMarkerBoundsDiscoveredDirectories proves the directory cap bounds the
+// work the scan has discovered — visited plus queued — rather than only the directories
+// already listed, so a directory-heavy sibling set cannot be queued in full before the
+// cap can act.
+func TestFindNestedMarkerBoundsDiscoveredDirectories(t *testing.T) {
+	// Directory-heavy: 1,500 sibling directories under a cap of 1,200. The cap is chosen
+	// above one entry batch on purpose — queueing has to continue past the batch boundary
+	// before the budget is spent — so the streamed listing and the frontier bound are both
+	// exercised, and the outcome is incomplete rather than a clean absence.
+	root := t.TempDir()
+	wide := filepath.Join(root, "wide")
+	for i := 0; i < 1500; i++ {
+		if err := os.MkdirAll(filepath.Join(wide, fmt.Sprintf("d%05d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if scan := findNestedMarker(root, 1200); !scan.incomplete || scan.found() {
+		t.Errorf("scan over a directory-heavy tree = %+v, want incomplete", scan)
+	}
+
+	// Order-independent frontier witness: every candidate child holds its own marker, and
+	// the budget is spent before any of them can be visited. Counting only the directories
+	// already listed would queue all three, visit one, and report that marker as found.
+	small := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(small, name, paths.Dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if scan := findNestedMarker(small, 2); !scan.incomplete || scan.found() {
+		t.Errorf("scan whose budget is spent before any child is visited = %+v, want incomplete", scan)
+	}
+}
+
+// TestFindNestedMarkerScansRootWithUnreadableParent proves the scan reads the project
+// root as the trusted directory it was given: a root a user can read inside a directory
+// they may only traverse stays fully scannable, so listing never depends on permission
+// the project itself does not own.
+func TestFindNestedMarkerScansRootWithUnreadableParent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix directory-permission semantics as a non-root user")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "project")
+	marker := filepath.Join(root, "nested", paths.Dir)
+	if err := os.MkdirAll(marker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Traversable but not readable: the root can still be reached and read, while
+	// anything that tried to list it as an entry of this directory could not.
+	if err := os.Chmod(parent, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chmod(parent, 0o755); err != nil {
+			t.Fatalf("restore parent permissions: %v", err)
+		}
+	}()
+
+	if scan := findNestedMarker(root, nestedScanCap); scan.marker != marker {
+		t.Errorf("scan under a search-only parent = %+v, want the marker at %s", scan, marker)
+	}
+}
+
+// TestFindNestedMarkerScansSymlinkReachedRoot proves a project root the user reached
+// through a symlink is scanned like any other: the same clean verdict as the direct
+// path, a nested marker still discovered, and the marker reported under the root path
+// the caller chose rather than a resolved physical one.
+func TestFindNestedMarkerScansSymlinkReachedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on Windows")
+	}
+	realRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(realRoot, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(realRoot, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if direct, viaLink := findNestedMarker(realRoot, nestedScanCap), findNestedMarker(link, nestedScanCap); direct != viaLink {
+		t.Errorf("scan through the symlink = %+v, want the direct scan's %+v", viaLink, direct)
+	}
+
+	if err := os.MkdirAll(filepath.Join(realRoot, "nested", paths.Dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(link, "nested", paths.Dir)
+	if scan := findNestedMarker(link, nestedScanCap); scan.marker != want {
+		t.Errorf("marker through the symlink = %+v, want %s under the caller's own root path", scan, want)
+	}
+}
+
+// TestFindNestedMarkerScansNativeWorktreeNames proves the scan covers directory names
+// the platform allows even when a store-style relative path could not express them: on
+// Unix a backslash is an ordinary character in a name, and a marker below such a
+// directory must be found rather than turned into an unscannable subtree.
+func TestFindNestedMarkerScansNativeWorktreeNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip(`Windows file names cannot contain a backslash`)
+	}
+	root := t.TempDir()
+	marker := filepath.Join(root, `we\ird`, "inner", paths.Dir)
+	if err := os.MkdirAll(marker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if scan := findNestedMarker(root, nestedScanCap); scan.marker != marker {
+		t.Errorf("scan over a backslash-bearing directory name = %+v, want the marker at %s", scan, marker)
 	}
 }
 

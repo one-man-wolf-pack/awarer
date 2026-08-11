@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	domconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/doctor"
 	"awarer/internal/domain/paths"
+	"awarer/internal/infra/fsx"
 )
 
 // checkConfig raises advisory findings about the run/checkpoint config's
@@ -305,6 +307,13 @@ type nestedScan struct {
 
 func (n nestedScan) found() bool { return n.marker != "" }
 
+// errStopNestedScan stops the fsx directory iteration once the scan already has its
+// answer for that listing: a nested marker, or a child that would push discovered work
+// past the cap. It is local control flow rather than a scan outcome — findNestedMarker
+// decides which of the two happened from its own locals, so this sentinel is never
+// mistaken for an unreadable subtree and never leaves the function.
+var errStopNestedScan = errors.New("doctor: nested-marker scan stopped")
+
 // findNestedMarker searches strictly below root for another .awa marker, bounded by
 // maxDirs directories. It scans the whole tree — including dependency directories
 // like node_modules — because a nested .awa there still changes root discovery for
@@ -314,47 +323,95 @@ func (n nestedScan) found() bool { return n.marker != "" }
 // returns immediately; if the cap is reached or a subtree cannot be read before a
 // marker is found, the result is marked incomplete so the caller reports that
 // honestly rather than as a clean absence.
+//
+// Two separate bounds keep it from retaining a whole worktree: each directory is
+// streamed one fsx batch at a time instead of being listed whole, and maxDirs bounds
+// the directories the scan has committed to visiting — those already listed plus those
+// still queued — so a sibling set of directories cannot be queued in full before the
+// cap can act. Neither bound makes the scan O(batch) overall: the frontier is a second,
+// separately bounded collection.
+//
+// The stack holds the worktree's own absolute paths. The root is opened as the trusted
+// anchor the caller named — reachable through a symlink, like any project path a user
+// works from — while every directory below it is opened no-follow, so a link swapped in
+// during the scan cannot redirect it. Keeping native paths is also what lets the scan
+// cover names a store-style relative path could not express, such as a Unix directory
+// whose name contains a backslash.
 func findNestedMarker(root string, maxDirs int) nestedScan {
 	rootMarker := filepath.Join(root, paths.Dir)
-	visited := 0
+	capped := nestedScan{incomplete: true, detail: fmt.Sprintf("scan cap of %d directories reached", maxDirs)}
+	// The root is itself the first directory the scan commits to, so a cap below one
+	// leaves even it unlisted. That is an incomplete scan, never a clean absence.
+	if maxDirs < 1 {
+		return capped
+	}
+	// discovered counts every directory committed to: incremented exactly where one is
+	// queued, so it stays equal to the listed count plus len(stack) and bounds both.
+	discovered := 1
 	res := nestedScan{}
 	stack := []string{root}
 	for len(stack) > 0 {
 		dir := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		visited++
-		if visited > maxDirs {
-			res.incomplete = true
-			res.detail = fmt.Sprintf("scan cap of %d directories reached", maxDirs)
-			return res
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
+		var marker string
+		atCap := false
+		err := eachScanDirEntry(root, dir, func(e os.DirEntry) error {
+			if !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			if e.Name() == paths.Dir {
+				if child := filepath.Join(dir, e.Name()); child != rootMarker {
+					marker = child
+					return errStopNestedScan
+				}
+				return nil // the root's own marker: do not descend into it
+			}
+			if e.Name() == ".git" {
+				return nil // protected: .git is never a nested project location
+			}
+			if discovered+1 > maxDirs {
+				// Stop here rather than queueing the rest of the siblings first: the scan
+				// cannot promise to visit this child, which is exactly the cap being spent.
+				atCap = true
+				return errStopNestedScan
+			}
+			discovered++
+			stack = append(stack, filepath.Join(dir, e.Name()))
+			return nil
+		})
+		switch {
+		case marker != "":
+			return nestedScan{marker: marker}
+		case atCap:
+			return capped
+		case err != nil:
 			// An unreadable subtree (e.g. permission denied) does not abort the scan — a
 			// marker may still exist elsewhere — but it does mean absence is unproven.
 			if !res.incomplete {
 				res.incomplete = true
 				res.detail = "an unreadable subtree (" + err.Error() + ")"
 			}
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
-				continue
-			}
-			if e.Name() == paths.Dir {
-				if child := filepath.Join(dir, e.Name()); child != rootMarker {
-					return nestedScan{marker: child}
-				}
-				continue // the root's own marker: do not descend into it
-			}
-			if e.Name() == ".git" {
-				continue // protected: .git is never a nested project location
-			}
-			stack = append(stack, filepath.Join(dir, e.Name()))
 		}
 	}
 	return res
+}
+
+// eachScanDirEntry streams one scanned directory's entries to fn in bounded batches,
+// holding a single descriptor for the duration of that listing and no longer. The scan's
+// own root is opened plainly — it is the path the caller chose to work from, and
+// reaching a project through a symlink is ordinary — while every directory below it is
+// opened no-follow, so a link swapped in mid-scan cannot redirect the walk.
+func eachScanDirEntry(root, dir string, fn func(os.DirEntry) error) error {
+	open := fsx.OpenNoFollow
+	if dir == root {
+		open = os.Open
+	}
+	f, err := open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return fsx.EachDirEntryAt(f, fn)
 }
 
 // relForDisplay renders path relative to root for a compact message, falling back to
