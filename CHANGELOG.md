@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.3](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.2...v0.1.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **windows:** canonicalize followed paths consistently ([5cc2ef0](https://github.com/one-man-wolf-pack/awarer/commit/5cc2ef01799f611fb8bda9dc4370a45105df2abf))
+* **worktreefs:** keep every followed hop accounted while canonicalizing ([ec250fa](https://github.com/one-man-wolf-pack/awarer/commit/ec250faa09126ab770257b8cea4c445dba58d23c))
+
+
+### Performance Improvements
+
+* **blake3hash:** reuse cleared copy scratch when hashing a reader ([cc78da1](https://github.com/one-man-wolf-pack/awarer/commit/cc78da1634451f98510665d6b50a68a188dc65e3))
+* **blobstore:** verify an existing blob through the shared hashing scratch ([1387be3](https://github.com/one-man-wolf-pack/awarer/commit/1387be304c79e989106a86933bf8c5aa2edc639f))
+* **checkpoint:** bound habitual checkpoint history windows ([85b57e5](https://github.com/one-man-wolf-pack/awarer/commit/85b57e58a34e245ee8f7b72c45d25f2a6ae6c958))
+* **checkpoint:** retain content sources only where provenance cannot be rebuilt ([0737e6e](https://github.com/one-man-wolf-pack/awarer/commit/0737e6eab4fc56ca3ef8626a9f698504790464d1))
+* **doctor:** bound the nested-marker scan's listings and frontier ([d95447b](https://github.com/one-man-wolf-pack/awarer/commit/d95447b26565150d8f7fca15ef7598f545a82aff))
+* **doctor:** verify each unique checkpoint blob once per invocation ([107aabc](https://github.com/one-man-wolf-pack/awarer/commit/107aabc0c6c307b2acb5e8d67b2762819351f274))
+* **worktreefs:** reuse effective ignore matchers across directories ([1620d1f](https://github.com/one-man-wolf-pack/awarer/commit/1620d1fcd4e38625f9a7b469dc2c3701bbb82af1))
+
+
+### Documentation
+
+* trim the followed-path fixture comments to their mandatory rationale ([846ae03](https://github.com/one-man-wolf-pack/awarer/commit/846ae03ac21c49ca0687ea8b743d234f6e683c0a))
+
+
+### Code Refactoring
+
+* **checkpoint:** give checkpoint history order one domain owner ([c3ed419](https://github.com/one-man-wolf-pack/awarer/commit/c3ed4191cdbadaf262fa64296b403eec4919d7db))
+* **fsx:** give bounded directory streaming a descriptor-taking owner ([21115dd](https://github.com/one-man-wolf-pack/awarer/commit/21115ddf2a827d971423a27e5cf221376cb9b4f4))
+
 ## [0.1.2](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.1...v0.1.2) (2026-08-08)
 
 
