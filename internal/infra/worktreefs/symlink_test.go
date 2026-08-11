@@ -13,8 +13,16 @@ import (
 	"awarer/internal/infra/worktreefs"
 )
 
-// requireSymlinks creates a probe symlink and skips the test with a clear reason
-// if the platform or sandbox cannot create one.
+// requireSymlinksEnv turns a missing symlink capability from a skip into a failure.
+// The windows-portability lane sets it and now runs this package, whose followed-
+// symlink traversal is exactly what that lane exists to prove: a run that quietly
+// skipped every symlink case and reported green would look like evidence while
+// proving nothing. A developer without the privilege still gets a named skip.
+const requireSymlinksEnv = "AWA_REQUIRE_SYMLINK_TESTS"
+
+// requireSymlinks proves the platform will create a symlink, or ends the test —
+// fatally where symlink coverage is required, with a named skip otherwise. Windows
+// grants the privilege only in developer mode or to an elevated process.
 func requireSymlinks(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -22,9 +30,15 @@ func requireSymlinks(t *testing.T) {
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
-		t.Skipf("symlinks unavailable on this platform/sandbox: %v", err)
+	err := os.Symlink(target, filepath.Join(dir, "link"))
+	if err == nil {
+		return
 	}
+	if os.Getenv(requireSymlinksEnv) != "" {
+		t.Fatalf("%s is set, so symlink coverage is required, but this platform will not create a symlink: %v",
+			requireSymlinksEnv, err)
+	}
+	t.Skipf("this platform will not create a symlink: %v", err)
 }
 
 // collectNodes runs the walker and returns nodes keyed by rel-path.

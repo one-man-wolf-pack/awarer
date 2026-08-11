@@ -150,8 +150,13 @@ jobs:
       # while the suite's links fail for a reason a shell-level probe would miss.
       - name: preflight (symbolic link capability)
         run: go test ./internal/infra/worktreemut/... -run TestSymlinkCapability -v
-      - name: go test (filesystem primitives, worktree mutator, checkpoint store, state resolution and comparison, documentation export, site generator)
-        run: go test ./internal/infra/fsx/... ./internal/infra/worktreemut/... ./internal/infra/checkpointjson/... ./internal/app/changes/... ./internal/app/diff/... ./internal/app/state/... ./internal/app/stateprovider/... ./internal/app/docsexport/... ./site/...
+      # worktreefs is here because it owns the walk's path resolution, and a path is
+      # where this platform differs without any code branching on it: Windows keeps a
+      # canonical spelling of a name that a component-wise resolution does not
+      # reproduce. The Unix lanes cannot observe that, so a bug in it reached the
+      # packages below as a scan that silently omitted a followed file.
+      - name: go test (filesystem primitives, worktree walker, worktree mutator, checkpoint store, state resolution and comparison, documentation export, site generator)
+        run: go test ./internal/infra/fsx/... ./internal/infra/worktreefs/... ./internal/infra/worktreemut/... ./internal/infra/checkpointjson/... ./internal/app/changes/... ./internal/app/diff/... ./internal/app/state/... ./internal/app/stateprovider/... ./internal/app/docsexport/... ./site/...
 
   # Runtime proof for the other shipped platform this repository never runs on. FreeBSD
   # compiles the same Unix implementations as darwin and linux, so what needs observing

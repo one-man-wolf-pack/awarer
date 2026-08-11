@@ -299,8 +299,24 @@ func (w *walk) follow(symlinkAbs, virtualRel string, depth int, chain map[string
 			continue
 		}
 
-		// next is a non-symlink whose parent is already resolved, so it is the
-		// canonical real path of the terminal target — ready to stat, read, or walk.
+		// next is a non-symlink whose parent is already resolved, so the hop-by-hop
+		// walk is done — but its final element still carries the spelling the link's
+		// target used to name it. The terminal exists and is not a symlink, so
+		// EvalSymlinks can now canonicalize the path whole, settling the part no
+		// hop resolution decides: the form the platform itself considers canonical,
+		// such as a Windows 8.3 component or a case-insensitive name. followedOpener
+		// re-resolves the virtual path with the same function, so the terminal
+		// recorded here and the one checked at read time come from one resolver
+		// rather than from two that agree only where the platform normalizes nothing.
+		canonical, err := filepath.EvalSymlinks(next)
+		if err != nil {
+			// The terminal went away between the Lstat above and this resolve: record
+			// the link, exactly as a target that was already missing is recorded,
+			// rather than guessing at a path that no longer resolves.
+			return brokenLeaf()
+		}
+		next = canonical
+
 		realInfo, err := os.Stat(next)
 		if err != nil {
 			return fmt.Errorf("stat symlink target %s: %w", next, err)
@@ -377,6 +393,11 @@ func concatHops(prior, leaf []symlinkHop) []symlinkHop {
 // seen at its true out-of-root location rather than by its in-root-looking string.
 // This makes the containment and cycle checks exact.
 //
+// The final element keeps the spelling the caller (a link's raw target) gave it, so
+// this is the hop walk's path space, not the platform's canonical one. Once the
+// terminal is known to exist and not to be a symlink, follow() canonicalizes it
+// whole with EvalSymlinks, which is the form the content opener re-derives.
+//
 // EvalSymlinks is the fast path. When it fails — because a parent component is
 // missing, or a symlinked parent points at a location that does not exist — the
 // tolerant resolver takes over rather than falling back to the lexical path: a
@@ -401,9 +422,15 @@ const symlinkResolveBudget = 255
 // exist (still followed), so a path reached through a symlink pointing at a missing
 // location is resolved to that true location instead of aborting. That lets an
 // out-of-root target be classified as a root escape even when it does not exist. A
-// hop budget bounds symlink chains. path is expected to be absolute. The resolution
-// is deterministic, so re-resolving an unchanged path yields the same string — the
-// property the content opener relies on to re-check a followed node's terminal.
+// hop budget bounds symlink chains. path is expected to be absolute.
+//
+// It resolves symlinks and nothing else: a component is carried over as the caller
+// spelled it, so on a platform that keeps a second spelling of the same name — a
+// Windows 8.3 component, a case-insensitive filesystem — this does not agree with
+// filepath.EvalSymlinks. That is why it stays inside the walk, where it classifies a
+// target the caller's own path space can still describe, and why the content opener
+// re-resolves with EvalSymlinks instead: comparing a recorded path against a
+// re-resolved one requires both to come from the same resolver.
 func resolveTolerant(path string) string {
 	path = filepath.Clean(path)
 	vol := filepath.VolumeName(path)
@@ -777,9 +804,17 @@ func openVerifiedRegular(absPath string, want worktree.StatSignature) (io.ReadCl
 // change landed before any open-time checkpoint. Step 2 catches a change to a
 // silently-canonicalized parent directory of a chain target (not itself a recorded
 // hop) or a new symlink appearing at the terminal — including a repoint that now
-// escapes the root, even to a hard link sharing the recorded file's inode. Replaying
-// recorded raw targets and re-resolving with resolveTolerant both compare like with
-// like, so an unchanged path is never falsely rejected.
+// escapes the root, even to a hard link sharing the recorded file's inode.
+//
+// Step 2 resolves with filepath.EvalSymlinks, the same function follow() used to
+// canonicalize the terminal it recorded, so the two strings are produced by one
+// resolver and an unchanged path is never falsely rejected — including on a platform
+// that normalizes a path's spelling, where a hop-by-hop resolution of the caller's
+// own root would differ from the recorded terminal without anything having changed.
+// A path that no longer resolves is a change like any other and is rejected as one:
+// there is deliberately no tolerant fallback here, because tolerance exists to
+// classify a target that is missing during the walk, and by read time a terminal
+// that will not resolve is not the terminal this node was recorded for.
 func (w *walk) followedOpener(virtualAbs, validatedReal string, chain []symlinkHop, want worktree.StatSignature) func() (io.ReadCloser, error) {
 	return func() (io.ReadCloser, error) {
 		for _, h := range chain {
@@ -788,8 +823,8 @@ func (w *walk) followedOpener(virtualAbs, validatedReal string, chain []symlinkH
 				return nil, fmt.Errorf("%s: %w", virtualAbs, worktree.ErrObservationChanged)
 			}
 		}
-		real := resolveTolerant(virtualAbs)
-		if real != validatedReal {
+		real, err := filepath.EvalSymlinks(virtualAbs)
+		if err != nil || real != validatedReal {
 			return nil, fmt.Errorf("%s: %w", virtualAbs, worktree.ErrObservationChanged)
 		}
 		return openVerifiedRegular(real, want)

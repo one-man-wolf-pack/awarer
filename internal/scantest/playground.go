@@ -60,8 +60,28 @@ func BuildPlainGo(tb testing.TB, root string) {
 	Write(tb, root, "data/input.txt", "the quick brown fox\n")
 }
 
-// Symlink creates a symlink at rel pointing to target (a raw link string),
-// skipping the test with a clear reason if the platform cannot create symlinks.
+// requireSymlinksEnv turns a missing symlink capability from a skip into a failure.
+// The windows-portability and freebsd-portability lanes set it, because those lanes
+// exist to prove platform symlink behavior: a run that quietly skipped every symlink
+// case and reported green would be worse than no lane at all, since it would look
+// like evidence. A developer running the suite on a machine without the privilege
+// still gets a named skip. This mirrors the helpers of the same purpose in fsx,
+// worktreemut and worktreefs, so the lanes' setting reaches the fixtures too.
+const requireSymlinksEnv = "AWA_REQUIRE_SYMLINK_TESTS"
+
+// endWithoutSymlinks ends a test that cannot create a symlink — fatally where
+// symlink coverage is required, with a named skip otherwise.
+func endWithoutSymlinks(tb testing.TB, err error) {
+	tb.Helper()
+	if os.Getenv(requireSymlinksEnv) != "" {
+		tb.Fatalf("%s is set, so symlink coverage is required, but this platform will not create a symlink: %v",
+			requireSymlinksEnv, err)
+	}
+	tb.Skipf("symlinks unavailable on this platform/sandbox: %v", err)
+}
+
+// Symlink creates a symlink at rel pointing to target (a raw link string), ending
+// the test where the platform cannot create symlinks.
 func Symlink(tb testing.TB, root, rel, target string) {
 	tb.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -69,7 +89,7 @@ func Symlink(tb testing.TB, root, rel, target string) {
 		tb.Fatal(err)
 	}
 	if err := os.Symlink(target, p); err != nil {
-		tb.Skipf("symlinks unavailable on this platform/sandbox: %v", err)
+		endWithoutSymlinks(tb, err)
 	}
 }
 
@@ -85,8 +105,9 @@ func Hardlink(tb testing.TB, root, rel, targetRel string) {
 	}
 }
 
-// RequireSymlinks creates a probe symlink and skips the test with a clear reason
-// if the platform or sandbox cannot create one.
+// RequireSymlinks creates a probe symlink and ends the test if the platform or
+// sandbox cannot create one — fatally where symlink coverage is required, with a
+// named skip otherwise.
 func RequireSymlinks(tb testing.TB) {
 	tb.Helper()
 	dir, err := os.MkdirTemp("", "awa-symlink-probe-")
@@ -98,7 +119,7 @@ func RequireSymlinks(tb testing.TB) {
 		tb.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(dir, "t"), filepath.Join(dir, "l")); err != nil {
-		tb.Skipf("symlinks unavailable on this platform/sandbox: %v", err)
+		endWithoutSymlinks(tb, err)
 	}
 }
 
