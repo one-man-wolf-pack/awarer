@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.3...v0.2.0) (2026-08-12)
+
+
+### Features
+
+* **run:** select effect roots by exact project-relative path ([9b3ea67](https://github.com/one-man-wolf-pack/awarer/commit/9b3ea67864644ae9ab8cf7602ff5024266a9fe78))
+
 ## [0.1.3](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.2...v0.1.3) (2026-08-11)
 
 
