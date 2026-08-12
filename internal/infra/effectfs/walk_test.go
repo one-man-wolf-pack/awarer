@@ -207,6 +207,43 @@ func TestDiscoverDoesNotFollowSymlink(t *testing.T) {
 	}
 }
 
+func TestDiscoverSelectorFormsMatchDistinctly(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "artifacts", "bin", "tool"), "x")
+	mustWrite(t, filepath.Join(root, "other", "bin", "tool"), "x")
+	mustWrite(t, filepath.Join(root, "other", "artifacts", "bin", "tool"), "x")
+
+	exact, err := newWalker(t).Discover(root, []string{"artifacts/bin"})
+	if err != nil {
+		t.Fatalf("Discover exact: %v", err)
+	}
+	if len(exact) != 1 || exact[0].Path != "artifacts/bin" {
+		t.Errorf("exact selector discovered %v, want only artifacts/bin", exact)
+	}
+
+	byName, err := newWalker(t).Discover(root, []string{"bin"})
+	if err != nil {
+		t.Fatalf("Discover name: %v", err)
+	}
+	idx := byPath(byName)
+	for _, want := range []string{"artifacts/bin", "other/bin", "other/artifacts/bin"} {
+		if _, ok := idx[want]; !ok {
+			t.Errorf("name selector missed %q: %v", want, idx)
+		}
+	}
+	if len(byName) != 3 {
+		t.Errorf("name selector discovered %d roots, want every bin basename: %v", len(byName), byName)
+	}
+
+	both, err := newWalker(t).Discover(root, []string{"bin", "artifacts/bin"})
+	if err != nil {
+		t.Fatalf("Discover both: %v", err)
+	}
+	if len(both) != 3 {
+		t.Errorf("overlapping selectors discovered %d roots, want 3 (artifacts/bin observed once): %v", len(both), both)
+	}
+}
+
 func mustMkdir(t *testing.T, p string) {
 	t.Helper()
 	if err := os.MkdirAll(p, 0o755); err != nil {

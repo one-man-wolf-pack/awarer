@@ -1,13 +1,14 @@
 // Package effectfs is the filesystem adapter for the run cache's effect observer.
 //
 // It walks the project tree looking for the configured watched generated-output
-// directory names (build, dist, target, node_modules, ...) wherever they appear —
-// at the root and nested (packages/api/node_modules) — and reduces each to a
-// stat-only sub-hash. It never reads file contents and never follows symlinks: a
-// symlink is folded as a leaf by its own lstat, so there is no unbounded traversal
-// and no root-escape question. Entries within a directory are combined with an
-// order-independent 256-bit modular sum, so a directory's signature is deterministic
-// regardless of readdir order and needs no in-memory sort or retention.
+// directories — matched by directory name wherever it appears (build, dist, target,
+// node_modules, ... at the root and nested) or by exact project-relative path
+// (artifacts/bin) — and reduces each to a stat-only sub-hash. It never reads file
+// contents and never follows symlinks: a symlink is folded as a leaf by its own lstat,
+// so there is no unbounded traversal and no root-escape question. Entries within a
+// directory are combined with an order-independent 256-bit modular sum, so a
+// directory's signature is deterministic regardless of readdir order and needs no
+// in-memory sort or retention.
 //
 // Observation is fidelity-or-fail-closed: a directory is folded fully or, if it
 // exceeds the entry budget, reported over-cap so the observer marks the whole
@@ -25,6 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"awarer/internal/app/effectobserve"
 	"awarer/internal/domain/config"
@@ -115,23 +117,35 @@ func NewWithLimits(hasher hashing.Hasher, maxPerRoot, maxTotal, maxDiscovery int
 	}
 }
 
-// Discover walks the project tree and returns every directory whose basename is one
-// of watchNames, at any depth, each observed fully with a bounded no-follow
-// traversal. Matched directories are not descended into (their contents are the
-// observation); protected names are skipped. The traversal uses an explicit stack and
-// chunked ReadDir (never os.ReadDir, which would read and sort a whole directory's
-// entries before the budget could stop it), so both the discovery traversal (entries
-// visited looking for matches) and each matched directory's observation are bounded in
-// memory and time. It fails closed — returning an error the observer maps to an
-// unavailable (non-reusable) effect state — when a directory cannot be read safely, a
-// matched directory exceeds the entry budget, the tree holds more matching directories
-// than the bound, or the discovery traversal exceeds its budget.
-func (w *Walker) Discover(project string, watchNames []string) ([]effectobserve.DiscoveredRoot, error) {
-	watch := make(map[string]bool, len(watchNames))
-	for _, n := range watchNames {
-		watch[n] = true
+// Discover walks the project tree and returns every directory a selector matches — by
+// name at any depth or at one exact project-relative path — each observed fully with a
+// bounded no-follow traversal. Matched directories are not descended into (their
+// contents are the observation); protected names are skipped. The traversal uses an
+// explicit stack and chunked ReadDir (never os.ReadDir, which would read and sort a
+// whole directory's entries before the budget could stop it), so both the discovery
+// traversal (entries visited looking for matches) and each matched directory's
+// observation are bounded in memory and time. It fails closed — returning an error the
+// observer maps to an unavailable (non-reusable) effect state — when a directory cannot
+// be read safely, a matched directory exceeds the entry budget, the tree holds more
+// matching directories than the bound, or the discovery traversal exceeds its budget.
+func (w *Walker) Discover(project string, selectors []string) ([]effectobserve.DiscoveredRoot, error) {
+	names := make(map[string]bool, len(selectors))
+	paths := make(map[string]bool)
+	for _, s := range selectors {
+		if strings.Contains(s, "/") {
+			paths[s] = true
+		} else {
+			names[s] = true
+		}
 	}
-	dc := &discovery{w: w, project: project, watch: watch, remaining: w.maxTotal}
+	dc := &discovery{
+		w:         w,
+		project:   project,
+		prefix:    strings.TrimSuffix(filepath.ToSlash(filepath.Clean(project)), "/") + "/",
+		names:     names,
+		paths:     paths,
+		remaining: w.maxTotal,
+	}
 	if err := dc.run(); err != nil {
 		return nil, err
 	}
@@ -139,14 +153,24 @@ func (w *Walker) Discover(project string, watchNames []string) ([]effectobserve.
 }
 
 // discovery is the mutable state of one Discover traversal: the walker and its budgets,
-// the watch set, the running total/discovery counters, and the discovered directories.
+// the selector sets, the running total/discovery counters, and the discovered directories.
 type discovery struct {
 	w         *Walker
 	project   string
-	watch     map[string]bool
+	prefix    string
+	names     map[string]bool
+	paths     map[string]bool
 	remaining int // shared per-observation entry budget left for matched directories
 	visited   int // discovery entries seen so far, matched or not
 	out       []effectobserve.DiscoveredRoot
+}
+
+// relOf renders a path the traversal built with filepath.Join under dc.project as its
+// slash-separated project-relative form. Join cleans its result, so dc.prefix must be
+// built from the cleaned root; otherwise nothing is trimmed, every rendered path stays
+// absolute, and no exact selector can ever match.
+func (dc *discovery) relOf(abs string) string {
+	return strings.TrimPrefix(filepath.ToSlash(abs), dc.prefix)
 }
 
 // run traverses the tree with an explicit stack of directories to visit.
@@ -199,8 +223,9 @@ func (dc *discovery) readDir(dir string, stack *[]string) error {
 			if !info.IsDir() {
 				continue
 			}
-			if dc.watch[name] {
-				if err := dc.observe(full); err != nil {
+			rel := dc.relOf(full)
+			if dc.names[name] || dc.paths[rel] {
+				if err := dc.observe(full, rel); err != nil {
 					return err
 				}
 			} else {
@@ -218,7 +243,7 @@ func (dc *discovery) readDir(dir string, stack *[]string) error {
 
 // observe folds a matched watched directory into the result, drawing on the shared
 // entry budget and failing closed past the matched-directory bound.
-func (dc *discovery) observe(full string) error {
+func (dc *discovery) observe(full, rel string) error {
 	budget := dc.w.maxPerRoot
 	if dc.remaining < budget {
 		budget = dc.remaining
@@ -231,19 +256,13 @@ func (dc *discovery) observe(full string) error {
 		// exact count is not carried: the walk stopped at the budget, so only the crossed
 		// threshold is honest. Other read failures keep their bare error.
 		if errors.Is(err, errOverBudget) {
-			if rel, rerr := filepath.Rel(dc.project, full); rerr == nil {
-				return &effectobserve.OverBudgetError{Path: filepath.ToSlash(rel), Limit: budget}
-			}
+			return &effectobserve.OverBudgetError{Path: rel, Limit: budget}
 		}
 		return err
 	}
 	dc.remaining -= int(entries)
-	rel, err := filepath.Rel(dc.project, full)
-	if err != nil {
-		return err
-	}
 	dc.out = append(dc.out, effectobserve.DiscoveredRoot{
-		Path:    filepath.ToSlash(rel),
+		Path:    rel,
 		SubHash: subHash,
 		Entries: entries,
 	})

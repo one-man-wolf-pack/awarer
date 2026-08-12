@@ -104,7 +104,7 @@ func Sections() []Section {
 				{"max_stderr_size", d.Run.MaxStderrSize.String(), "byte size", "Capture limit for stderr.", "Raise for commands with very large error output."},
 				{"capture_output", boolean(d.Run.CaptureOutput), "bool", "Whether run output is captured and stored for replay/inspection.", "Turn off to run without recording output."},
 				{"cache_failed_runs", boolean(d.Run.CacheFailedRuns), "bool", "Whether non-zero-exit runs are cached.", "Turn off to always re-run failed commands."},
-				{"extra_effect_roots", list(d.Run.WatchedEffectRoots), "directory-name list", "Additive watched generated-output directory NAMES (single segments matched wherever they appear, not paths), on top of the built-ins. Additive only — a built-in cannot be silenced.", "Watch a generated directory a command reads so later changes to it invalidate reuse."},
+				{"extra_effect_roots", list(d.Run.WatchedEffectRoots), "name/path list", "Additive watched generated-output selectors on top of the built-ins. Each is either a directory NAME matched wherever it appears (\"bin\") or an exact project-relative PATH matched only there (\"artifacts/bin\"). Literal, never globs. Additive only — a built-in cannot be silenced.", "Watch a generated directory a command reads so later changes to it invalidate reuse."},
 			},
 		},
 		{

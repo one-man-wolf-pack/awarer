@@ -5,11 +5,12 @@
 // after a reusable run must miss rather than falsely hit, so this signature is
 // folded into the run key alongside the input tree hash.
 //
-// The watched names are basenames matched wherever they appear in the tree — at the
-// project root and nested (packages/api/node_modules) — mirroring how the input
-// scan excludes them, so a monorepo's nested generated output is covered too. The
-// observation is deliberately stat-only (existence + size/mtime/mode), never a
-// content hash. The traversal is a filesystem port (implemented by
+// A watched selector is either a basename matched wherever it appears in the tree — at
+// the project root and nested (packages/api/node_modules), mirroring how the input scan
+// excludes them, so a monorepo's nested generated output is covered too — or an exact
+// project-relative path (artifacts/bin) matched only there. The observation is
+// deliberately stat-only (existence + size/mtime/mode), never a content hash. The
+// traversal is a filesystem port (implemented by
 // internal/infra/effectfs) so this orchestration stays testable with a fake.
 package effectobserve
 
@@ -52,14 +53,15 @@ type DiscoveredRoot struct {
 }
 
 // Walker is the filesystem port the observer drives. Discover walks the project tree
-// and returns every directory whose basename is one of watchNames — at any depth,
-// pruning into matched directories, skipping protected state (.git/.awa) — each
-// observed fully with a no-follow, bounded traversal. It returns a non-nil error when
-// the tree cannot be observed safely (an unreadable directory, more matching
-// directories than the bound, or a directory too large to observe with fidelity) —
-// the single fail-closed signal that makes the whole observation unavailable.
+// and returns every directory a selector matches — a basename at any depth or an exact
+// project-relative path, at most once per directory, pruning into matched directories,
+// skipping protected state (.git/.awa) — each observed fully with a no-follow, bounded
+// traversal. It returns a non-nil error when the tree cannot be observed safely (an
+// unreadable directory, more matching directories than the bound, or a directory too
+// large to observe with fidelity) — the single fail-closed signal that makes the whole
+// observation unavailable.
 type Walker interface {
-	Discover(project string, watchNames []string) ([]DiscoveredRoot, error)
+	Discover(project string, selectors []string) ([]DiscoveredRoot, error)
 }
 
 // Service computes an EffectObservation from the configured watch list.

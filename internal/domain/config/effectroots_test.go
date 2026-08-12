@@ -57,30 +57,31 @@ func TestRunBaselineExcludesCoveredByEffectRoots(t *testing.T) {
 	}
 }
 
-func TestExtraEffectRootsMustBeDirectoryNames(t *testing.T) {
-	// extra_effect_roots is a list of directory names matched by basename wherever
-	// they appear, so a path, "." / "..", or an empty entry must be rejected — anything
-	// with a separator would be a silent no-op the observer never matches.
-	// Rejection is OS-independent: path/volume spellings in either OS's syntax, dot
-	// segments, and leading/trailing whitespace are all silent no-ops the observer
-	// would never match, so they must be rejected on every platform.
+func TestExtraEffectRootsAcceptNamesAndExactPaths(t *testing.T) {
 	for _, bad := range []string{
-		"generated/cache", "build/out", "a/b/c", // unix path
-		`generated\cache`, `C:\tmp`, "C:", // windows path/volume
-		"..", ".", "", // dot segments / empty
-		" build", "build ", "\tbuild", // leading/trailing whitespace
+		`generated\cache`, `C:\tmp`, "C:",
+		"..", ".", "",
+		" build", "build ", "\tbuild",
+		" artifacts/bin", "artifacts/bin ",
+		"/abs/bin", "artifacts/", "a//b",
+		"./a", "a/./b", "../a", "a/../b",
+		".awa/store", "a/.git",
 	} {
 		cfg := Defaults()
 		cfg.Run.WatchedEffectRoots = []string{bad}
 		if err := cfg.Validate(); err == nil {
-			t.Errorf("extra_effect_roots %q must be rejected (not a single portable directory name)", bad)
+			t.Errorf("extra_effect_roots %q must be rejected (not a portable name or clean project-relative path)", bad)
 		}
 	}
 
-	// A plain directory name is accepted.
-	cfg := Defaults()
-	cfg.Run.WatchedEffectRoots = []string{"generated", ".cache"}
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("directory-name extra_effect_roots must be accepted: %v", err)
+	// ".git" and "artifacts/ bin" are the two boundaries a plausible cleanup would move
+	// into the rejected list above: the bare name stays accepted for v0.1.x configs, and
+	// the padding rule stops at the value boundary.
+	for _, good := range []string{"generated", ".cache", ".git", "artifacts/bin", "a/b/c", "artifacts/ bin"} {
+		cfg := Defaults()
+		cfg.Run.WatchedEffectRoots = []string{good}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("extra_effect_roots %q must be accepted: %v", good, err)
+		}
 	}
 }

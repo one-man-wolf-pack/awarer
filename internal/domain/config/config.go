@@ -159,14 +159,11 @@ type Run struct {
 	CaptureOutput   bool
 	CacheFailedRuns bool
 	// WatchedEffectRoots holds only the user's additive watched generated-output
-	// directory names ([run].extra_effect_roots) — single path segments matched
-	// wherever they appear in the tree, not paths. The effective watch list — the
-	// built-in effectRootDefaults plus these — is composed on demand (see
-	// EffectiveEffectRoots), not stored, so it cannot drift from the additive value.
-	// These names are observed with a bounded stat signature so deleting or changing
-	// generated output excluded from the input scan (node_modules, target, ...) misses
-	// instead of falsely hitting; the list is additive only, since silencing a
-	// built-in would reintroduce the false-hit class effect observation exists to close.
+	// selectors ([run].extra_effect_roots). The effective watch list — the built-in
+	// effectRootDefaults plus these — is composed on demand (see EffectiveEffectRoots),
+	// not stored, so it cannot drift from the additive value. The list is additive only,
+	// since silencing a built-in would reintroduce the false-hit class effect
+	// observation exists to close.
 	WatchedEffectRoots []string
 }
 
@@ -571,9 +568,7 @@ func (c Config) Validate() error {
 	p = append(p, pathProblems("scope.extra_excludes", c.Scope.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("history.extra_excludes", c.History.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("run.extra_excludes", c.Run.ExtraExcludes, nonEmptyOnly)...)
-	// A watched effect root is a directory *name* matched wherever it appears in the
-	// tree (like a baseline exclude), not a path — so it must be a single path segment.
-	p = append(p, effectRootNameProblems(c.Run.WatchedEffectRoots)...)
+	p = append(p, effectRootSelectorProblems(c.Run.WatchedEffectRoots)...)
 	p = append(p, envAllowlistProblems(c.Run.EnvAllowlist)...)
 	if !c.Hashing.TrustMode.Valid() {
 		p = append(p, "hashing.trust_mode is not a known trust mode")
@@ -659,30 +654,53 @@ func pathProblems(field string, items []string, rule pathRule) []string {
 	return probs
 }
 
-// effectRootNameProblems validates run.extra_effect_roots. Each entry is a directory
-// *name* the effect observer matches by basename wherever it appears in the tree (the
-// same semantics as a baseline exclude), so it must be a single, portable name token.
-// The rules are OS-independent on purpose — a project config is shared across
-// platforms — so a path or volume spelling in either OS's syntax (foo/bar, foo\bar,
-// C:\tmp) is rejected, along with "."/".." and leading/trailing whitespace. Any of
-// those would be accepted but never match d.Name(), a silent no-op that leaves the
-// user believing a location is watched. Path-specific watches, if ever needed, belong
-// in a separate field, not smuggled through a name.
-func effectRootNameProblems(names []string) []string {
+func effectRootSelectorProblems(selectors []string) []string {
 	var probs []string
-	for i, name := range names {
-		switch {
-		case strings.TrimSpace(name) == "":
-			probs = append(probs, fmt.Sprintf("run.extra_effect_roots[%d] must not be empty", i))
-		case name != strings.TrimSpace(name):
-			probs = append(probs, fmt.Sprintf("run.extra_effect_roots[%d] %q must not have leading or trailing whitespace", i, name))
-		case name == "." || name == "..":
-			probs = append(probs, fmt.Sprintf("run.extra_effect_roots[%d] %q must be a directory name, not %q", i, name, name))
-		case strings.ContainsAny(name, `/\:`):
-			probs = append(probs, fmt.Sprintf("run.extra_effect_roots[%d] %q must be a single directory name, not a path", i, name))
+	for i, sel := range selectors {
+		if p := effectRootSelectorProblem(sel); p != "" {
+			probs = append(probs, fmt.Sprintf("run.extra_effect_roots[%d] %s", i, p))
 		}
 	}
 	return probs
+}
+
+func effectRootSelectorProblem(sel string) string {
+	switch {
+	case strings.TrimSpace(sel) == "":
+		return "must not be empty"
+	case sel != strings.TrimSpace(sel):
+		return fmt.Sprintf("%q must not have leading or trailing whitespace", sel)
+	case strings.ContainsAny(sel, `\:`):
+		return fmt.Sprintf(`%q must not contain a backslash or a volume separator: "/" is the path separator on every platform`, sel)
+	}
+	if !strings.Contains(sel, "/") {
+		// Every other single name published releases accept stays accepted, including
+		// ".git" and ".awa": the path form's protected-component rule deliberately does
+		// not reach here, because narrowing this set breaks a valid v0.1.x config.
+		if sel == "." || sel == ".." {
+			return fmt.Sprintf("%q must be a directory name, not %q", sel, sel)
+		}
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(sel, "/"):
+		return fmt.Sprintf("%q must be relative to the project root", sel)
+	case strings.HasSuffix(sel, "/"):
+		return fmt.Sprintf("%q must not end in a slash: name the directory itself", sel)
+	}
+	// No component is trimmed: whitespace inside one names a real directory (" bin"),
+	// unlike padding around the whole value, which the name form has always rejected.
+	for _, comp := range strings.Split(sel, "/") {
+		switch {
+		case comp == "":
+			return fmt.Sprintf("%q must not have an empty path component", sel)
+		case comp == "." || comp == "..":
+			return fmt.Sprintf("%q must be a clean project-relative path, without a %q or %q component", sel, ".", "..")
+		case slices.Contains(protectedExcludes, comp):
+			return fmt.Sprintf("%q must not select protected state: awa never observes a %q component", sel, comp)
+		}
+	}
+	return ""
 }
 
 // envAllowlistProblems validates run.env_allowlist. Every entry names one

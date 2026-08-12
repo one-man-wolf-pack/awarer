@@ -131,19 +131,27 @@ func EffectVsExcludeMarkdown() string {
 		"- The command **writes** output you actually need on disk afterwards\n" +
 		"  → `awa run --record`. Excluding it would let a replay report success with\n" +
 		"  the output missing.\n" +
-		"- The command only **reads** an already-produced generated directory\n" +
-		"  → `[run].extra_effect_roots`. Later changes to that generated state should\n" +
-		"  invalidate reuse.\n" +
+		"- The command only **reads** an already-produced generated directory that the\n" +
+		"  run input scan no longer sees → `[run].extra_effect_roots`. Later changes to\n" +
+		"  that generated state should invalidate reuse.\n" +
+		"- That directory is still **visible to the input scan** → configure nothing.\n" +
+		"  Its contents already key the run; an effect root would add no coverage.\n" +
 		"- The command is a deploy, migration, formatter, live probe, or otherwise\n" +
 		"  non-reusable → `awa run --record`. Keep durable evidence without\n" +
 		"  publishing a reusable hit.\n" +
+		"\n" +
+		"Picking an effect-root selector (literal, never globs):\n" +
+		"\n" +
+		"- The same directory name at **any** depth, typically repeated across\n" +
+		"  monorepo packages → a name: `extra_effect_roots = [\"bin\"]`.\n" +
+		"- Exactly **one** location → a project-relative path:\n" +
+		"  `extra_effect_roots = [\"artifacts/bin\"]`, which watches neither `other/bin`\n" +
+		"  nor `other/artifacts/bin`.\n" +
 		"\n" +
 		"Rules:\n" +
 		"\n" +
 		"- Writing to a watched effect root during the run makes the result\n" +
 		"  non-reusable.\n" +
-		"- Effect roots are for generated state a command depends on but does not\n" +
-		"  produce during that command.\n" +
 		"- The two lists are separate: the watched set is the built-in effect roots\n" +
 		"  plus `extra_effect_roots`. An exclude you add yourself is NOT watched, so\n" +
 		"  an excluded, unwatched directory is invisible to the cache in both\n" +
@@ -164,10 +172,15 @@ func PatternSemanticsMarkdown() string {
 		"  default.\n" +
 		"- `[scope].extra_excludes` and `[run].extra_excludes` — gitignore-style\n" +
 		"  patterns, additive on top of the built-in baseline excludes.\n" +
-		"- `[run].extra_effect_roots` — directory NAMES (single path segments),\n" +
-		"  matched by basename wherever they appear under the observed scope — not\n" +
-		"  path globs. `\"target\"` watches every `target/` directory; `\"build/out\"`\n" +
-		"  is rejected as a path.\n" +
+		"- `[run].extra_effect_roots` — literal selectors, never globs, in one of two\n" +
+		"  forms. A single segment is a directory NAME matched by basename wherever it\n" +
+		"  appears: `\"target\"` watches every `target/`. A slash-separated\n" +
+		"  project-relative PATH matches that one location only:\n" +
+		"  `\"artifacts/bin\"` watches `artifacts/bin` and neither `other/bin` nor\n" +
+		"  `other/artifacts/bin`. Matching is case-sensitive and `/` is the separator\n" +
+		"  on every platform. A backslash, a volume spelling, and a `.`/`..` component\n" +
+		"  are rejected in either form; a path is also rejected when it begins or ends\n" +
+		"  with a slash, holds an empty component, or names `.git` or `.awa`.\n" +
 		"\n" +
 		"Use `awa config effective` to see the resolved effective lists and the layer\n" +
 		"each value came from."

@@ -63,23 +63,18 @@ miss (re-run unnecessarily) over a false hit (skip work that mattered).
 ## Effect observation
 
 `awa run` also watches generated-output roots with a bounded stat signature. The
-watched set is exactly the built-in one — every *baseline* exclude, such as
-`node_modules` and `target`, plus `build`, `dist`, `out`, and `coverage` — plus
-any `[run].extra_effect_roots`. The second built-in group is watched even though
-the run input scan still sees it: a build artifact stays a real command input, and
-is observed as generated state as well. The protected paths `.awa/` and `.git/` are
-the exception: they are neither scanned nor watched, because awa's own state and
-your VCS metadata are outside its guarantee.
+watched set is the built-in one — every *baseline* exclude, such as `node_modules`
+and `target`, plus `build`, `dist`, `out`, and `coverage` — plus any
+`[run].extra_effect_roots`, selecting by name at any depth or by exact
+project-relative path. That second built-in group is watched though the input scan
+still sees it: a build artifact is both a real command input and generated state.
+`.awa/` and `.git/` are the exception: neither scanned nor watched, because awa's
+own state and your VCS metadata are outside its guarantee.
 
 Note the boundary, because it is the one place excluding a path can cost you a
-correct result: **an exclude you add yourself is not watched.** `[scope]`/`[run]`
-`extra_excludes` and `.awaignore` only remove a path from the input scan;
-`extra_effect_roots` is the additive watch list, and the two are separate. A
-directory that is excluded and unwatched is invisible to the cache in both
-directions, so a later replay can report success while that directory is missing.
-Exclude a path only when its contents may safely be absent after a replay; when
-materializing the output *is* part of the command's result, use `awa run --record`
-instead.
+correct result: **an exclude you add yourself is not watched**, so a replay can
+report success while an excluded, unwatched directory is missing. "Effect roots
+vs excludes" below turns that into a decision.
 
 Deleting or changing that generated state after a reusable run misses instead of
 falsely hitting (reason `effect-state-differs`); a watched root that cannot be
@@ -88,8 +83,6 @@ reusable (`effect-state-unavailable`, `fast-trust-mode`). A cache hit is reusabl
 for observed inputs and configured project-local observation policy; by default
 it does not track files outside the project root, and never network services,
 clocks, or home-directory config.
-Use `awa run --record` for side-effecting, deployment, migration, and
-formatter/fixer workflows where replay would be misleading.
 
 ## Latency diagnostics
 
