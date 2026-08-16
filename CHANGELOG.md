@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.2.0...v0.3.0) (2026-08-16)
+
+
+### Features
+
+* **release:** build the Homebrew package from released source ([ff0d619](https://github.com/one-man-wolf-pack/awarer/commit/ff0d61921e8b0dd29ee5805ca009de1ea9b82a08))
+
+
+### Bug Fixes
+
+* **build:** require Go 1.26.6 ([be31bf6](https://github.com/one-man-wolf-pack/awarer/commit/be31bf65e22ca1abc5e32e8ae9df2b55e1fb3308))
+* **ci:** separate Go floor from patched toolchain ([c1ebcec](https://github.com/one-man-wolf-pack/awarer/commit/c1ebcec3a4b9369f08579623b93c9a79b807eb40))
+
 ## [0.2.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.1.3...v0.2.0) (2026-08-12)
 
 
