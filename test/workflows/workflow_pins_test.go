@@ -84,11 +84,29 @@ var reviewedSecretSteps = []string{
 
 // tapTokenConsumer is the other half of the tap credential's boundary: minting it under
 // review is worth nothing if any later step may read it. The block runs from the step name
-// to the token line because that is what makes the binding real — anchored on the `env:`
-// pair alone, a step added solely to exfiltrate the token would match it just as well. The
-// GoReleaser pin and version are inside for that reason, so bumping either edits this block
-// in the same change as the workflow and the two rows that already record them.
+// to the token line because that is what makes the binding real — anchored on the token
+// line alone, a step added solely to exfiltrate it would match just as well.
+//
+// The consumer is the tap checkout, not GoReleaser: the release assets are built with this
+// repository's own token, and the cross-repository credential exists only to clone and push
+// one generated formula. `repository` is inside the block because the checkout persists the
+// token into whatever clone it makes, so redirecting that line would hand the credential to
+// a different repository's working copy while every count here stayed green. The `uses` pin
+// is inside for the reason the mint block gives.
 var tapTokenConsumer = strings.Join([]string{
+	"      - name: Check out the tap",
+	"        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+	"        with:",
+	"          repository: one-man-wolf-pack/homebrew-tap",
+	"          token: ${{ steps.tap-token.outputs.token }}",
+}, "\n")
+
+// releasePublisher binds the step that holds this repository's own write token. It is not a
+// repository secret, so the residue scan below never sees it, and TestEveryActionIsPinnedToACommit
+// proves only that some immutable commit is named — leaving `uses:` free to be redirected to
+// another pinned action that would then publish this repository's releases. The version and
+// args are inside for the reason the blocks above give.
+var releasePublisher = strings.Join([]string{
 	"      - name: Build and attach the release assets",
 	"        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3",
 	"        with:",
@@ -97,7 +115,6 @@ var tapTokenConsumer = strings.Join([]string{
 	"          args: release --clean",
 	"        env:",
 	"          GITHUB_TOKEN: ${{ github.token }}",
-	"          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}",
 }, "\n")
 
 // TestTheDeploymentCredentialIsReachableOnlyFromTheUploader keeps publication, deployment,
@@ -125,9 +142,9 @@ func TestTheDeploymentCredentialIsReachableOnlyFromTheUploader(t *testing.T) {
 	}
 
 	// The minted token is a cross-repository write credential, so it gets the same treatment
-	// as the key it came from: exactly one step may read it, and that step is GoReleaser's.
-	// Without the count a second consumer could be added beside the reviewed one; without
-	// the block the single consumer could be some other step entirely.
+	// as the key it came from: exactly one step may read it, and that step is the tap
+	// checkout. Without the count a second consumer could be added beside the reviewed one;
+	// without the block the single consumer could be some other step entirely.
 	minted := 0
 	for _, file := range workflowFiles(t) {
 		minted += strings.Count(readFile(t, file), "steps.tap-token.outputs.token")
@@ -136,7 +153,10 @@ func TestTheDeploymentCredentialIsReachableOnlyFromTheUploader(t *testing.T) {
 		t.Fatalf("the minted tap token is read %d times across the workflows, want exactly once", minted)
 	}
 	if !strings.Contains(readFile(t, releasePath), tapTokenConsumer) {
-		t.Fatalf("release.yml does not hand the tap token to the reviewed GoReleaser step:\n%s", tapTokenConsumer)
+		t.Fatalf("release.yml does not hand the tap token to the reviewed tap checkout:\n%s", tapTokenConsumer)
+	}
+	if !strings.Contains(readFile(t, releasePath), releasePublisher) {
+		t.Fatalf("release.yml does not publish the release from the reviewed step:\n%s", releasePublisher)
 	}
 
 	// Each reviewed block appears verbatim, and once each is removed nothing left in

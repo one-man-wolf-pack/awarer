@@ -93,11 +93,30 @@ jobs:
           fi
           echo "worktree clean at $RELEASE_TAG"
 
-      # This job's own token is scoped to this repository, so it cannot update the cask in
+      # GORELEASER_CURRENT_TAG: without it GoReleaser asks git which tag points at HEAD,
+      # so a second tag on the same commit could decide the version stamped in.
+      #
+      # GoReleaser holds only this repository's own token: it builds and uploads the
+      # release assets and reaches no other repository. Homebrew publication is the steps
+      # below, after the assets exist.
+      - name: Build and attach the release assets
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+
+      # This job's own token is scoped to this repository, so it cannot write
       # one-man-wolf-pack/homebrew-tap. `repositories` names that one repository and
       # `permission-contents` the one access it needs; the token expires with the job.
       # The App is the one Release Please already uses, and `client-id` matches the
       # identifier the RELEASE_PLEASE_APP_CLIENT_ID variable holds.
+      #
+      # It is minted here, after the release assets exist, so it lives only for the tap
+      # steps that follow. A failure below leaves the published assets valid.
       - name: Mint the tap installation token
         id: tap-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -108,22 +127,43 @@ jobs:
           repositories: homebrew-tap
           permission-contents: write
 
-      # GORELEASER_CURRENT_TAG: without it GoReleaser asks git which tag points at HEAD,
-      # so a second tag on the same commit could decide the version stamped in.
-      #
-      # The two tokens stay separate: GITHUB_TOKEN publishes the release in this
-      # repository, and HOMEBREW_TAP_TOKEN reaches only the tap. A tap failure fails this
-      # job without making the uploaded assets invalid.
-      - name: Build and attach the release assets
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      # The checkout keeps the token in the tap clone's own Git configuration, which is why
+      # the push below names no credential: this step is the single reader of the minted
+      # token, and the clone is the only place it reaches.
+      - name: Check out the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          distribution: goreleaser
-          version: v2.17.1
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
-          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+          repository: one-man-wolf-pack/homebrew-tap
+          token: ${{ steps.tap-token.outputs.token }}
+          path: .homebrew-tap
+
+      # The tag was proven strict and stable above and HEAD was proven to be its commit, so
+      # this substitutes an identity that is already validated rather than discovering one.
+      # It writes Formula/awarer.rb and nothing else; no other tap path, the retired cask
+      # included, is read, deleted, or reconciled here.
+      - name: Publish the formula to the tap
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          # The tap holds no Formula directory until the first formula release creates it.
+          mkdir -p .homebrew-tap/Formula
+          packaging/homebrew/render-formula.sh \
+            "$RELEASE_TAG" "$revision" \
+            packaging/homebrew/awarer.rb.tmpl \
+            .homebrew-tap/Formula/awarer.rb
+          cd .homebrew-tap
+          # A plain identity rather than a `[bot]` spelling: the numeric account id GitHub
+          # needs to link that form is not known here, and an unlinked name that claims to
+          # be the App is worse than one that does not.
+          git config user.name "awarer release workflow"
+          git config user.email "noreply@one-man-wolf-pack.com"
+          git add Formula/awarer.rb
+          if git diff --cached --quiet; then
+            echo "Formula/awarer.rb already matches $RELEASE_TAG at $revision"
+            exit 0
+          fi
+          git commit -m "awarer $RELEASE_TAG"
+          git push origin HEAD:main
 
   site:
     needs: release

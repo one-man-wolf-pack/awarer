@@ -4,10 +4,12 @@
 background service, no network calls, and no telemetry. Installing it means
 putting one file on `PATH`; removing it means deleting that file.
 
-A release reaches you two ways: a maintained Homebrew cask on macOS and Linux,
-or a release archive on every supported platform. Both deliver the same binary
-from the same GitHub Release. Building from source is documented further down
-and produces a development build rather than a release.
+A release reaches you two ways: a maintained Homebrew formula on macOS and
+Linux, or a release archive on every supported platform. Both give you the same
+release — Homebrew compiles it from the tagged source, the archive is the
+prebuilt binary — and both report the same version. Building from source
+yourself is documented further down and produces a development build rather
+than a release.
 
 ## Which version am I running
 
@@ -34,41 +36,42 @@ project, a config file, or `.awa/`, so it answers the same way anywhere.
 
 ## Install with Homebrew
 
-The cask is `awarer`; it installs `awa`. Use the fully qualified name because the
-cask is in a third-party tap and Homebrew already assigns `awa` to another
-application. Releases are not code-signed or notarized. Homebrew verifies the
-archive's checksum but installs the cask under macOS quarantine, so the complete
-macOS installation and first-run verification sequence is:
+The formula is `awarer`; it installs `awa`. Use the fully qualified name because
+the formula is in a third-party tap and Homebrew already assigns `awa` to another
+application.
 
 ```text
-brew install --cask one-man-wolf-pack/tap/awarer
-xattr -dr com.apple.quarantine "$(brew --caskroom)/awarer"
+brew install one-man-wolf-pack/tap/awarer
 awa version
 ```
 
-On Linux, omit the `xattr` line.
+Homebrew builds `awa` from the released source. It installs Go itself as a build
+dependency, so you do not install Go first, and it is a build dependency only —
+the finished `awa` is still one static binary that depends on nothing at runtime.
+The trade is time: compiling takes longer than downloading an archive. What you
+get back is that the binary is built on your machine rather than downloaded, so
+there is nothing for macOS to mark as quarantined and no `xattr` step belongs to
+this path.
 
-Upgrading is Homebrew's ordinary cask flow — refresh the tap, then upgrade by
-cask name:
+Upgrading is Homebrew's ordinary flow — refresh the tap, then upgrade by name:
 
 ```text
 brew update
-brew upgrade --cask awarer
+brew upgrade awarer
 ```
-
-On macOS, clear the new cask's quarantine attribute with the same command before
-running the upgraded binary.
 
 Removing it is the counterpart:
 
 ```text
-brew uninstall --cask awarer
+brew uninstall awarer
 ```
 
-The cask points at the checksummed GitHub Release archives described below, and
-those releases stay the authority for which versions exist and what bytes they
-contain. Homebrew covers macOS and Linux — use the archive on Windows and
-FreeBSD — and adds no code signing or notarization.
+Homebrew compiles the same immutable release tag and commit the archives below
+are built from, and the binary it produces reports that same version. It is not
+byte-identical to an archive, because it was compiled on your machine: the
+checksummed GitHub Release archives stay the authority for which versions exist
+and what prebuilt bytes they contain. Homebrew covers macOS and Linux — use the
+archive on Windows and FreeBSD.
 
 ## Install from a release archive
 
@@ -114,8 +117,8 @@ Each archive contains exactly the `awa` binary (`awa.exe` on Windows),
 awa version
 ```
 
-A copy downloaded through a browser on macOS also carries a quarantine attribute,
-and Gatekeeper refuses to run it until that attribute is cleared:
+A copy downloaded through a browser on macOS carries a quarantine attribute, and
+Gatekeeper refuses to run it until that attribute is cleared:
 
 ```text
 xattr -d com.apple.quarantine <path-to-awa>
@@ -148,7 +151,9 @@ go build -o awa ./cmd/awa
 Building needs Go 1.26 or newer — the exact floor is the `go` line in `go.mod`,
 which the toolchain enforces for you. The produced binary needs nothing. The
 module path is local, so there is no `go install <import-path>` form, and a
-source-built binary reports `0.0.0-dev`.
+source-built binary reports `0.0.0-dev`. Homebrew compiles the same source but
+stamps the release tag it selected, which is why what it installs reports a
+release version and this does not.
 
 ## Upgrade
 

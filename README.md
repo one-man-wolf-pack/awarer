@@ -25,17 +25,19 @@ not required.
 
 ## Install
 
-On macOS and Linux, install the maintained Homebrew cask. The cask is named
-`awarer`; the command it installs is `awa`. Releases are not code-signed or
-notarized, so the complete macOS sequence is:
+On macOS and Linux, install the maintained Homebrew formula. The formula is named
+`awarer`; the command it installs is `awa`.
 
 ```bash
-brew install --cask one-man-wolf-pack/tap/awarer
-xattr -dr com.apple.quarantine "$(brew --caskroom)/awarer"
+brew install one-man-wolf-pack/tap/awarer
 awa version
 ```
 
-On Linux, omit the `xattr` line.
+Homebrew builds `awa` from the released source, installing Go itself as a build
+dependency — you do not install Go, and the finished binary does not depend on it
+at runtime. Compiling takes longer than downloading an archive; in exchange the
+binary is built on your machine rather than downloaded, so there is nothing for
+macOS to mark as quarantined and no `xattr` step applies to this path.
 
 Every supported platform is covered by the release archives, which are the
 authority for what a release contains. They and their SHA-256 checksum file are
@@ -187,7 +189,9 @@ product commands: `site/sitegen`, `site/siteserve`, and the programs under
 
 - [`site/README.md`](site/README.md) — building and inspecting the static site.
 - [`.goreleaser.yaml`](.goreleaser.yaml) — the release targets, archive contents,
-  names, checksums, and generated Homebrew cask GoReleaser produces.
+  names, and checksums GoReleaser produces.
+- [`packaging/homebrew/`](packaging/homebrew/) — the source-building Homebrew
+  formula template and the renderer the release job projects it into the tap with.
 - [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) and
   [`third_party/licenses.json`](third_party/licenses.json) — reviewed third-party
   legal material and its machine-checked inventory.

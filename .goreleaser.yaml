@@ -61,26 +61,3 @@ release:
   # `replace_existing_artifacts` is deliberately absent: a partially published release
   # is inspected and cleaned before a rerun, never overwritten.
   mode: keep-existing
-
-homebrew_casks:
-  # The package is `awarer` and not `awa` because the official Homebrew index already
-  # owns the `awa` token for an unrelated application. This is the name Homebrew sees;
-  # `awa` stays the installed executable and is what the cask's `binary` stanza names.
-  - name: awarer
-    ids:
-      - awa
-    binaries:
-      - awa
-    homepage: https://awarer.one-man-wolf-pack.com/
-    # `brew audit` reads both: a description over 80 characters or ending in a full stop
-    # is a style failure, and a homepage is expected to keep its trailing slash.
-    description: Local worktree checkpoints, comparisons, and run evidence for coding agents
-    repository:
-      owner: one-man-wolf-pack
-      name: homebrew-tap
-      branch: main
-      # The release job's own token cannot write another repository, so this reads the
-      # short-lived installation token minted for homebrew-tap and nothing else. It is
-      # resolved only when GoReleaser publishes, which is why a local snapshot generates
-      # the cask with no value set for it.
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"

@@ -10,9 +10,10 @@ import (
 	"awarer/internal/output"
 )
 
-// versionFramePrefix frames the linker-injected build stamp. `.goreleaser.yaml` writes
-// the matching flag; changing this without changing that leaves every release binary
-// reporting the raw stamp in place of its version.
+// versionFramePrefix frames the linker-injected build stamp. Two files write the matching
+// flag — `.goreleaser.yaml` for the release archives and `packaging/homebrew/awarer.rb.tmpl`
+// for the source-built Homebrew formula. Changing this without changing both leaves the
+// binaries built by the one that was missed reporting the raw stamp in place of a version.
 const versionFramePrefix = "awa.version="
 
 // versionStamp is the framed build stamp, injected with one linker flag — the second

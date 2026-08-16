@@ -98,7 +98,7 @@ var landingCopy = landingContent{
 		},
 		{
 			question: "How do I install it?",
-			answer:   "The Homebrew cask, release archives, checksum verification, and what upgrading changes.",
+			answer:   "The Homebrew formula, release archives, checksum verification, and what upgrading changes.",
 			slug:     "install",
 		},
 		{
@@ -134,8 +134,9 @@ var landingCopy = landingContent{
 	},
 
 	terminalCaption: "Recorded output from a scratch project — an example, not live state.",
-	installNote: "A maintained Homebrew cask is the shortest path on macOS and Linux. Prebuilt archives are " +
-		"published for Linux, macOS, FreeBSD, and Windows; verify the checksum before you run one.",
+	installNote: "A maintained Homebrew formula is the shortest path on macOS and Linux; it builds from the " +
+		"released source and needs no Go of your own. Prebuilt archives are published for Linux, macOS, " +
+		"FreeBSD, and Windows; verify the checksum before you run one.",
 	installActions: []landingAction{
 		{label: "Installation guide", slug: "install", primary: true},
 	},
