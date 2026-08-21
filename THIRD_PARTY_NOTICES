@@ -922,7 +922,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/sqlite
-Version:   v1.56.0
+Version:   v1.57.0
 License:   BSD-3-Clause AND LicenseRef-SQLite-Public-Domain
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -955,7 +955,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
-LICENSE (SQLITE-LICENSE):
+LICENSE (LICENSE-SQLITE):
 
 SQLite Is Public Domain
 

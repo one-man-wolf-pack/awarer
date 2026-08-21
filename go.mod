@@ -10,7 +10,7 @@ require (
 	github.com/yuin/goldmark v1.8.5
 	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/sys v0.47.0
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (

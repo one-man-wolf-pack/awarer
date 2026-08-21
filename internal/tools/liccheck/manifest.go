@@ -194,7 +194,7 @@ func (m moduleID) withReplacement(replacePath, replaceVer string) (moduleID, err
 // cannot enter the production audit.
 //
 // LicenseRef-SQLite-Public-Domain is a deliberate custom SPDX LicenseRef for the
-// SQLite public-domain dedication carried by modernc.org/sqlite's SQLITE-LICENSE
+// SQLite public-domain dedication carried by modernc.org/sqlite's LICENSE-SQLITE
 // file: SQLite's own code is dedicated to the public domain, which SPDX has no
 // standard short identifier for, so the reviewed decision records it explicitly.
 var approvedSPDXAtoms = map[string]struct{}{

@@ -156,16 +156,16 @@
     },
     {
       "module_path": "modernc.org/sqlite",
-      "version": "v1.56.0",
+      "version": "v1.57.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
       "texts": [
         {"path": "LICENSE", "role": "license", "digest": "blake3:dc4c35346f1f880875f6d3cc1c9fc0dd5804a1980d2823db0197e21d95c142e6", "must_ship": true},
-        {"path": "SQLITE-LICENSE", "role": "license", "digest": "blake3:27fdeed13744267a639c3f868612f7d4f792eff3d1821e69ebb4a32a90582b9e", "must_ship": true},
+        {"path": "LICENSE-SQLITE", "role": "license", "digest": "blake3:27fdeed13744267a639c3f868612f7d4f792eff3d1821e69ebb4a32a90582b9e", "must_ship": true},
         {"path": "AUTHORS", "role": "authors", "digest": "blake3:c8c101ebaa170a0b291a95bdfacbd7e866c50836cd72095972c6f65f55741343", "must_ship": false}
       ],
       "disposition": "must_appear_in_binary_and_source",
-      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (SQLITE-LICENSE). Both are reproduced verbatim."
+      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (LICENSE-SQLITE, spelled SQLITE-LICENSE before v1.57.0). Both are reproduced verbatim. v1.57.0 also vendors sqlite-vec under MIT (LICENSE-SQLITE_VEC), but modernc.org/sqlite/vec is unreachable from awa on all six release targets, so it is not a production obligation here; re-check that reachability on the next version bump."
     }
   ]
 }
