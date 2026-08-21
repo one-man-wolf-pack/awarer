@@ -15,7 +15,7 @@ set dotenv-load := false
 minimum-version := "1.57.0"
 _ := assert(semver_matches(just_version(), ">=" + minimum-version) == "true", "just " + minimum-version + " or newer is required")
 
-staticcheck-version := "v0.7.0"
+staticcheck-version := "v0.8.0"
 golangci-version := "v2.12.2"
 # govulncheck pins only the analyzer binary; it still fetches the current
 # vulnerability database at run time, so a fixed version does not stale the data.
