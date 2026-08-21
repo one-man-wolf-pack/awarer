@@ -36,6 +36,11 @@ exercised at runtime there, so its behavior is best-effort. Treat a failure on
 any published target as a bug worth reporting, not as an unsupported
 configuration.
 
+The two macOS archives require macOS 13 Ventura or later: Go 1.27 builds them,
+and that is the oldest macOS its runtime supports. The Homebrew formula is a
+source build compiled by Homebrew's own Go dependency, so it follows the macOS
+versions Homebrew supports rather than a version this project pins.
+
 Windows and FreeBSD both carry a focused runtime suite, but they do not carry the
 same local-filesystem guarantees. FreeBSD runs the same native implementations as
 Linux and macOS: descriptor-relative no-follow operations, so an operation reaches

@@ -37,10 +37,13 @@ Homebrew builds `awa` from the released source, installing Go itself as a build
 dependency — you do not install Go, and the finished binary does not depend on it
 at runtime. Compiling takes longer than downloading an archive; in exchange the
 binary is built on your machine rather than downloaded, so there is nothing for
-macOS to mark as quarantined and no `xattr` step applies to this path.
+macOS to mark as quarantined and no `xattr` step applies to this path. Because
+Homebrew supplies that Go, this path follows the macOS versions Homebrew
+supports.
 
 Every supported platform is covered by the release archives, which are the
-authority for what a release contains. They and their SHA-256 checksum file are
+authority for what a release contains. The macOS archives are built with Go 1.27
+and require macOS 13 Ventura or later. They and their SHA-256 checksum file are
 published on the
 [GitHub Releases page](https://github.com/one-man-wolf-pack/awarer/releases).
 Download the archive for your platform, verify it against

@@ -11,6 +11,12 @@ prebuilt binary — and both report the same version. Building from source
 yourself is documented further down and produces a development build rather
 than a release.
 
+On macOS the two paths do not carry the same minimum. The release archives are
+built with Go 1.27 and need macOS 13 Ventura or later; the formula is compiled
+by the Go that Homebrew installs as a build dependency, so it follows the macOS
+versions Homebrew supports. See [awa help platform](platform.md) for the
+published target list.
+
 ## Which version am I running
 
 The installed binary knows exactly which version it is. Ask it, not a website:
@@ -154,6 +160,11 @@ module path is local, so there is no `go install <import-path>` form, and a
 source-built binary reports `0.0.0-dev`. Homebrew compiles the same source but
 stamps the release tag it selected, which is why what it installs reports a
 release version and this does not.
+
+What a source-built binary needs to run follows the Go toolchain that compiled
+it, not the release archives: normal Go selection may use an installed toolchain
+newer than the one `go.mod` names, and `GOTOOLCHAIN=local` uses the installed one
+whatever it is.
 
 ## Upgrade
 
