@@ -172,10 +172,13 @@ jobs:
   #
   # Symlink capability is a fail-loud precondition here for the same reason it is on
   # Windows. GOTOOLCHAIN=local is set before anything runs, so the toolchain the platform
-  # packages must satisfy go.mod on its own — an insufficient one fails loudly at
-  # hydration instead of being silently downloaded, which would make this job evidence
-  # about a Go the platform does not ship. Modules are hydrated while the network is
-  # available; the test command then runs with the proxy off.
+  # packages must satisfy the `go` source floor in go.mod on its own — an insufficient one
+  # fails loudly at hydration instead of being silently downloaded, which would make this
+  # job evidence about a Go the platform does not ship. It does not satisfy the newer
+  # preferred `toolchain` line, and is not meant to: trailing that line is what makes this
+  # lane proof of the floor the platform actually ships rather than a second run of the
+  # release toolchain. Modules are hydrated while the network is available; the test
+  # command then runs with the proxy off.
   freebsd-portability:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
