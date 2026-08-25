@@ -7,8 +7,12 @@ version: "2"
 
 linters:
   # Start from the curated default set (errcheck, govet, ineffassign,
-  # staticcheck, unused) and add high-signal checks.
+  # staticcheck, unused) and add high-signal checks. staticcheck is also named
+  # below rather than left to that set: this file is the only place the project
+  # runs it and `settings.staticcheck` configures it, so the check set must not
+  # depend on a default list this repository neither states nor gates.
   enable:
+    - staticcheck     # the full SA/S/ST/QF check set, configured below
     - misspell        # doc/comment typos
     - unconvert       # redundant type conversions
     - bodyclose       # unclosed HTTP/response bodies

@@ -7,19 +7,24 @@
 # implementation rather than by two command lists that agree today.
 #
 # Analysis tools run through `go run` at a pinned version, so they need no separate
-# install and analyze with a build matching the local Go toolchain — a mismatched
-# system binary that silently analyzes nothing is the failure the guards below catch.
+# install — a mismatched system binary that silently analyzes nothing is the failure
+# the guards below catch.
+#
+# Building a tool with the local toolchain is not the same as that tool understanding
+# the language version the toolchain compiles: an analyzer carries its own parser, so a
+# pin that predates a `toolchain` bump can panic on the standard library's own syntax.
+# Raising the `go`/`toolchain` lines is therefore also a reason to revisit the pins
+# below.
 
 set dotenv-load := false
 
 minimum-version := "1.57.0"
 _ := assert(semver_matches(just_version(), ">=" + minimum-version) == "true", "just " + minimum-version + " or newer is required")
 
-staticcheck-version := "v0.8.0"
-golangci-version := "v2.12.2"
+golangci-version := "v2.13.1"
 # govulncheck pins only the analyzer binary; it still fetches the current
 # vulnerability database at run time, so a fixed version does not stale the data.
-govulncheck-version := "v1.6.0"
+govulncheck-version := "v1.7.0"
 # actionlint validates the workflow YAML and the Blacksmith runner labels declared
 # in .github/actionlint.yaml.
 actionlint-version := "v1.7.12"
@@ -207,22 +212,16 @@ _licenses-full:
     @go run ./internal/tools/liccheck -mode check -scope full \
         -manifest "$LICENSE_MANIFEST" -notices "$THIRD_PARTY_NOTICES"
 
-# The pinned external analyzers, in one lane. Each guard exists because the tool
+# govulncheck and actionlint, in one lane. Each guard exists because the tool
 # exits 0 after analyzing nothing — a tool/toolchain mismatch, a moved workflow
 # directory — and a gate that passes without having analyzed the project is worse
 # than no gate.
+#
+# Static analysis of the Go sources is not here: golangci-lint owns it in `_gate`,
+# staticcheck included.
 _analyze:
     #!/usr/bin/env bash
     set -euo pipefail
-    out=$(go run honnef.co/go/tools/cmd/staticcheck@{{ staticcheck-version }} ./... 2>&1) || {
-        printf '%s\n' "$out"; exit 1
-    }
-    if [ -n "$out" ]; then printf '%s\n' "$out"; fi
-    if printf '%s' "$out" | grep -q 'matched no packages'; then
-        echo 'staticcheck: matched no packages — refusing to pass without analyzing the project'
-        exit 1
-    fi
-
     out=$(go run golang.org/x/vuln/cmd/govulncheck@{{ govulncheck-version }} ./... 2>&1) || {
         printf '%s\n' "$out"; exit 1
     }

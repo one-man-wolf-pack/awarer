@@ -90,8 +90,8 @@ jobs:
         if: github.event_name == 'push'
         run: just _licenses-full
 
-  # staticcheck, govulncheck, and actionlint reach no offline evidence reader, so this
-  # lane needs no module-graph hydration step.
+  # govulncheck and actionlint reach no offline evidence reader, so this lane needs no
+  # module-graph hydration step.
   analyze:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
