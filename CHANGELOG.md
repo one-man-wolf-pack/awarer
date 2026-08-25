@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.0...v0.3.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **build:** let golangci-lint own staticcheck outright ([9b452f8](https://github.com/one-man-wolf-pack/awarer/commit/9b452f84440514fceb9f23d16caefe99524bc444))
+* **build:** prefer the Go 1.27.0 toolchain ([789c6b9](https://github.com/one-man-wolf-pack/awarer/commit/789c6b94430dced952ad1c192d2505f180c6b20f))
+* **ci:** state what the FreeBSD lane's local toolchain must satisfy ([87acca1](https://github.com/one-man-wolf-pack/awarer/commit/87acca19bc8000673e94365978230c951805debe))
+
+
+### Dependencies
+
+* update modernc.org/sqlite to v1.57.0 ([a89606b](https://github.com/one-man-wolf-pack/awarer/commit/a89606b1a235ad94df8e116972dc3f259c5ede5b))
+* update the cpuid and modernc indirect requirements ([a5b09b3](https://github.com/one-man-wolf-pack/awarer/commit/a5b09b315109bc5f2a8970058034abf2c8f1965b))
+
+
+### Documentation
+
+* state the macOS support boundary each install path actually carries ([afd9901](https://github.com/one-man-wolf-pack/awarer/commit/afd9901408e67df9aa0d62e543b5654da31931d0))
+
 ## [0.3.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.2.0...v0.3.0) (2026-08-16)
 
 
