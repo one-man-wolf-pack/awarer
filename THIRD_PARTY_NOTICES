@@ -75,7 +75,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: github.com/klauspost/cpuid/v2
-Version:   v2.0.12
+Version:   v2.4.0
 License:   MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -446,7 +446,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================================
 Component: modernc.org/libc
-Version:   v1.74.4
+Version:   v1.75.5
 License:   BSD-3-Clause AND MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -827,7 +827,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/memory
-Version:   v1.11.0
+Version:   v1.12.1
 License:   BSD-3-Clause
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):

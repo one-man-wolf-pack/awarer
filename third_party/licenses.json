@@ -30,7 +30,7 @@
     },
     {
       "module_path": "github.com/klauspost/cpuid/v2",
-      "version": "v2.0.12",
+      "version": "v2.4.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "MIT",
       "texts": [
@@ -117,7 +117,7 @@
     },
     {
       "module_path": "modernc.org/libc",
-      "version": "v1.74.4",
+      "version": "v1.75.5",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND MIT",
       "texts": [
@@ -141,7 +141,7 @@
     },
     {
       "module_path": "modernc.org/memory",
-      "version": "v1.11.0",
+      "version": "v1.12.1",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause",
       "texts": [
