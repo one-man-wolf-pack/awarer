@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.2](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.1...v0.3.2) (2026-09-28)
+
+
+### Dependencies
+
+* move the licence manifest to the go-dependencies group bump ([4d19e8d](https://github.com/one-man-wolf-pack/awarer/commit/4d19e8d40d698790b2fc381ae43adffec026a0ec))
+* update modernc.org/sqlite to v1.60.0 and the Go toolchain to go1.27.1 ([cdec422](https://github.com/one-man-wolf-pack/awarer/commit/cdec42284b563903a9fc239c4665ceec7aab9afd))
+
+
+### Build System
+
+* **deps:** Bump the go-dependencies group with 3 updates ([89f9ecb](https://github.com/one-man-wolf-pack/awarer/commit/89f9ecb029e315e58e082e54d2ab7b1ce0509d2f))
+* **deps:** Bump vmactions/freebsd-vm in the actions group ([744bdb8](https://github.com/one-man-wolf-pack/awarer/commit/744bdb879bb42a4d6461cfa3dfda8ba89412d69f))
+* update the pinned tool and action versions ([0882e05](https://github.com/one-man-wolf-pack/awarer/commit/0882e0506197b7e701970182e27ae4ac6ff28d16))
+
 ## [0.3.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.0...v0.3.1) (2026-08-25)
 
 
