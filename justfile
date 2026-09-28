@@ -21,10 +21,10 @@ set dotenv-load := false
 minimum-version := "1.57.0"
 _ := assert(semver_matches(just_version(), ">=" + minimum-version) == "true", "just " + minimum-version + " or newer is required")
 
-golangci-version := "v2.13.1"
+golangci-version := "v2.14.0"
 # govulncheck pins only the analyzer binary; it still fetches the current
 # vulnerability database at run time, so a fixed version does not stale the data.
-govulncheck-version := "v1.7.0"
+govulncheck-version := "v1.8.0"
 # actionlint validates the workflow YAML and the Blacksmith runner labels declared
 # in .github/actionlint.yaml.
 actionlint-version := "v1.7.12"

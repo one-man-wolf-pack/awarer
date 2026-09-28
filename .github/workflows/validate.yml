@@ -32,7 +32,7 @@ jobs:
       - name: Set up just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
         with:
-          just-version: "1.57.0"
+          just-version: "1.58.0"
       # The co-author rule over every commit this event introduced, through the same
       # check the local commit-msg hook runs. The SHAs cross as environment values rather
       # than being interpolated into shell text, and each message is piped to the check
@@ -103,7 +103,7 @@ jobs:
       - name: Set up just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
         with:
-          just-version: "1.57.0"
+          just-version: "1.58.0"
       - name: just _analyze
         run: just _analyze
 
@@ -118,7 +118,7 @@ jobs:
       - name: Set up just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
         with:
-          just-version: "1.57.0"
+          just-version: "1.58.0"
       - name: just _crossbuild
         run: just _crossbuild
 
@@ -188,7 +188,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: FreeBSD 15.1 (x86_64) focused runtime suite
-        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1 # v1.5.5
+        uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1.5.8
         with:
           release: "15.1"
           arch: x86_64
@@ -240,7 +240,7 @@ jobs:
       - name: Set up just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
         with:
-          just-version: "1.57.0"
+          just-version: "1.58.0"
       - name: just stress
         run: just stress
       - name: just _smoke
