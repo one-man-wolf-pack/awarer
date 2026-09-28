@@ -384,7 +384,7 @@ express Statement of Purpose.
 
 ================================================================================
 Component: golang.org/x/sys
-Version:   v0.47.0
+Version:   v0.48.0
 License:   BSD-3-Clause
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -446,7 +446,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================================
 Component: modernc.org/libc
-Version:   v1.75.5
+Version:   v1.75.6
 License:   BSD-3-Clause AND MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -922,7 +922,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/sqlite
-Version:   v1.57.0
+Version:   v1.58.0
 License:   BSD-3-Clause AND LicenseRef-SQLite-Public-Domain
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):

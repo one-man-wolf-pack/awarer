@@ -105,7 +105,7 @@
     },
     {
       "module_path": "golang.org/x/sys",
-      "version": "v0.47.0",
+      "version": "v0.48.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause",
       "texts": [
@@ -117,7 +117,7 @@
     },
     {
       "module_path": "modernc.org/libc",
-      "version": "v1.75.5",
+      "version": "v1.75.6",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND MIT",
       "texts": [
@@ -156,7 +156,7 @@
     },
     {
       "module_path": "modernc.org/sqlite",
-      "version": "v1.57.0",
+      "version": "v1.58.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
       "texts": [
@@ -165,7 +165,7 @@
         {"path": "AUTHORS", "role": "authors", "digest": "blake3:c8c101ebaa170a0b291a95bdfacbd7e866c50836cd72095972c6f65f55741343", "must_ship": false}
       ],
       "disposition": "must_appear_in_binary_and_source",
-      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (LICENSE-SQLITE, spelled SQLITE-LICENSE before v1.57.0). Both are reproduced verbatim. v1.57.0 also vendors sqlite-vec under MIT (LICENSE-SQLITE_VEC), but modernc.org/sqlite/vec is unreachable from awa on all six release targets, so it is not a production obligation here; re-check that reachability on the next version bump."
+      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (LICENSE-SQLITE, spelled SQLITE-LICENSE before v1.57.0). Both are reproduced verbatim. v1.57.0 also vendors sqlite-vec under MIT (LICENSE-SQLITE_VEC), but modernc.org/sqlite/vec is unreachable from awa on all six release targets, so it is not a production obligation here; re-checked unreachable at v1.58.0; re-check on the next version bump."
     }
   ]
 }
