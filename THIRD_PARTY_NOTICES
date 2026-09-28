@@ -9,7 +9,7 @@ The awa project itself is licensed under Apache-2.0; see the LICENSE file.
 
 ================================================================================
 Component: github.com/dustin/go-humanize
-Version:   v1.0.1
+Version:   v1.1.0
 License:   MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -446,7 +446,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================================
 Component: modernc.org/libc
-Version:   v1.75.6
+Version:   v1.77.1
 License:   BSD-3-Clause AND MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -922,7 +922,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/sqlite
-Version:   v1.58.0
+Version:   v1.60.0
 License:   BSD-3-Clause AND LicenseRef-SQLite-Public-Domain
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
