@@ -720,7 +720,7 @@ func computeStatusNext(res status.Result, dirty bool, reusable, near int) []revi
 		next = append(next, reviewNextDoc{
 			Kind: "gc-dry-run", Reason: "store-footprint",
 			Argv:    []string{"awa", "gc", "--dry-run", "--json"},
-			Display: "awa gc --dry-run --json # store footprint and what cleanup would free",
+			Display: "awa gc --dry-run --json # store footprint and what cleanup would remove",
 		})
 	}
 	// Any degraded evidence (corrupt/incompatible/unreadable/permission) deserves the deeper,

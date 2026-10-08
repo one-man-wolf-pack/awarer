@@ -150,15 +150,10 @@ sweep needs a complete reachability set, so a lock, a checkpoint or run record i
 cannot read, or an unanchored `--committed` cutoff makes it report only the blobs it
 proved *referenced* and classify no unreachable ones at all — a false
 "unreachable" would be data loss. The store's total footprint is still measured
-from the complete listing, but the would-free figure beside it is missing whatever
-that skipped stage would have found. Treat a blocked plan as "here is the
+from the complete listing, but the planned-bytes figure beside it is missing
+whatever that skipped stage would have found. Treat a blocked plan as "here is the
 obstruction", not as an estimate; clear the blocker and re-run
 `awa gc --dry-run` for an authoritative reclaim set.
-
-Freed/would-free bytes are the accounted bytes, summed from readable entries. An
-entry whose metadata does not decode contributes 0, because its size is never
-read — the reported figure is known/accounted bytes, not a guarantee of the exact
-physical space freed.
 
 `gc` never removes a record it cannot read. A record in a schema this awa does
 not speak is intact evidence with an unknown reference model: nothing can prove
@@ -169,6 +164,27 @@ is a deliberate act: drop a single stored run with `awa run rm <id>`, or reset t
 store by deleting the evidence directories under `.awa/` and running `awa init`
 (see [awa help install](install.md)). Delete those directories rather than `.awa/`
 itself, which would take your private `.awa/config.toml` with it.
+
+## What the byte figures count
+
+`planned bytes` (dry run) and `removed bytes` (real run) are logical file data:
+the lengths of the regular files inside each selected checkpoint, run, and
+recovery observation directory and each stale temp artifact — metadata,
+manifests, and captured output alike — plus every swept blob once, however many
+records referenced it. They are not disk space: directory sizes, symlinks and
+their targets, filesystem blocks and overhead, snapshots, and the run cache's key
+pointers are not counted, so the figure need not match `du` or the free space you
+gain. Sizes are read from file metadata only, for the selected candidates only.
+
+A plain figure is exact. `at least` means part of it could not be measured — a
+file or directory gc could not inspect, or a deletion that failed — and a
+`warning:` line says how many items are uncounted. A failed or partially
+completed deletion is credited 0 even if some of its files are already gone, so
+a later run does not recover that figure. A dry run, and a run that removed
+nothing because it was blocked or a writer appeared, report no removed bytes.
+Retained, filtered, and blocked records are not measured: their figures in
+`--json` are `unmeasured`, never a known zero, and they never make the selected
+total a lower bound. See [awa help json](json.md) for the machine fields.
 
 ## See also
 

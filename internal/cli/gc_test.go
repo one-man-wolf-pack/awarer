@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -92,6 +93,23 @@ func TestGcDryRunJSON(t *testing.T) {
 	if data.Candidates == nil {
 		t.Errorf("candidates must be an array, not null")
 	}
+	// The expired checkpoint is measured from its record directory, so the selected
+	// total is a complete, non-zero logical byte count with machine-legible facts.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, env.Data); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"bytes_planned_complete":true`, `"bytes_deleted_complete":true`, `"bytes_measurement":"exact"`} {
+		if !strings.Contains(compact.String(), key) {
+			t.Errorf("gc JSON lacks %s:\n%s", key, env.Data)
+		}
+	}
+	if data.Summary.BytesPlanned == 0 || data.Summary.BytesDeleted != 0 {
+		t.Errorf("summary bytes = planned %d deleted %d, want measured planned bytes and no deleted bytes", data.Summary.BytesPlanned, data.Summary.BytesDeleted)
+	}
+	if stderr != "" {
+		t.Errorf("a complete dry run writes nothing to stderr, got %q", stderr)
+	}
 
 	// Dry-run must not have mutated anything: a second identical dry-run sees the same
 	// planned count.
@@ -149,6 +167,12 @@ func TestGcPartialFailureExitsNonZero(t *testing.T) {
 	if data.Failures[0].Kind != "temp" || data.Failures[0].Error == "" {
 		t.Fatalf("failure record incomplete: %+v", data.Failures[0])
 	}
+	// The plan measured the artifact completely; the failed deletion credits nothing
+	// and only the executed total becomes a lower bound.
+	if !data.Summary.BytesPlannedComplete || data.Summary.BytesPlanned != 1 ||
+		data.Summary.BytesDeleted != 0 || data.Summary.BytesDeletedComplete {
+		t.Fatalf("byte accounting after a failed deletion = %+v", data.Summary)
+	}
 }
 
 func TestGcRemovesOldCheckpointAndDoctorClean(t *testing.T) {
@@ -160,8 +184,12 @@ func TestGcRemovesOldCheckpointAndDoctorClean(t *testing.T) {
 	if code != int(ExitSuccess) {
 		t.Fatalf("gc exit = %d, stderr = %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "removed") || !strings.Contains(stdout, "freed:") {
-		t.Fatalf("expected a removal summary, got %q", stdout)
+	if !strings.Contains(stdout, "removed") || !strings.Contains(stdout, "removed bytes: ") ||
+		!strings.Contains(stdout, "of logical file data") {
+		t.Fatalf("expected a removal summary naming logical bytes, got %q", stdout)
+	}
+	if strings.Contains(stdout, "freed") || strings.Contains(stdout+stderr, "lower bound") {
+		t.Fatalf("a fully measured removal claims neither freed space nor a lower bound: stdout=%q stderr=%q", stdout, stderr)
 	}
 
 	// doctor must report a healthy project after gc.

@@ -627,6 +627,23 @@ func (r *Repo) Delete(id restore.OperationID) error {
 	return nil
 }
 
+// MeasureRecord sums the logical lengths of every regular file inside the recovery
+// observation directory Delete removes, enumerating it rather than naming its files.
+// It reads metadata only (see fsx.SizeTreeAt). A missing store or record is known
+// absence and measures zero; an error means nothing was established, or the walk was
+// cancelled.
+func (r *Repo) MeasureRecord(ctx context.Context, id restore.OperationID) (fsx.TreeSize, error) {
+	dir, err := fsx.OpenDirNoFollow(r.root, r.restoresRel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fsx.TreeSize{Complete: true}, nil
+		}
+		return fsx.TreeSize{}, err
+	}
+	defer func() { _ = dir.Close() }()
+	return fsx.SizeTreeAt(ctx, dir, id.String())
+}
+
 // readFile reads one record file through the no-follow boundary and confirms it
 // is a regular file, so neither a symlinked record directory nor a symlink at the
 // file itself can redirect a read. The read is capped: a record directory is local

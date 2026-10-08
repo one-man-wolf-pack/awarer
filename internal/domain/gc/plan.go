@@ -1,15 +1,27 @@
 package gc
 
-// PlanSummary counts a plan's candidates by disposition and totals the bytes GC
-// would reclaim. It is derived from the candidates, never assembled by hand, so the
-// numbers a report shows cannot drift from the candidates it lists.
+// PlanSummary counts a plan's candidates by disposition and totals the logical bytes
+// of the selected deletion boundaries. It is derived from the candidates, never
+// assembled by hand, so the numbers a report shows cannot drift from the candidates
+// it lists.
+//
+// BytesPlanned sums the established bytes of the delete candidates only.
+// PlannedNotFullyMeasured counts the delete candidates whose measurement is partial
+// or unmeasured; while it is non-zero BytesPlanned is a lower bound. Retained,
+// blocked, and skipped candidates are outside the selected total, so their
+// (typically unmeasured) sizes never make it incomplete.
 type PlanSummary struct {
-	PlannedDelete int
-	Retained      int
-	Blocked       int
-	Skipped       int
-	BytesPlanned  int64
+	PlannedDelete           int
+	Retained                int
+	Blocked                 int
+	Skipped                 int
+	BytesPlanned            int64
+	PlannedNotFullyMeasured int
 }
+
+// BytesPlannedComplete reports whether BytesPlanned is an exact total of the
+// selected deletion boundaries rather than a lower bound.
+func (s PlanSummary) BytesPlannedComplete() bool { return s.PlannedNotFullyMeasured == 0 }
 
 // BlobFootprint is the total on-disk blob-store footprint measured during planning:
 // how many content blobs exist and their combined size. It is the exact accounting
@@ -112,7 +124,10 @@ func (p GCPlan) Summary() PlanSummary {
 		switch c.action {
 		case ActionDelete:
 			s.PlannedDelete++
-			s.BytesPlanned += c.bytes
+			s.BytesPlanned += c.size.bytes
+			if !c.size.Exact() {
+				s.PlannedNotFullyMeasured++
+			}
 		case ActionRetain:
 			s.Retained++
 		case ActionBlocked:

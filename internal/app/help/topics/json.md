@@ -76,7 +76,13 @@ always UTC RFC3339 regardless of the configured display mode.
 A payload never quietly shrinks. Where a list is capped, the document carries a
 completeness fact next to it — `complete`, `shown`, `limit`, and a `reason` —
 for example `candidates_bounded` on `awa gc --json`, while the summary still
-reports full totals. Similar fields elsewhere state whether a set of paths is
+reports full totals. A capped list never changes what the summary says about
+measurement either: `bytes_planned_complete` and `bytes_deleted_complete` state
+whether those byte totals are exact or lower bounds, independently of
+`candidates_bounded` and `store_footprint.complete`. A failed deletion is credited
+0 bytes, so it makes `bytes_deleted_complete` false; it is still reported in
+`failures` on its own. Each candidate's `bytes_measurement` is `exact`, `partial`,
+or `unmeasured`. Similar fields elsewhere state whether a set of paths is
 complete, truncated, or unavailable.
 
 Degraded evidence is reported as a complete assessment rather than as an error:

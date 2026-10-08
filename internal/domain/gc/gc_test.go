@@ -78,17 +78,17 @@ func TestReasonActionConsistency(t *testing.T) {
 
 func TestNewCandidateRejectsReasonKindMismatch(t *testing.T) {
 	// A lock reason cannot describe a blob, a checkpoint reason cannot describe a run.
-	if _, err := NewCandidate(KindBlob, ReasonLockActive, "b1", ".awa/store/blob/b1", "x", 0); err == nil {
+	if _, err := NewCandidate(KindBlob, ReasonLockActive, "b1", ".awa/store/blob/b1", "x", UnmeasuredBytes()); err == nil {
 		t.Error("blob with a lock reason should be rejected")
 	}
-	if _, err := NewCandidate(KindRun, ReasonCheckpointExpired, "r1", ".awa/runs/r1", "x", 0); err == nil {
+	if _, err := NewCandidate(KindRun, ReasonCheckpointExpired, "r1", ".awa/runs/r1", "x", UnmeasuredBytes()); err == nil {
 		t.Error("run with a checkpoint reason should be rejected")
 	}
 	// A cross-kind reason is accepted for each of its declared kinds.
-	if _, err := NewCandidate(KindCheckpoint, ReasonGitUnavailable, "s1", ".awa/checkpoints/s1", "x", 0); err != nil {
+	if _, err := NewCandidate(KindCheckpoint, ReasonGitUnavailable, "s1", ".awa/checkpoints/s1", "x", UnmeasuredBytes()); err != nil {
 		t.Errorf("git-unavailable should describe a checkpoint: %v", err)
 	}
-	if _, err := NewCandidate(KindRun, ReasonGitUnavailable, "r1", ".awa/runs/r1", "x", 0); err != nil {
+	if _, err := NewCandidate(KindRun, ReasonGitUnavailable, "r1", ".awa/runs/r1", "x", UnmeasuredBytes()); err != nil {
 		t.Errorf("git-unavailable should describe a run: %v", err)
 	}
 }
@@ -120,7 +120,7 @@ func TestFilterAllows(t *testing.T) {
 
 func TestNewCandidateValidation(t *testing.T) {
 	// Valid delete candidate.
-	c, err := NewCandidate(KindCheckpoint, ReasonCheckpointExpired, "018f", ".awa/checkpoints/018f", "expired", 4096)
+	c, err := NewCandidate(KindCheckpoint, ReasonCheckpointExpired, "018f", ".awa/checkpoints/018f", "expired", ExactBytes(4096))
 	if err != nil {
 		t.Fatalf("valid candidate rejected: %v", err)
 	}
@@ -129,33 +129,33 @@ func TestNewCandidateValidation(t *testing.T) {
 	}
 
 	// Missing id for a non-temp kind.
-	if _, err := NewCandidate(KindBlob, ReasonBlobUnreachable, "", ".awa/store/blob/ab", "x", 1); err == nil {
+	if _, err := NewCandidate(KindBlob, ReasonBlobUnreachable, "", ".awa/store/blob/ab", "x", ExactBytes(1)); err == nil {
 		t.Error("blob without id should be rejected")
 	}
 	// Temp needs no id.
-	if _, err := NewCandidate(KindTemp, ReasonTempStale, "", ".awa/store/tmp/blob-x", "stale", 0); err != nil {
+	if _, err := NewCandidate(KindTemp, ReasonTempStale, "", ".awa/store/tmp/blob-x", "stale", UnmeasuredBytes()); err != nil {
 		t.Errorf("temp without id should be accepted: %v", err)
 	}
 	// Empty path / message rejected.
-	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", "", "x", 0); err == nil {
+	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", "", "x", UnmeasuredBytes()); err == nil {
 		t.Error("empty path should be rejected")
 	}
-	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", ".awa/runs/r1", "", 0); err == nil {
+	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", ".awa/runs/r1", "", UnmeasuredBytes()); err == nil {
 		t.Error("empty message should be rejected")
 	}
 	// Negative bytes rejected.
-	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", ".awa/runs/r1", "x", -1); err == nil {
+	if _, err := NewCandidate(KindRun, ReasonRunExpired, "r1", ".awa/runs/r1", "x", PartialBytes(-1)); err == nil {
 		t.Error("negative bytes should be rejected")
 	}
 	// Unknown reason rejected.
-	if _, err := NewCandidate(KindRun, RetentionReason("nope"), "r1", ".awa/runs/r1", "x", 0); err == nil {
+	if _, err := NewCandidate(KindRun, RetentionReason("nope"), "r1", ".awa/runs/r1", "x", UnmeasuredBytes()); err == nil {
 		t.Error("unknown reason should be rejected")
 	}
 }
 
 func TestPlanSummaryDerivation(t *testing.T) {
 	mk := func(k CandidateKind, r RetentionReason, id string, bytes int64) GCCandidate {
-		c, err := NewCandidate(k, r, id, ".awa/"+id, "msg", bytes)
+		c, err := NewCandidate(k, r, id, ".awa/"+id, "msg", ExactBytes(bytes))
 		if err != nil {
 			t.Fatalf("NewCandidate: %v", err)
 		}
@@ -191,7 +191,7 @@ func TestPlanSummaryDerivation(t *testing.T) {
 }
 
 func TestPlanStateActionBlocked(t *testing.T) {
-	c, err := NewCandidate(KindCheckpoint, ReasonCheckpointCorrupt, "s1", ".awa/checkpoints/s1", "corrupt", 0)
+	c, err := NewCandidate(KindCheckpoint, ReasonCheckpointCorrupt, "s1", ".awa/checkpoints/s1", "corrupt", UnmeasuredBytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,12 +253,12 @@ func TestGCRequestKeepLast(t *testing.T) {
 }
 
 func TestGCResultExecSummary(t *testing.T) {
-	c, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b1", ".awa/store/blob/b1", "x", 200)
-	c2, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b2", ".awa/store/blob/b2", "x", 50)
+	c, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b1", ".awa/store/blob/b1", "x", ExactBytes(200))
+	c2, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b2", ".awa/store/blob/b2", "x", ExactBytes(50))
 	plan := NewPlan(false, []GCCandidate{c, c2}, nil)
 	res := NewResult(plan, []DeletionResult{
-		NewDeletionResult(c, 200, nil),
-		NewDeletionResult(c2, 0, errors.New("boom")),
+		NewDeletionResult(c, nil),
+		NewDeletionResult(c2, errors.New("boom")),
 	}, nil)
 	s := res.ExecSummary()
 	if s.Deleted != 1 || s.Failed != 1 || s.BytesDeleted != 200 {
@@ -267,7 +267,7 @@ func TestGCResultExecSummary(t *testing.T) {
 }
 
 func TestNewLockSuppressedResult(t *testing.T) {
-	del, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b1", ".awa/store/blob/b1", "x", 200)
+	del, _ := NewCandidate(KindBlob, ReasonBlobUnreachable, "b1", ".awa/store/blob/b1", "x", ExactBytes(200))
 
 	// A real, unblocked plan yields a suppressed result with no deletions.
 	res := NewLockSuppressedResult(NewPlan(false, []GCCandidate{del}, nil), []string{"writer appeared; retaining state"})
@@ -283,7 +283,7 @@ func TestNewLockSuppressedResult(t *testing.T) {
 	assertPanics(t, "dry-run", func() {
 		NewLockSuppressedResult(NewPlan(true, []GCCandidate{del}, nil), nil)
 	})
-	lock, _ := NewCandidate(KindLock, ReasonLockActive, "", ".awa/locks/x.lock", "active", 0)
+	lock, _ := NewCandidate(KindLock, ReasonLockActive, "", ".awa/locks/x.lock", "active", UnmeasuredBytes())
 	assertPanics(t, "blocked", func() {
 		NewLockSuppressedResult(NewPlan(false, []GCCandidate{lock}, nil), nil)
 	})

@@ -1,31 +1,57 @@
 package gc
 
 // DeletionResult records the outcome of executing one delete candidate: the
-// candidate acted on, the bytes actually reclaimed, and any error. A failed
-// deletion keeps Err non-nil and is folded into the summary as a failure, so a
-// partial execution stays visible rather than being silently dropped.
+// candidate acted on and any error. A failed deletion keeps Err non-nil and is
+// folded into the summary as a failure, so a partial execution stays visible rather
+// than being silently dropped.
+//
+// The bytes it credits are derived, never supplied: a successful deletion credits
+// the candidate's measure as established when it was planned (a partial measure
+// stays partial), and a failed one credits nothing — even if the repository removed
+// some files before failing — because no per-file record says how much went. A
+// successful deletion of an already-absent record therefore credits only what its
+// measurement established, never a size it did not observe.
 type DeletionResult struct {
 	candidate GCCandidate
-	bytes     int64
 	err       error
 }
 
-// NewDeletionResult builds a deletion outcome. On failure pass err non-nil and
-// bytes 0; on success pass the reclaimed bytes and a nil err.
-func NewDeletionResult(candidate GCCandidate, bytes int64, err error) DeletionResult {
-	return DeletionResult{candidate: candidate, bytes: bytes, err: err}
+// NewDeletionResult builds a deletion outcome; err is nil on success.
+func NewDeletionResult(candidate GCCandidate, err error) DeletionResult {
+	return DeletionResult{candidate: candidate, err: err}
+}
+
+// Credited returns the bytes this deletion is credited with: the candidate's
+// measure on success, an unmeasured zero on failure.
+func (d DeletionResult) Credited() ByteMeasure {
+	if d.err != nil {
+		return UnmeasuredBytes()
+	}
+	return d.candidate.size
 }
 
 func (d DeletionResult) Candidate() GCCandidate { return d.candidate }
 func (d DeletionResult) Err() error             { return d.err }
 
 // ExecSummary counts what execution actually did, derived from the deletion
-// records and the plan. Deleted and Failed partition the attempted deletions;
-// BytesDeleted totals the bytes the successful ones reclaimed.
+// records alone — never from the plan's byte completeness. Deleted and Failed
+// partition the attempted deletions; BytesDeleted totals the logical bytes credited
+// to the successful ones. DeletedNotFullyMeasured counts the successes whose
+// measurement was partial or unmeasured. Every failure is credited nothing, so while
+// either Failed or DeletedNotFullyMeasured is non-zero BytesDeleted is a lower bound.
+// Candidates never attempted (a dry run, a blocked or suppressed run, an interrupted
+// phase) are not part of the execution total.
 type ExecSummary struct {
-	Deleted      int
-	Failed       int
-	BytesDeleted int64
+	Deleted                 int
+	Failed                  int
+	BytesDeleted            int64
+	DeletedNotFullyMeasured int
+}
+
+// BytesDeletedComplete reports whether BytesDeleted is an exact total of the
+// attempted deletions rather than a lower bound.
+func (s ExecSummary) BytesDeletedComplete() bool {
+	return s.Failed == 0 && s.DeletedNotFullyMeasured == 0
 }
 
 // GCResult aggregates a GC run: the plan it was built from and the deletion records
@@ -104,8 +130,12 @@ func (r GCResult) ExecSummary() ExecSummary {
 			s.Failed++
 			continue
 		}
+		credit := d.Credited()
 		s.Deleted++
-		s.BytesDeleted += d.bytes
+		s.BytesDeleted += credit.bytes
+		if !credit.Exact() {
+			s.DeletedNotFullyMeasured++
+		}
 	}
 	return s
 }

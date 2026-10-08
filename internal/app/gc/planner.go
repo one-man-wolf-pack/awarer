@@ -117,8 +117,8 @@ func (p *planner) run() (gcdom.GCPlan, error) {
 // add appends a validated candidate or panics: every argument is planner-controlled,
 // so a construction failure is a programmer error that must surface loudly rather
 // than silently drop a decision from the plan.
-func (p *planner) add(kind gcdom.CandidateKind, reason gcdom.RetentionReason, id, path, message string, bytes int64) {
-	c, err := gcdom.NewCandidate(kind, reason, id, path, message, bytes)
+func (p *planner) add(kind gcdom.CandidateKind, reason gcdom.RetentionReason, id, path, message string, size gcdom.ByteMeasure) {
+	c, err := gcdom.NewCandidate(kind, reason, id, path, message, size)
 	if err != nil {
 		panic("gc: invalid candidate construction: " + err.Error())
 	}
@@ -139,7 +139,7 @@ func (p *planner) inspectLocks() error {
 		// state. An absent directory is not an error (ScanDir maps it to no entries).
 		p.locksBlock = true
 		p.add(gcdom.KindLock, gcdom.ReasonLockUnknown, "", p.layout.LocksDir(),
-			"locks directory is unreadable, blocking destructive gc: "+err.Error(), 0)
+			"locks directory is unreadable, blocking destructive gc: "+err.Error(), gcdom.UnmeasuredBytes())
 		return nil
 	}
 	for _, e := range entries {
@@ -159,11 +159,11 @@ func (p *planner) inspectLocks() error {
 		case lockfile.EntryActive:
 			p.locksBlock = true
 			p.add(gcdom.KindLock, gcdom.ReasonLockActive, "", e.Path,
-				"active lock ("+e.Record.Operation+" on "+e.Record.Hostname+") blocks destructive gc", 0)
+				"active lock ("+e.Record.Operation+" on "+e.Record.Hostname+") blocks destructive gc", gcdom.UnmeasuredBytes())
 		case lockfile.EntryUnknown:
 			p.locksBlock = true
 			p.add(gcdom.KindLock, gcdom.ReasonLockUnknown, "", e.Path,
-				"unrecognized lock blocks destructive gc: "+e.Detail, 0)
+				"unrecognized lock blocks destructive gc: "+e.Detail, gcdom.UnmeasuredBytes())
 		}
 	}
 	return nil
@@ -221,7 +221,7 @@ func (p *planner) planCheckpoints(commitCutoff time.Time, committedOK bool) (map
 			if errors.Is(err, checkpoint.ErrIncompatibleFormat) {
 				reason, msg = gcdom.ReasonCheckpointIncompatible, "checkpoint header uses an incompatible schema: "
 			}
-			p.add(gcdom.KindCheckpoint, reason, id.String(), checkpointPath, msg+err.Error(), 0)
+			p.add(gcdom.KindCheckpoint, reason, id.String(), checkpointPath, msg+err.Error(), gcdom.UnmeasuredBytes())
 			retained[id.String()] = true
 			records = append(records, checkpointRecord{id: id, corrupt: true})
 			continue
@@ -259,17 +259,21 @@ func (p *planner) planCheckpoints(commitCutoff time.Time, committedOK bool) (map
 		reason, del := p.checkpointDecision(rec, latestID, withinKeep, commitCutoff, committedOK)
 		if !del {
 			retained[rec.id.String()] = true
-			p.add(gcdom.KindCheckpoint, reason, rec.id.String(), checkpointPath, checkpointRetainMsg(reason), 0)
+			p.add(gcdom.KindCheckpoint, reason, rec.id.String(), checkpointPath, checkpointRetainMsg(reason), gcdom.UnmeasuredBytes())
 			continue
 		}
 		if !p.req.Filter().Allows(gcdom.KindCheckpoint) {
 			retained[rec.id.String()] = true
 			p.add(gcdom.KindCheckpoint, gcdom.ReasonSubsystemFiltered, rec.id.String(), checkpointPath,
-				"checkpoint eligible for deletion but excluded by subsystem filter", 0)
+				"checkpoint eligible for deletion but excluded by subsystem filter", gcdom.UnmeasuredBytes())
 			continue
 		}
+		size, err := p.measured(p.repos.checkpoints.MeasureRecord(p.ctx, rec.id))
+		if err != nil {
+			return nil, err
+		}
 		p.add(gcdom.KindCheckpoint, gcdom.ReasonCheckpointExpired, rec.id.String(), checkpointPath,
-			"checkpoint outside retention policy", 0)
+			"checkpoint outside retention policy", size)
 	}
 	return retained, nil
 }
@@ -336,7 +340,7 @@ func (p *planner) planRuns(commitCutoff time.Time, committedOK bool) error {
 				// that will not parse.
 				p.runReadFailed = true
 				p.add(gcdom.KindRun, gcdom.ReasonRunIncompatible, id.String(), runPath,
-					"run entry uses an incompatible metadata schema: "+err.Error(), 0)
+					"run entry uses an incompatible metadata schema: "+err.Error(), gcdom.UnmeasuredBytes())
 				continue
 			default:
 				// Corrupt or unreadable: retain and block the sweep. GC never deletes a
@@ -346,23 +350,29 @@ func (p *planner) planRuns(commitCutoff time.Time, committedOK bool) error {
 				// blob sweep is suppressed conservatively rather than risk a false unreachable.
 				p.runReadFailed = true
 				p.add(gcdom.KindRun, gcdom.ReasonRunCorrupt, id.String(), runPath,
-					"run entry is corrupt or unreadable: "+err.Error(), 0)
+					"run entry is corrupt or unreadable: "+err.Error(), gcdom.UnmeasuredBytes())
 				continue
 			}
 		}
-		bytes := runBytes(entry)
 		reason, del := p.runDecision(entry, cutoff, commitCutoff, committedOK)
 		if !del {
-			p.add(gcdom.KindRun, reason, id.String(), runPath, runRetainMsg(reason), bytes)
+			p.add(gcdom.KindRun, reason, id.String(), runPath, runRetainMsg(reason), gcdom.UnmeasuredBytes())
 			continue
 		}
 		if !p.req.Filter().Allows(gcdom.KindRun) {
 			p.add(gcdom.KindRun, gcdom.ReasonSubsystemFiltered, id.String(), runPath,
-				"run eligible for deletion but excluded by subsystem filter", bytes)
+				"run eligible for deletion but excluded by subsystem filter", gcdom.UnmeasuredBytes())
 			continue
 		}
+		// The entry's declared output lengths are not its size: the directory also holds
+		// metadata and observation manifests, and a declared payload may be absent. Only
+		// the selected entry is measured, by enumerating what its deletion removes.
+		size, err := p.measured(p.repos.runs.MeasureEntry(p.ctx, id))
+		if err != nil {
+			return err
+		}
 		p.add(gcdom.KindRun, gcdom.ReasonRunExpired, id.String(), runPath,
-			"run older than the retention window", bytes)
+			"run older than the retention window", size)
 	}
 	return nil
 }
@@ -414,7 +424,7 @@ func (p *planner) planBlobs(retainedSnaps, retainedRestores map[string]bool) err
 			p.checkpointReadFailed = true
 			checkpointPath := filepath.Join(p.layout.CheckpointsDir(), idStr)
 			p.add(gcdom.KindCheckpoint, gcdom.ReasonCheckpointCorrupt, idStr, checkpointPath,
-				"checkpoint manifest is unreadable, blocking blob sweep: "+err.Error(), 0)
+				"checkpoint manifest is unreadable, blocking blob sweep: "+err.Error(), gcdom.UnmeasuredBytes())
 		}
 	}
 
@@ -436,7 +446,7 @@ func (p *planner) planBlobs(retainedSnaps, retainedRestores map[string]bool) err
 		if err := p.markRestoreBlobs(id, marked); err != nil {
 			p.restoreReadFailed = true
 			p.add(gcdom.KindRestore, gcdom.ReasonRestoreCorrupt, idStr, p.restorePath(idStr),
-				"recovery observation manifest is unreadable, blocking blob sweep: "+err.Error(), 0)
+				"recovery observation manifest is unreadable, blocking blob sweep: "+err.Error(), gcdom.UnmeasuredBytes())
 		}
 	}
 
@@ -463,7 +473,7 @@ func (p *planner) planBlobs(retainedSnaps, retainedRestores map[string]bool) err
 		for _, in := range infos {
 			h := in.Ref.Hash()
 			if marked[h.String()] {
-				p.add(gcdom.KindBlob, gcdom.ReasonBlobReferenced, h.String(), p.blobPath(h), "referenced by retained evidence", in.Bytes)
+				p.add(gcdom.KindBlob, gcdom.ReasonBlobReferenced, h.String(), p.blobPath(h), "referenced by retained evidence", gcdom.ExactBytes(in.Bytes))
 			}
 		}
 		return nil
@@ -473,16 +483,16 @@ func (p *planner) planBlobs(retainedSnaps, retainedRestores map[string]bool) err
 		h := in.Ref.Hash()
 		path := p.blobPath(h)
 		if marked[h.String()] {
-			p.add(gcdom.KindBlob, gcdom.ReasonBlobReferenced, h.String(), path, "referenced by retained evidence", in.Bytes)
+			p.add(gcdom.KindBlob, gcdom.ReasonBlobReferenced, h.String(), path, "referenced by retained evidence", gcdom.ExactBytes(in.Bytes))
 			continue
 		}
 		if !p.req.Filter().Allows(gcdom.KindBlob) {
 			p.add(gcdom.KindBlob, gcdom.ReasonSubsystemFiltered, h.String(), path,
-				"unreachable blob excluded by subsystem filter", in.Bytes)
+				"unreachable blob excluded by subsystem filter", gcdom.ExactBytes(in.Bytes))
 			continue
 		}
 		p.add(gcdom.KindBlob, gcdom.ReasonBlobUnreachable, h.String(), path,
-			"not referenced by any retained checkpoint or recovery observation", in.Bytes)
+			"not referenced by any retained checkpoint or recovery observation", gcdom.ExactBytes(in.Bytes))
 	}
 	return nil
 }
@@ -549,7 +559,7 @@ func (p *planner) planRestores() (map[string]bool, error) {
 		// unknown, so nothing may be swept on its account.
 		p.restoreReadFailed = true
 		p.add(gcdom.KindRestore, gcdom.ReasonRestoreCorrupt, "", p.layout.RestoresDir(),
-			"restore recovery store is unreadable, blocking destructive gc: "+err.Error(), 0)
+			"restore recovery store is unreadable, blocking destructive gc: "+err.Error(), gcdom.UnmeasuredBytes())
 		return retained, nil
 	}
 
@@ -568,13 +578,13 @@ func (p *planner) planRestores() (map[string]bool, error) {
 		if !f.Readable() {
 			p.restoreReadFailed = true
 			p.add(gcdom.KindRestore, gcdom.ReasonRestoreCorrupt, idStr, path,
-				"recovery observation is corrupt or unreadable: "+f.Err.Error(), 0)
+				"recovery observation is corrupt or unreadable: "+f.Err.Error(), gcdom.UnmeasuredBytes())
 			continue
 		}
 		if !f.Record.CreatedAt().Before(cutoff) {
 			retained[idStr] = true
 			p.add(gcdom.KindRestore, gcdom.ReasonRestoreTooRecent, idStr, path,
-				"recovery observation is within the restore retention window", 0)
+				"recovery observation is within the restore retention window", gcdom.UnmeasuredBytes())
 			continue
 		}
 		// Eligible by age. A *-only filter restricts deletion to its own subsystem, so
@@ -583,7 +593,7 @@ func (p *planner) planRestores() (map[string]bool, error) {
 		if !p.req.Filter().Allows(gcdom.KindRestore) {
 			retained[idStr] = true
 			p.add(gcdom.KindRestore, gcdom.ReasonSubsystemFiltered, idStr, path,
-				"recovery observation eligible for deletion but excluded by subsystem filter", 0)
+				"recovery observation eligible for deletion but excluded by subsystem filter", gcdom.UnmeasuredBytes())
 			continue
 		}
 		if p.committedUnavailable {
@@ -594,11 +604,15 @@ func (p *planner) planRestores() (map[string]bool, error) {
 			// too-recent would publish a retention fact that is not true.
 			retained[idStr] = true
 			p.add(gcdom.KindRestore, gcdom.ReasonGitUnavailable, idStr, path,
-				"recovery observation retained: --committed could not confirm git, so this invocation plans no deletions", 0)
+				"recovery observation retained: --committed could not confirm git, so this invocation plans no deletions", gcdom.UnmeasuredBytes())
 			continue
 		}
+		size, err := p.measured(p.repos.restores.MeasureRecord(p.ctx, f.ID))
+		if err != nil {
+			return nil, err
+		}
 		p.add(gcdom.KindRestore, gcdom.ReasonRestoreExpired, idStr, path,
-			"recovery observation older than the restore retention window", 0)
+			"recovery observation older than the restore retention window", size)
 	}
 	return retained, nil
 }
@@ -671,6 +685,24 @@ func (p *planner) planOneTempDir(dir string) error {
 	}
 	// Directory order is unspecified; sort by name so temp candidates are deterministic.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	// A stale artifact's whole subtree is what deleteTemp removes, so it is measured
+	// through the same no-follow parent descriptor, opened once and only if needed.
+	var parent *os.File
+	defer func() {
+		if parent != nil {
+			_ = parent.Close()
+		}
+	}()
+	measureStale := func(name string) (gcdom.ByteMeasure, error) {
+		if parent == nil {
+			d, err := fsx.OpenDirNoFollow(p.layout.Root(), relDir)
+			if err != nil {
+				return p.measured(fsx.TreeSize{}, err)
+			}
+			parent = d
+		}
+		return p.measured(fsx.SizeTreeAt(p.ctx, parent, name))
+	}
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
 		// Only real files and directories are sweepable; a symlink in a temp dir is not
@@ -682,9 +714,11 @@ func (p *planner) planOneTempDir(dir string) error {
 		if err != nil {
 			continue // cannot judge age; treat as fresh and leave it
 		}
-		var size int64
+		// A retained artifact is not measured beyond the listing's own stat: a regular
+		// file's length is known, a directory's contents are not walked.
+		size := gcdom.UnmeasuredBytes()
 		if info.Mode().IsRegular() {
-			size = info.Size()
+			size = gcdom.ExactBytes(info.Size())
 		}
 		stale := p.now.Sub(info.ModTime()) > p.svc.staleAfter
 		switch {
@@ -701,6 +735,10 @@ func (p *planner) planOneTempDir(dir string) error {
 			p.add(gcdom.KindTemp, gcdom.ReasonSubsystemFiltered, "", path,
 				"stale temp excluded by subsystem filter", size)
 		default:
+			size, err := measureStale(e.Name())
+			if err != nil {
+				return err
+			}
 			p.add(gcdom.KindTemp, gcdom.ReasonTempStale, "", path,
 				"orphan temp artifact older than the stale threshold", size)
 		}
@@ -720,13 +758,23 @@ func liveRecords(records []checkpointRecord) []checkpointRecord {
 	return out
 }
 
-// runBytes estimates the reclaimable bytes of a run from its stored payloads. Entry
-// metadata and the pre/post observation manifests are not counted (the entry does
-// not carry their on-disk byte sizes), so this is a lower bound; the payloads
-// dominate. Deletion removes the whole entry directory, so the manifests are always
-// reclaimed regardless of this estimate.
-func runBytes(e runcache.RunEntry) int64 {
-	return e.Stdout.StoredBytes + e.Stderr.StoredBytes
+// measured maps a repository measurement of one selected deletion boundary to its
+// accounting value. A complete walk is exact (an absent record is an exact zero), an
+// incomplete one keeps its established bytes as a lower bound, and a boundary that
+// could not be inspected at all is unmeasured — none of which changes the
+// candidate's disposition. Cancellation is the one failure returned: a cancelled
+// plan is not a plan with partial sizes.
+func (p *planner) measured(ts fsx.TreeSize, err error) (gcdom.ByteMeasure, error) {
+	if err != nil {
+		if cerr := p.ctx.Err(); cerr != nil {
+			return gcdom.ByteMeasure{}, cerr
+		}
+		return gcdom.UnmeasuredBytes(), nil
+	}
+	if !ts.Complete {
+		return gcdom.PartialBytes(ts.Bytes), nil
+	}
+	return gcdom.ExactBytes(ts.Bytes), nil
 }
 
 func checkpointRetainMsg(reason gcdom.RetentionReason) string {

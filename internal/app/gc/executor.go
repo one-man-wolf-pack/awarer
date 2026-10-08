@@ -79,10 +79,10 @@ func (e *executor) delete(c gcdom.GCCandidate) gcdom.DeletionResult {
 	default:
 		err = fmt.Errorf("gc: cannot delete candidate of kind %s", c.Kind())
 	}
-	if err != nil {
-		return gcdom.NewDeletionResult(c, 0, err)
-	}
-	return gcdom.NewDeletionResult(c, c.Bytes(), nil)
+	// The result derives its byte credit from the candidate: its measure from this
+	// plan on success, nothing on failure — including a failure after some files were
+	// already unlinked or after the removal itself, such as a directory sync.
+	return gcdom.NewDeletionResult(c, err)
 }
 
 // deleteRestore reclaims one recovery observation. Its blobs are not removed here:

@@ -450,6 +450,28 @@ func (r *Repo) Delete(id checkpoint.CheckpointID) error {
 	return nil
 }
 
+// MeasureRecord sums the logical lengths of every regular file inside the checkpoint
+// record directory Delete removes, by enumerating that directory rather than naming
+// its files, so a record-owned file this build does not know about is still counted.
+// It reads metadata only (see fsx.SizeTreeAt). A missing checkpoints directory or
+// record is known absence and measures zero; an error means nothing was established,
+// or the walk was cancelled.
+func (r *Repo) MeasureRecord(ctx context.Context, id checkpoint.CheckpointID) (fsx.TreeSize, error) {
+	relDir, err := fsx.RelUnder(r.root, r.dir)
+	if err != nil {
+		return fsx.TreeSize{}, err
+	}
+	dir, err := fsx.OpenDirNoFollow(r.root, relDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fsx.TreeSize{Complete: true}, nil
+		}
+		return fsx.TreeSize{}, err
+	}
+	defer func() { _ = dir.Close() }()
+	return fsx.SizeTreeAt(ctx, dir, id.String())
+}
+
 // eachCommittedID calls fn with the id of every committed checkpoint in the
 // directory. It reads only directory entries (no JSON decoding): an "<id>/" directory
 // holding a header.json is a committed checkpoint. A directory without a header is a

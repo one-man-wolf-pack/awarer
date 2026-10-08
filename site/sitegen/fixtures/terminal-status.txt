@@ -18,5 +18,5 @@ next:
   awa run ls --near      # why recent checks are stale
   awa run explain -- <command>
   awa log -n 5          # inspect recent checkpoints if this baseline is surprising
-  awa gc --dry-run --json # store footprint and what cleanup would free
+  awa gc --dry-run --json # store footprint and what cleanup would remove
 note: awa shows changes vs the checkpoint baseline; review the full git diff before acceptance

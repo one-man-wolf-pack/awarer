@@ -12,6 +12,9 @@ import (
 // non-empty id; and every candidate carries a path so a report line is locatable.
 // This keeps an impossible decision — an unknown reason, a delete justified by a
 // retain reason, an empty target — out of every plan.
+//
+// Its byte measure is accounting evidence only: it never contributes to the action,
+// so an unmeasured or partial size neither proves nor blocks deletion.
 type GCCandidate struct {
 	kind    CandidateKind
 	action  CandidateAction
@@ -19,14 +22,15 @@ type GCCandidate struct {
 	id      string
 	path    string
 	message string
-	bytes   int64
+	size    ByteMeasure
 }
 
 // NewCandidate builds a validated candidate. The reason's intrinsic action (see
 // reasonAction) must equal action, so the two can never drift. id is required for
 // checkpoint, run, and blob candidates (a temp artifact has no domain id, only a
-// path); path and message are always required; bytes must be non-negative.
-func NewCandidate(kind CandidateKind, reason RetentionReason, id, path, message string, bytes int64) (GCCandidate, error) {
+// path); path and message are always required; size must be a valid measure with
+// non-negative bytes.
+func NewCandidate(kind CandidateKind, reason RetentionReason, id, path, message string, size ByteMeasure) (GCCandidate, error) {
 	if !kind.Valid() {
 		return GCCandidate{}, fmt.Errorf("invalid candidate kind %d", kind)
 	}
@@ -49,8 +53,11 @@ func NewCandidate(kind CandidateKind, reason RetentionReason, id, path, message 
 	if kind != KindTemp && kind != KindLock && strings.TrimSpace(id) == "" {
 		return GCCandidate{}, fmt.Errorf("candidate %s/%s requires an id", kind, reason)
 	}
-	if bytes < 0 {
-		return GCCandidate{}, fmt.Errorf("candidate %s/%s has negative bytes %d", kind, reason, bytes)
+	if !size.state.Valid() {
+		return GCCandidate{}, fmt.Errorf("candidate %s/%s has invalid measurement %d", kind, reason, size.state)
+	}
+	if size.bytes < 0 {
+		return GCCandidate{}, fmt.Errorf("candidate %s/%s has negative bytes %d", kind, reason, size.bytes)
 	}
 	return GCCandidate{
 		kind:    kind,
@@ -59,7 +66,7 @@ func NewCandidate(kind CandidateKind, reason RetentionReason, id, path, message 
 		id:      id,
 		path:    path,
 		message: message,
-		bytes:   bytes,
+		size:    size,
 	}, nil
 }
 
@@ -69,4 +76,7 @@ func (c GCCandidate) Reason() RetentionReason { return c.reason }
 func (c GCCandidate) ID() string              { return c.id }
 func (c GCCandidate) Path() string            { return c.path }
 func (c GCCandidate) Message() string         { return c.message }
-func (c GCCandidate) Bytes() int64            { return c.bytes }
+func (c GCCandidate) Bytes() int64            { return c.size.bytes }
+
+// ByteMeasure returns the candidate's logical byte count with its measurement state.
+func (c GCCandidate) ByteMeasure() ByteMeasure { return c.size }

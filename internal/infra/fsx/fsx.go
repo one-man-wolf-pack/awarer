@@ -1,6 +1,7 @@
 package fsx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -199,6 +200,107 @@ func EachDirEntryNoFollow(root, relDir string, fn func(os.DirEntry) error) error
 	}
 	defer func() { _ = f.Close() }()
 	return EachDirEntryAt(f, fn)
+}
+
+// TreeSize is the logical length of the regular files under one tree, as observed
+// during a single enumeration. Complete is false when some descendant could not be
+// stat'ed, opened, or listed, so Bytes holds only the lengths that were established
+// and is a lower bound. It describes files as enumerated, not an atomic snapshot.
+type TreeSize struct {
+	Bytes    int64
+	Complete bool
+}
+
+// SizeTreeAt sums the logical lengths of the regular files at or beneath name under
+// dir. It reads metadata only — no file is opened and no payload is read — and
+// descends through no-follow directory descriptors, reading each directory in
+// EachDirEntryAt's bounded batches. Directory sizes, symlinks (never their targets),
+// and special nodes contribute nothing.
+//
+// A name absent from the start or a descendant that vanishes mid-walk is known
+// absence: it adds zero and keeps the measurement complete. A descendant that cannot
+// be stat'ed, opened, or listed marks the result incomplete and the walk continues
+// with the rest. A failure to stat or open name itself establishes nothing and is
+// returned as an error, as is cancellation of ctx — a cancelled walk is never a
+// partial measurement.
+func SizeTreeAt(ctx context.Context, dir *os.File, name string) (TreeSize, error) {
+	if err := ctx.Err(); err != nil {
+		return TreeSize{}, err
+	}
+	if err := checkLeafName(name); err != nil {
+		return TreeSize{}, err
+	}
+	mode, size, err := LstatAt(dir, name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return TreeSize{Complete: true}, nil
+		}
+		return TreeSize{}, err
+	}
+	s := TreeSize{Complete: true}
+	switch {
+	case mode.IsRegular():
+		s.Bytes = size
+	case mode.IsDir():
+		sub, err := openDirAt(dir, name)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return s, nil
+			}
+			return TreeSize{}, err
+		}
+		err = sizeDirAt(ctx, sub, &s)
+		_ = sub.Close()
+		if err != nil {
+			return TreeSize{}, err
+		}
+	}
+	return s, nil
+}
+
+// sizeDirAt adds the regular-file lengths beneath the open directory d to s. Only
+// cancellation is returned; every other failure is folded into s.Complete.
+func sizeDirAt(ctx context.Context, d *os.File, s *TreeSize) error {
+	err := EachDirEntryAt(d, func(e os.DirEntry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		name := e.Name()
+		if checkLeafName(name) != nil {
+			s.Complete = false
+			return nil
+		}
+		mode, size, err := LstatAt(d, name)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return nil
+		case err != nil:
+			s.Complete = false
+			return nil
+		case mode.IsRegular():
+			s.Bytes += size
+			return nil
+		case !mode.IsDir():
+			return nil
+		}
+		sub, err := openDirAt(d, name)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				s.Complete = false
+			}
+			return nil
+		}
+		defer func() { _ = sub.Close() }()
+		return sizeDirAt(ctx, sub, s)
+	})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		// A listing that failed part-way established only the lengths already added.
+		s.Complete = false
+	}
+	return nil
 }
 
 // PublishBytesNoFollow atomically and exclusively writes data as name inside relDir

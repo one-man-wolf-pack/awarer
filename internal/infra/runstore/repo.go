@@ -911,6 +911,24 @@ func (r *Repo) removeEntryDir(id runcache.RunID) error {
 	return nil
 }
 
+// MeasureEntry sums the logical lengths of every regular file inside the entry
+// directory removeEntryDir removes — metadata, observation manifests, and captured
+// output alike — enumerating it rather than naming its files. Key pointers live
+// outside that directory and are not counted. It reads metadata only (see
+// fsx.SizeTreeAt). A missing shard or entry is known absence and measures zero; an
+// error means nothing was established, or the walk was cancelled.
+func (r *Repo) MeasureEntry(ctx context.Context, id runcache.RunID) (fsx.TreeSize, error) {
+	shardDir, err := fsx.OpenDirNoFollow(r.root, r.entryShardRel(id))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fsx.TreeSize{Complete: true}, nil
+		}
+		return fsx.TreeSize{}, err
+	}
+	defer func() { _ = shardDir.Close() }()
+	return fsx.SizeTreeAt(ctx, shardDir, id.String())
+}
+
 // listIDs returns the id strings of every entry directory. It reads only
 // directory entries (no JSON decoding), descending entries/<shard>/<id>.
 func (r *Repo) listIDs(ctx context.Context) ([]string, error) {

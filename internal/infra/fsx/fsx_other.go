@@ -300,6 +300,34 @@ func SymlinkAt(dir *os.File, target, name string) error {
 	return os.Symlink(target, filepath.Join(dir.Name(), name))
 }
 
+// openDirAt opens the directory name under dir, refusing a symlink with a pre-open
+// Lstat. Like the rest of this file it joins the name to the parent's path, so the
+// refusal is not atomic with the open. An absent name surfaces as os.ErrNotExist.
+func openDirAt(dir *os.File, name string) (*os.File, error) {
+	target := filepath.Join(dir.Name(), name)
+	fi, err := os.Lstat(target)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil, &os.PathError{Op: "open", Path: name, Err: errSymlinkRejected}
+	}
+	if !fi.IsDir() {
+		return nil, &os.PathError{Op: "open", Path: name, Err: ErrNotDirectory}
+	}
+	f, err := os.Open(target) //nolint:gosec // the name is a checked single component under a held directory
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
 // RemoveTreeAt recursively removes name beneath dir. The supported platforms pin
 // every level to a no-follow directory descriptor; this fallback can only join the
 // name to the parent's path and remove that, so it carries the same weaker,

@@ -29,9 +29,10 @@ type gcView struct {
 	Candidates     []gcCandidateView     `json:"candidates"`
 	// CandidatesBounded reports whether candidates lists every planned candidate or an
 	// intentionally capped prefix. The plan itself is always computed over the whole
-	// store — the summary counts and bytes are complete and drive the destructive
-	// decision — so the cap is on the emitted per-candidate detail only, never on the
-	// safety planning. summary.* remains the authority on totals.
+	// store — the summary counts drive the destructive decision, and the byte totals and
+	// their completeness facts cover every candidate — so the cap is on the emitted
+	// per-candidate detail only, never on the safety planning or byte accounting.
+	// summary.* remains the authority on totals.
 	CandidatesBounded boundedOutputView `json:"candidates_bounded"`
 	Failures          []gcFailureView   `json:"failures"`
 	Warnings          []string          `json:"warnings"`
@@ -51,12 +52,21 @@ type gcSummaryView struct {
 	Retained      int `json:"retained"`
 	Blocked       int `json:"blocked"`
 	Skipped       int `json:"skipped"`
-	// BytesPlanned/BytesDeleted are accounted bytes, summed from readable entries only.
-	// A candidate whose metadata does not decode contributes 0: its size is never read,
-	// so these totals are known/accounted bytes, not a guarantee of the exact physical
-	// space that will be (or was) freed.
+	// BytesPlanned/BytesDeleted are accounted logical bytes: the lengths of the regular
+	// files inside the selected checkpoint, run, recovery, and temp deletion boundaries,
+	// plus each swept blob once. They are not allocated blocks or a promise of physical
+	// space freed. Blocked, corrupt, incompatible, and unreadable records contribute 0.
 	BytesPlanned int64 `json:"bytes_planned"`
 	BytesDeleted int64 `json:"bytes_deleted"`
+	// BytesPlannedComplete is false when some selected deletion candidate was only
+	// partially measured or not measured, so bytes_planned is a lower bound.
+	// BytesDeletedComplete is false when an attempted deletion failed (it is credited
+	// 0) or succeeded with an incomplete measurement, so bytes_deleted is a lower bound.
+	// Both describe byte accounting only — not candidates_bounded, store_footprint, or
+	// whether the operation completed — and are computed over every candidate, never
+	// the capped detail list.
+	BytesPlannedComplete bool `json:"bytes_planned_complete"`
+	BytesDeletedComplete bool `json:"bytes_deleted_complete"`
 }
 
 // gcFailureView is one deletion that was attempted but failed, so an agent can see
@@ -76,6 +86,10 @@ type gcCandidateView struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
 	Bytes   int64  `json:"bytes"`
+	// BytesMeasurement qualifies bytes: "exact" (a known value, zero included),
+	// "partial" (a lower bound), or "unmeasured" (no size was established — retained,
+	// filtered, and blocked records are not measured — so bytes carries no meaning).
+	BytesMeasurement string `json:"bytes_measurement"`
 }
 
 func gcViewOf(res gcdom.GCResult) gcView {
@@ -94,6 +108,9 @@ func gcViewOf(res gcdom.GCResult) gcView {
 			Skipped:       ps.Skipped,
 			BytesPlanned:  ps.BytesPlanned,
 			BytesDeleted:  es.BytesDeleted,
+
+			BytesPlannedComplete: ps.BytesPlannedComplete(),
+			BytesDeletedComplete: es.BytesDeletedComplete(),
 		},
 		Candidates: []gcCandidateView{},
 		Failures:   []gcFailureView{},
@@ -137,6 +154,8 @@ func gcViewOf(res gcdom.GCResult) gcView {
 			Path:    c.Path(),
 			Message: c.Message(),
 			Bytes:   c.Bytes(),
+
+			BytesMeasurement: c.ByteMeasure().Measurement().String(),
 		})
 	}
 	v.CandidatesBounded = boundedOutputOf(len(v.Candidates), len(cands), defaultGCCandidatesJSONLimit)
@@ -144,9 +163,10 @@ func gcViewOf(res gcdom.GCResult) gcView {
 }
 
 // defaultGCCandidatesJSONLimit caps how many per-candidate records gc --json emits. The
-// candidate list grows with store size; the summary counts/bytes stay complete (the plan
-// is computed over the whole store), so a consumer that hits the cap still has the
-// authoritative totals and learns the full candidate count from candidates_bounded.
+// candidate list grows with store size; the summary counts and byte totals still cover
+// every candidate (the plan is computed over the whole store), so a consumer that hits
+// the cap still has the authoritative totals and learns the full candidate count from
+// candidates_bounded.
 const defaultGCCandidatesJSONLimit = 1000
 
 // renderGC prints the concise human report. A clean run is boring; a deleting run
@@ -169,7 +189,7 @@ func renderGC(w *output.Writer, res gcdom.GCResult) {
 			w.Linef("%s: nothing to remove", prefix)
 		} else {
 			w.Linef("%s: would remove %s", prefix, kindCountList(deleteCountsByKind(plan)))
-			w.Linef("would free: %s", humanizeBytes(ps.BytesPlanned))
+			w.Linef("planned bytes: %s", logicalBytes(ps.BytesPlanned, ps.BytesPlannedComplete()))
 		}
 	case res.LockSuppressed():
 		// A real run took the lease but withheld deletion because a writer lock
@@ -183,7 +203,7 @@ func renderGC(w *output.Writer, res gcdom.GCResult) {
 	default:
 		// Report what execution actually removed, not what was merely planned.
 		w.Linef("%s: removed %s", prefix, kindCountList(executedCountsByKind(res)))
-		w.Linef("freed: %s", humanizeBytes(es.BytesDeleted))
+		w.Linef("removed bytes: %s", logicalBytes(es.BytesDeleted, es.BytesDeletedComplete()))
 	}
 
 	renderRetainedByReason(w, plan)
@@ -197,11 +217,51 @@ func renderGC(w *output.Writer, res gcdom.GCResult) {
 	for _, warn := range res.Warnings() {
 		w.Diagnostic("warning: " + warn)
 	}
+	if warn := byteAccountingWarning(res); warn != "" {
+		w.Diagnostic("warning: " + warn)
+	}
 
 	// Surface failed deletions so a partial run is not mistaken for a clean one.
 	if es.Failed > 0 {
 		w.Linef("failed: %d deletions could not be completed", es.Failed)
 	}
+}
+
+// logicalBytes renders an accounted byte total, qualified as a lower bound when its
+// measurement is incomplete. The figure is logical file length, not disk space.
+func logicalBytes(n int64, complete bool) string {
+	s := humanizeBytes(n) + " of logical file data"
+	if !complete {
+		return "at least " + s
+	}
+	return s
+}
+
+// byteAccountingWarning explains, in one bounded line, why the byte total the report
+// printed is a lower bound, or returns "" when it is exact. It speaks only about the
+// figure the report shows: the plan's for a dry run, execution's for a run that
+// attempted deletion. A blocked or suppressed run printed no figure.
+func byteAccountingWarning(res gcdom.GCResult) string {
+	if res.DryRun() {
+		ps := res.Plan().Summary()
+		if ps.PlannedDelete == 0 || ps.BytesPlannedComplete() {
+			return ""
+		}
+		return "byte total is a lower bound: " + plural(ps.PlannedNotFullyMeasured, "selected items") +
+			" could not be fully measured"
+	}
+	es := res.ExecSummary()
+	if es.Deleted == 0 || es.BytesDeletedComplete() {
+		return ""
+	}
+	var parts []string
+	if es.Failed > 0 {
+		parts = append(parts, plural(es.Failed, "failed deletions")+" credited 0")
+	}
+	if es.DeletedNotFullyMeasured > 0 {
+		parts = append(parts, plural(es.DeletedNotFullyMeasured, "removed items")+" not fully measured")
+	}
+	return "removed byte total is a lower bound: " + strings.Join(parts, ", ")
 }
 
 // blockedCause names what a state-action-blocked plan is actually blocked on, so the

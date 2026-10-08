@@ -430,6 +430,20 @@ func SymlinkAt(dir *os.File, target, name string) error {
 	return nil
 }
 
+// openDirAt opens the directory name under dir via openat with O_NOFOLLOW and
+// O_DIRECTORY, so a descent reaches the directory name denotes now and never a
+// symlink's target. An absent name surfaces as os.ErrNotExist.
+func openDirAt(dir *os.File, name string) (*os.File, error) {
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil, os.ErrNotExist
+		}
+		return nil, &os.PathError{Op: "openat", Path: name, Err: noFollowErr(err)}
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(dir.Name(), name)), nil
+}
+
 // RemoveTreeAt recursively removes name — a file, a symlink, or a whole directory
 // subtree — beneath dir, descending only through directory descriptors opened with
 // O_NOFOLLOW. Because every level is reached relative to a pinned descriptor and no
