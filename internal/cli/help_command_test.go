@@ -215,7 +215,7 @@ func TestRunExplainHelpListsCommandModeFlags(t *testing.T) {
 	_, stdout, _ := run("run", "explain", "--help")
 	for _, want := range []string{
 		"--scope", "--include", "--exclude", "--cwd",
-		"--refresh", "--no-cache", "--no-cache-failures", "--allow-skipped-inputs", "--allow-tty",
+		"--refresh", "--no-cache", "--no-cache-failures", "--allow-skipped-inputs", "--allow-tty", "--stdin",
 		"--last", "--from-run", "--to-now",
 	} {
 		if !strings.Contains(stdout, want) {

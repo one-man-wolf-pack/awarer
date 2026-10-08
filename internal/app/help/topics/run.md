@@ -54,10 +54,9 @@ results observed under a different one.
 
 ## Mutation guard
 
-`awa run` returns the wrapped command's own exit code after a hit or a miss, and
-a mutating or failed execution is still recorded as history. But only a clean,
-non-mutating run becomes a reusable hit — if the command changed observed state,
-the result is returned but never published for reuse. The cache prefers a false
+`awa run` returns the wrapped command's own exit code after a hit or a miss; a
+mutating or failed execution is still recorded as history, but only a clean,
+non-mutating run becomes a reusable hit. The cache prefers a false
 miss (re-run unnecessarily) over a false hit (skip work that mattered).
 
 ## Effect observation
@@ -95,9 +94,9 @@ is a misconfiguration; neither is disableable.
 - `full-input-rehash` (`run.input-observation`, hint `review-run-scope`) — reading
   the inputs was slow enough to notice; a hit pays it too.
 
-Both appear on `run`, `run explain`, `run ls` and `status`, and in JSON under
-`data.diagnostics.performance[]`. For the note and hint text, what each count
-means, and the safe response to each, see `awa help troubleshooting`.
+Both appear on `run`, `run explain`, `run ls` and `status` (JSON:
+`data.diagnostics.performance[]`). For the note and hint text, what each count
+means, and the safe response, see `awa help troubleshooting`.
 
 ## Display
 
@@ -121,25 +120,33 @@ cache key, or the exit code:
 --cwd <path>              set the execution directory (part of the key)
 ```
 
+## Stdin
+
+By default a terminal or the null device gives the command no input;
+`--allow-tty` passes the terminal, and piped or redirected input is passed
+through — both unkeyed, so not reusable (`stdin-not-keyed`).
+
+`--stdin null` gives the command EOF whatever awa's input is: an execution
+choice, not a cache switch. Use it only when the command needs no input. Its key
+is that of a run whose input already is the null device; other reuse conditions
+still apply. awa leaves its input unread, so an upstream producer may block or
+get a broken pipe; pipeline success is not promised. Not with `--allow-tty`.
+
 ## Footer and inline diagnosis
 
-Every real execution and hit ends with a compact footer: the storage state
-(hit/stored/record-only/uncached), the run id, cwd, exit, duration, whether the
-result is reusable, and the command to inspect it. A mutating or otherwise
-non-reusable run also prints the exact before/after compare command.
+Every real execution and hit ends with a compact footer: storage state
+(hit/stored/record-only/uncached), run id, cwd, exit, duration, reusability, and
+the inspect command; a non-reusable run also prints the before/after compare.
 
-For a common miss the footer also shows an inline cache diagnosis: the nearest
-previous run, why it is not reusable (e.g. `input-tree-differs`), a bounded
-sample of the changed inputs, and the exact `run explain` / `run ls --near`
-follow-ups — so the first response is useful without a second command. It is a
-bounded preview, not a replacement for `run explain` / `run ls --near`.
+For a common miss the footer adds a bounded inline diagnosis — the nearest
+previous run, why it is not reusable, a sample of changed inputs, and the exact
+`run explain` / `run ls --near` follow-ups — a preview, not a replacement.
 
 ## Why a run is not reusable
 
-Every surface that reports reuse — `awa run`'s footer, `run ls`, `run ls --near`,
-`run explain`, and a stored run's recorded reuse state — names the cause with one
-token from a single closed vocabulary. This is that vocabulary, grouped by what
-the token is a statement about.
+Every surface that reports reuse — the footer, `run ls [--near]`, `run explain`,
+and a stored run's reuse state — names the cause with one token from this closed
+vocabulary, grouped by what the token is about.
 
 The observed state no longer matches what was recorded:
 
@@ -195,10 +202,8 @@ awa run show --last       inspect a run's metadata and captured output
 awa run explain -- <command>  compute the key and cache decision without running
 ```
 
-`run ls --near` explains a stale check: it adds a "near misses" section naming,
-for each recent non-reusable run, the mismatch reason (e.g.
-`input-tree-differs`) and a bounded sample of the changed input paths.
-`run explain` reports the same reason.
+`run ls --near` adds, for each recent non-reusable run, its reason and a bounded
+sample of changed input paths; `run explain` reports the same reason.
 
 Add `--json` to any of these for a stable machine form; `run ls --json` and
 `run explain --json` report the same facts and share one near-miss shape. See
@@ -209,9 +214,8 @@ Add `--json` to any of these for a stable machine form; `run ls --json` and
 Captured stdout/stderr is stored verbatim as durable evidence, so a command that
 prints a secret stores it — awa does not redact output. Allowlisted env values
 are keyed and passed to the child but stored only as a redacted identity, never
-raw. If output exceeds the capture limit it is stored truncated and every
-surface (footer, replay, `run show`) says so with the omitted byte count, so a
-partial payload is never mistaken for the full output.
+raw. Output over the capture limit is stored truncated, and every surface
+(footer, replay, `run show`) states the omitted byte count.
 
 The child does not inherit your environment: it gets the built-in baseline (your
 locale included, unchanged), what `env_allowlist` adds, and the fixed advisory

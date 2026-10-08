@@ -95,6 +95,77 @@ func TestRunUsageErrors(t *testing.T) {
 	}
 }
 
+// TestRunStdinSelectionUsageErrors pins the --stdin contract shared by run and
+// command-mode explain: only null is accepted, it conflicts with --allow-tty in either
+// order, and the stored-run explain modes reject it even though null is an existing
+// mode. Each failure must be a usage error raised before configuration is read, so
+// every case runs both outside any project and against a project whose config is
+// invalid — either would surface as a different failure if config were reached first.
+func TestRunStdinSelectionUsageErrors(t *testing.T) {
+	broken := initProject(t)
+	writeFile(t, broken, ".awa/config.toml", "this is not toml [\n")
+	// Control: a valid explicit selection does reach configuration and fails there,
+	// so a usage exit below cannot be the config failure in disguise.
+	if code, _, stderr := run("--root", broken, "run", "explain", "--stdin", "null", "--", "echo"); code == int(ExitUsageError) || code == 0 {
+		t.Fatalf("control exit = %d, want a configuration failure; stderr=%q", code, stderr)
+	}
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"missing value", []string{"run", "--stdin"}, "requires a value"},
+		{"empty inline value", []string{"run", "--stdin=", "--", "echo"}, "--stdin"},
+		{"persisted pipe token", []string{"run", "--stdin", "pipe", "--", "echo"}, "only null is accepted"},
+		{"persisted tty token", []string{"run", "--stdin=tty", "--", "echo"}, "only null is accepted"},
+		{"case variant", []string{"run", "--stdin", "NULL", "--", "echo"}, "only null is accepted"},
+		{"null then allow-tty", []string{"run", "--stdin", "null", "--allow-tty", "--", "echo"}, "cannot be combined"},
+		{"allow-tty then null", []string{"run", "--allow-tty", "--stdin", "null", "--", "echo"}, "cannot be combined"},
+		{"explain unsupported value", []string{"run", "explain", "--stdin", "pipe", "--", "echo"}, "only null is accepted"},
+		{"explain null then allow-tty", []string{"run", "explain", "--stdin=null", "--allow-tty", "--", "echo"}, "cannot be combined"},
+		{"explain allow-tty then null", []string{"run", "explain", "--allow-tty", "--stdin=null", "--", "echo"}, "cannot be combined"},
+		{"explain last override", []string{"run", "explain", "--last", "--stdin", "null"}, "not valid with --last or --from-run"},
+		{"explain from-run override", []string{"run", "explain", "--from-run", "abc", "--to-now", "--stdin", "null"}, "not valid with --last or --from-run"},
+	}
+	for _, tc := range tests {
+		for _, where := range []struct {
+			name   string
+			prefix []string
+		}{{"nonproject", nil}, {"invalid config", []string{"--root", broken}}} {
+			t.Run(tc.name+"/"+where.name, func(t *testing.T) {
+				args := append(append([]string{}, where.prefix...), tc.args...)
+				code, stdout, stderr := run(args...)
+				if code != int(ExitUsageError) {
+					t.Errorf("exit = %d, want %d (usage)\nstderr: %s", code, ExitUsageError, stderr)
+				}
+				if stdout != "" {
+					t.Errorf("stdout = %q, want empty", stdout)
+				}
+				if !strings.Contains(stderr, tc.wantErr) {
+					t.Errorf("stderr = %q, want to contain %q", stderr, tc.wantErr)
+				}
+			})
+		}
+	}
+}
+
+// TestRunStdinTokensAfterTerminatorReachTheChild proves the mandatory "--" keeps a
+// child's own --stdin tokens literal: they are neither parsed nor validated by awa.
+func TestRunStdinTokensAfterTerminatorReachTheChild(t *testing.T) {
+	if _, err := os.Stat("/bin/echo"); err != nil {
+		t.Skip("requires /bin/echo")
+	}
+	root := initProject(t)
+
+	code, stdout, stderr := run("run", "--root", root, "--cwd", root, "--stdin", "null", "--", "/bin/echo", "--stdin", "pipe", "--allow-tty")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "--stdin pipe --allow-tty" {
+		t.Errorf("child stdout = %q, want its literal argv", stdout)
+	}
+}
+
 // TestRunWritesToProvidedStreams verifies the run command streams a wrapped
 // command's output — on both a miss and a hit replay — to the writers passed to
 // cli.Run, never to the process globals. Run with --root/--cwd so no chdir is

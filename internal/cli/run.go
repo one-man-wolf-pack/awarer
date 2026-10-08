@@ -48,6 +48,7 @@ var runCmdHelp = commandHelp{
 		{"--cwd <path>", "run the command in this directory (inside the root)", ""},
 		{"--allow-skipped-inputs", "allow a cache hit when some inputs were skipped", ""},
 		{"--allow-tty", "attach the terminal to the child; forces non-cacheable", ""},
+		{"--stdin <mode>", "child input: null (no input, EOF); only for commands that need none", ""},
 	},
 	exitNote: "exit code: awa run returns the wrapped command's own exit code after a hit or a miss. Because that can overlap awa's 1-6 codes, use --json (run.exit_origin) or the run log to tell an awa-origin failure from a child result.",
 	examples: []string{"awa run --display tail:200 -- go test ./...", "awa run -- pytest", "awa run ls --near"},
@@ -135,6 +136,7 @@ var runSubcommands = []subcommand{
 			{"--no-cache-failures", "model run's --no-cache-failures policy (command mode)", ""},
 			{"--allow-skipped-inputs", "model run's --allow-skipped-inputs policy (command mode)", ""},
 			{"--allow-tty", "model run's --allow-tty stdin (command mode)", ""},
+			{"--stdin <mode>", "model run's --stdin selection: null (command mode)", ""},
 		},
 		examples: []string{"awa run explain -- go test ./...", "awa run explain --last"},
 		topic:    "run",
@@ -272,7 +274,11 @@ type runFlags struct {
 	noCacheFailures bool
 	allowSkipped    bool
 	allowTTY        bool
-	record          bool
+	// stdinNull records that --stdin null was given. It is presence evidence for
+	// validation (the --allow-tty conflict, the stored-explain override check) and is
+	// normalized once by effectiveStdin; it is never keyed or stored.
+	stdinNull bool
+	record    bool
 	// display is the per-invocation terminal display mode (--display). It defaults
 	// to full and never affects capture, the cache key, or the exit code.
 	display inspect.DisplayMode
@@ -391,6 +397,17 @@ func applyRunFlag(f *runFlags, name, value string, hasValue bool, args []string,
 			return false, err
 		}
 		f.allowTTY = true
+	case "--stdin":
+		v, err := requireValue(name, value, hasValue, args, i)
+		if err != nil {
+			return false, err
+		}
+		// The CLI vocabulary is narrower than the persisted one: only null is a
+		// selectable mode, so this deliberately does not defer to ParseStdinMode.
+		if v != "null" {
+			return false, usageErrorf("invalid --stdin value %q (only null is accepted)", v)
+		}
+		f.stdinNull = true
 	default:
 		return false, nil
 	}
@@ -404,7 +421,27 @@ func applyRunFlag(f *runFlags, name, value string, hasValue bool, args []string,
 // are run-only and explain never parses them, so they cannot reach here.)
 func hasRunLocalOverrides(f runFlags) bool {
 	return f.scopeSet || f.cwdSet || len(f.include) > 0 || len(f.exclude) > 0 ||
-		f.refresh || f.noCache || f.noCacheFailures || f.allowSkipped || f.allowTTY
+		f.refresh || f.noCache || f.noCacheFailures || f.allowSkipped || f.allowTTY || f.stdinNull
+}
+
+// validateStdinFlags rejects contradictory stdin selections shared by run and
+// command-mode explain. It runs on parsed flags, so either flag order is caught, and
+// before any project or configuration work.
+func validateStdinFlags(f runFlags) error {
+	if f.stdinNull && f.allowTTY {
+		return usageErrorf("--stdin null and --allow-tty cannot be combined")
+	}
+	return nil
+}
+
+// effectiveStdin is the one stdin selection rule for run and command-mode explain.
+// An explicit --stdin null selects the null device without looking at awa's own
+// stdin; otherwise the caller's descriptor decides, as detectStdinMode describes.
+func effectiveStdin(f runFlags) (runcache.StdinMode, bool) {
+	if f.stdinNull {
+		return runcache.StdinNull, false
+	}
+	return detectStdinMode(f.allowTTY), f.allowTTY
 }
 
 // executeRun resolves the project, builds the run request, runs it through the
@@ -419,6 +456,9 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 	// contradictory, so reject it rather than silently letting record-only win.
 	if flags.record && flags.refresh {
 		return usageErrorf("--record and --refresh cannot be combined")
+	}
+	if err := validateStdinFlags(flags); err != nil {
+		return err
 	}
 
 	proj, layout, cfg, err := loadProjectConfig(inv.options)
@@ -446,7 +486,7 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 		return err
 	}
 
-	stdinMode := detectStdinMode(flags.allowTTY)
+	stdinMode, ttyAllowed := effectiveStdin(flags)
 
 	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexMutable)
 	if err != nil {
@@ -490,7 +530,7 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 		AbsDir:     absDir,
 		Scope:      overrides,
 		StdinMode:  stdinMode,
-		TTYAllowed: flags.allowTTY,
+		TTYAllowed: ttyAllowed,
 		Policy: apprun.Policy{
 			Refresh:            flags.refresh,
 			NoCache:            flags.noCache,

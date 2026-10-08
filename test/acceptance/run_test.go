@@ -13,12 +13,14 @@ import (
 // helperSrc is a tiny, dependency-free command used as the fixture for run-cache
 // acceptance tests: it prints deterministic output, exits with a requested code,
 // can read a file relative to its cwd, can emit a large blob for truncation, and can
-// idempotently "format" a file to a target content (a fixer/formatter fixture).
+// idempotently "format" a file to a target content (a fixer/formatter fixture), and
+// can report how many stdin bytes it read before EOF.
 const helperSrc = `package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -44,7 +46,16 @@ func main() {
 	fix := flag.String("fix", "", "file to format idempotently to -content")
 	content := flag.String("content", "", "target content for -fix")
 	sleepMs := flag.Int("sleep", 0, "sleep this many milliseconds before exiting (a long-running child for cancellation tests)")
+	readStdin := flag.Bool("read-stdin", false, "read stdin to EOF and report the byte count")
 	flag.Parse()
+	if *readStdin {
+		n, err := io.Copy(io.Discard, os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdin error:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("STDIN\t%d\n", n)
+	}
 	if *sleepMs > 0 {
 		time.Sleep(time.Duration(*sleepMs) * time.Millisecond)
 	}

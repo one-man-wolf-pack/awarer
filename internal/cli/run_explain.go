@@ -143,6 +143,9 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 	if mode != apprun.ModeCommand && hasRunLocalOverrides(flags.run) {
 		return usageErrorf("run-local flags are not valid with --last or --from-run")
 	}
+	if err := validateStdinFlags(flags.run); err != nil {
+		return err
+	}
 
 	proj, layout, cfg, err := loadProjectConfig(inv.options)
 	if err != nil {
@@ -175,6 +178,7 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 		if err != nil {
 			return err
 		}
+		stdinMode, ttyAllowed := effectiveStdin(flags.run)
 		explainReq.Request = apprun.Request{
 			Project:    proj,
 			Config:     cfg,
@@ -182,8 +186,8 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 			CWD:        execCWD,
 			AbsDir:     absDir,
 			Scope:      overrides,
-			StdinMode:  detectStdinMode(flags.run.allowTTY),
-			TTYAllowed: flags.run.allowTTY,
+			StdinMode:  stdinMode,
+			TTYAllowed: ttyAllowed,
 			Policy: apprun.Policy{
 				Refresh:            flags.run.refresh,
 				NoCache:            flags.run.noCache,

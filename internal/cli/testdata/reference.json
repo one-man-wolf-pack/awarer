@@ -344,6 +344,14 @@
           ],
           "desc": "attach the terminal to the child; forces non-cacheable",
           "takes_value": false
+        },
+        {
+          "spellings": [
+            "--stdin"
+          ],
+          "desc": "child input: null (no input, EOF); only for commands that need none",
+          "takes_value": true,
+          "value": "<mode>"
         }
       ],
       "subcommands": [
@@ -659,6 +667,14 @@
               ],
               "desc": "model run's --allow-tty stdin (command mode)",
               "takes_value": false
+            },
+            {
+              "spellings": [
+                "--stdin"
+              ],
+              "desc": "model run's --stdin selection: null (command mode)",
+              "takes_value": true,
+              "value": "<mode>"
             }
           ]
         }

@@ -60,6 +60,7 @@ awa run --record --display tail:200 -- <command>
 awa changes run:<id>:before..run:<id>:after   # what the command changed
 awa run explain -- <command>     # show the cache decision without running
 awa run --refresh -- <command>   # force a fresh deterministic check
+awa run --stdin null -- <command> # only for a command that needs no input
 ```
 
 ## Repairing an accidental rewrite
