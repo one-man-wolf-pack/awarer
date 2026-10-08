@@ -157,6 +157,11 @@ jobs:
       # packages below as a scan that silently omitted a followed file.
       - name: go test (filesystem primitives, worktree walker, worktree mutator, checkpoint store, state resolution and comparison, documentation export, site generator)
         run: go test ./internal/infra/fsx/... ./internal/infra/worktreefs/... ./internal/infra/worktreemut/... ./internal/infra/checkpointjson/... ./internal/app/changes/... ./internal/app/diff/... ./internal/app/state/... ./internal/app/stateprovider/... ./internal/app/docsexport/... ./site/...
+      # Only the portable stdin wiring is claimed here: null must reach the platform null
+      # device (EOF) and pipe must inherit the caller's input. The rest of the process
+      # package's tests are Unix-shaped and stay out of this inventory.
+      - name: go test (run child stdin wiring)
+        run: go test ./internal/infra/process/... -run TestRunnerStdin -v
 
   # Runtime proof for the other shipped platform this repository never runs on. FreeBSD
   # compiles the same Unix implementations as darwin and linux, so what needs observing
@@ -224,6 +229,7 @@ jobs:
               ./internal/app/restore/... \
               ./internal/app/doctor/... \
               ./internal/app/docsexport/...
+            GOPROXY=off GOFLAGS=-mod=readonly go test ./internal/infra/process/... -run TestRunnerStdin -v
 
   # The two suites no pull request pays for, in one job because they share one
   # precondition. It builds a binary for its own use and publishes nothing; packaging and
