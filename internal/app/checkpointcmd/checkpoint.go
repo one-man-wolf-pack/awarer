@@ -4,8 +4,8 @@
 // git metadata provider into one use case: scan the project, materialize the blobs
 // the checkpoint policy requires, capture git context, and persist an immutable
 // checkpoint atomically. It owns the policy decisions — notably applying
-// store_file_contents — but no filesystem, hashing, or JSON details, which live
-// behind the injected ports.
+// store_file_contents and hash_only_patterns — but no filesystem, hashing, pattern
+// matching, or JSON details, which live behind the injected ports.
 package checkpointcmd
 
 import (
@@ -79,6 +79,10 @@ type Deps struct {
 	// contents are stored arrives with each Request, not with these deps, so a service
 	// built without this reader is mis-wired, not configured for a narrower mode.
 	Content DirectContent
+	// Patterns compiles the hash_only_patterns selection with the worktree's own
+	// pattern language. Required, for the same reason as Content: the list arrives
+	// with each Request.
+	Patterns PatternCompiler
 	// Index is the same worktree index the scanner reuses hashes from, held here so
 	// a reused hash that materialization proves wrong can be invalidated. It is
 	// optional: a nil index simply means no invalidation (and, in the scanner, no
@@ -117,6 +121,8 @@ func New(d Deps) *Service {
 		panic("checkpointcmd.New: git provider must not be nil")
 	case d.Content == nil:
 		panic("checkpointcmd.New: direct content reader must not be nil")
+	case d.Patterns == nil:
+		panic("checkpointcmd.New: pattern compiler must not be nil")
 	case d.Now == nil:
 		panic("checkpointcmd.New: clock must not be nil")
 	case d.Rand == nil:
@@ -183,7 +189,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	cwdRel := relCwd(layout.Root(), req.CommandCwd)
 	// The tree hash, stats, and record count are derived by the repository from the
 	// streamed manifest, not supplied here: the tree hash excludes content-storage
-	// class, so the store_file_contents downgrade does not change it (the storage
+	// class, so the hash-only retention downgrade does not change it (the storage
 	// choice is captured separately in the checkpoint policy hash).
 	buildMeta := func(id checkpoint.CheckpointID) checkpoint.CheckpointBuild {
 		return checkpoint.CheckpointBuild{
@@ -203,10 +209,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	// The final manifest is produced as a stream: the scan's records with the
-	// store_file_contents policy applied and blobs materialized as each blob-intent
+	// retention policy applied and blobs materialized as each blob-intent
 	// regular entry passes by. The repository consumes it and derives the durable
 	// fields — the use case never holds the whole manifest as a slice.
-	source := &manifestSource{svc: s, cfg: req.Config, scan: scanResult}
+	source := &manifestSource{svc: s, retention: NewRetention(req.Config.Checkpoint, s.deps.Patterns), scan: scanResult}
 	header, err := s.persist(ctx, buildMeta, source)
 	if err != nil {
 		return Result{}, err
@@ -230,16 +236,16 @@ func sourceRetention(cfg config.Config) scanner.SourceRetention {
 }
 
 // manifestSource produces the final checkpoint manifest as a re-openable stream:
-// the scan's records with the store_file_contents policy applied and blobs
-// materialized as each blob-intent regular entry passes by. The repository
-// consumes it and derives the durable fields, so the use case never holds the
-// whole manifest as a slice. Each Open re-runs materialization (idempotent —
-// blobs are content-addressed) and resets the blob counts, so a PutManifest retry
-// on an id collision recomputes them correctly.
+// the scan's records with the retention policy applied and blobs materialized as
+// each blob-intent regular entry passes by. The repository consumes it and derives
+// the durable fields, so the use case never holds the whole manifest as a slice.
+// Each Open re-runs materialization (idempotent — blobs are content-addressed) with
+// the one Retention compiled for this operation and resets the blob counts, so a
+// PutManifest retry on an id collision recomputes them correctly.
 type manifestSource struct {
-	svc  *Service
-	cfg  config.Config
-	scan scanner.Result
+	svc       *Service
+	retention Retention
+	scan      scanner.Result
 
 	written int
 	reused  int
@@ -254,10 +260,11 @@ func (m *manifestSource) Open(ctx context.Context) (worktree.ManifestCursor, err
 	return &materializingCursor{src: m, ctx: ctx, inner: inner}, nil
 }
 
-// materializeEntry applies the store_file_contents policy to one entry and writes
-// the blob it requires. A blob-intent regular entry becomes a stored blob when
-// contents are stored, or a hash-only entry (no blob) when they are not; every
-// other storage intent passes through unchanged.
+// materializeEntry applies the retention policy to one entry and writes the blob it
+// requires. A blob-intent regular entry becomes a stored blob unless the policy
+// keeps it hash-only (contents not stored, or the path selected by
+// hash_only_patterns), in which case it keeps its content identity but stores and
+// reads nothing; every other storage intent passes through unchanged.
 //
 // It owns what happens when a write fails: a post-scan substitution and a hash mismatch
 // both abort loudly, and a mismatch also drops the stale index mapping, so no checkpoint
@@ -268,10 +275,11 @@ func (m *manifestSource) materializeEntry(ctx context.Context, e worktree.Entry)
 	if e.Kind != worktree.KindRegular || e.Storage != worktree.StorageBlob {
 		return e, nil
 	}
-	if !m.cfg.Checkpoint.StoreFileContents {
-		// Honor [checkpoint] store_file_contents=false: keep the content hash in the
-		// manifest but store no blob. This changes only the persisted storage class,
-		// not the tree hash.
+	if m.retention.Storage(e.Path, e.Storage) == worktree.StorageHashOnly {
+		// Keep the content hash in the manifest but store no blob, decided before any
+		// content source is requested. This changes only the persisted storage class,
+		// not the tree hash. The record claims no bytes even if the store already holds
+		// identical content for another record.
 		return worktree.NewRegularEntry(e.Path, e.Content, worktree.StorageHashOnly, e.Stat, e.Traversal)
 	}
 	open, err := m.contentSource(e)

@@ -267,13 +267,12 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	}
 
 	proc := &processor{
-		ctx:     ctx,
-		hasher:  s.hasher,
-		index:   s.reader,
-		cfg:     cfg,
-		opts:    opts,
-		maxSize: cfg.Hashing.MaxFileSize.Bytes(),
-		sorter:  manifestsort.New(opts.BufferRecords, layout.TmpDir()),
+		ctx:    ctx,
+		hasher: s.hasher,
+		index:  s.reader,
+		cfg:    cfg,
+		opts:   opts,
+		sorter: manifestsort.New(opts.BufferRecords, layout.TmpDir()),
 	}
 
 	// Pass 1: walk, feeding each record into the bounded external sorter (which

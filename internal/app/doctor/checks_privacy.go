@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,17 +9,21 @@ import (
 	"sort"
 	"strings"
 
+	"awarer/internal/app/checkpointcmd"
+	"awarer/internal/app/scanner"
 	domconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/doctor"
 	"awarer/internal/domain/paths"
+	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/fsx"
+	"awarer/internal/infra/worktreefs"
 )
 
 // checkConfig raises advisory findings about the run/checkpoint config's
 // local-evidence posture. Both are warnings, never blockers: the real privacy
 // protection is that awa does not persist raw env values and keeps .awa private by
 // default; these only flag configurations that make the durable evidence riskier.
-func (s *Service) checkConfig(layout paths.Layout, resolved domconfig.ResolvedConfig, rep *report) {
+func (s *Service) checkConfig(ctx context.Context, layout paths.Layout, resolved domconfig.ResolvedConfig, rep *report) {
 	cfg := resolved.Config()
 
 	// env-allowlist-suspicious: names that commonly carry secrets. Adding them does not
@@ -49,18 +54,23 @@ func (s *Service) checkConfig(layout paths.Layout, resolved domconfig.ResolvedCo
 
 	// content-storage-enabled: storing file contents is the point of checkpoints, but in
 	// a project that looks like it holds secrets it means a plaintext secret file can
-	// become a blob in .awa/store/blobs. Flag only when both are true, so an ordinary
-	// project is never nagged.
-	if cfg.Checkpoint.StoreFileContents {
-		if secret := secretLookingFile(layout.Root()); secret != "" {
-			source := resolved.SourcePathOf("checkpoint.store_file_contents")
-			rep.add(finding(doctor.CodeContentStorageEnabled, doctor.SeverityWarning, doctor.SubsystemConfig,
-				source, "checkpoint.store_file_contents",
-				"checkpoint.store_file_contents is on and the project contains a secret-looking file ("+secret+"); its contents may be stored in .awa/store/blobs"+overrideHint(source), false))
-		} else {
-			rep.pass()
-		}
-	} else {
+	// become a blob in .awa/store/blobs. Flag only a recognized file a checkpoint would
+	// actually own bytes for, so an ordinary project — or one whose secret-looking files
+	// are excluded, hash-only, or skipped — is never nagged. A candidate the check could
+	// not inspect is its own warning, never a pass.
+	capture := secretCaptureCandidates(ctx, layout, cfg)
+	source := resolved.SourcePathOf("checkpoint.store_file_contents")
+	if capture.eligible != "" {
+		rep.add(finding(doctor.CodeContentStorageEnabled, doctor.SeverityWarning, doctor.SubsystemConfig,
+			source, "checkpoint.store_file_contents",
+			"checkpoint.store_file_contents is on and a secret-looking file ("+capture.eligible+") is in checkpoint scope and not kept hash-only; its contents may be stored in .awa/store/blobs — exclude it, or add it to checkpoint.hash_only_patterns (setting that list replaces its env defaults, so restate them)"+overrideHint(source), false))
+	}
+	if capture.uncertain != "" {
+		rep.add(finding(doctor.CodeContentCaptureCheckIncomplete, doctor.SeverityWarning, doctor.SubsystemConfig,
+			"", "checkpoint.store_file_contents",
+			"could not determine whether secret-looking files would have their contents stored by a checkpoint ("+capture.uncertain+"); treat them as possibly captured", false))
+	}
+	if capture.eligible == "" && capture.uncertain == "" {
 		rep.pass()
 	}
 }
@@ -163,33 +173,82 @@ func envNameInjectsCode(name string) bool {
 	return false
 }
 
-// secretLookingFile returns the name of the first top-level file in root that looks
-// like it holds credentials, or "" if none. It reads only the root directory (one
-// listing), never descends, so it stays cheap.
-func secretLookingFile(root string) string {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return ""
+// captureCheck is the outcome of the bounded capture-eligibility check: the first
+// recognized root file a checkpoint would own bytes for, and the first inspection
+// failure, if any. Both may be set; neither set is a confirmed clean answer for the
+// candidates it covers and nothing more.
+type captureCheck struct {
+	eligible  string
+	uncertain string
+}
+
+// secretCaptureCandidates applies the effective checkpoint policy to each
+// secret-looking top-level file, in listing order. It reads only the root listing and
+// candidate metadata — the scan's own scope classification (ClassifyRootFile), the
+// scanner's large-file storage decision, and the checkpoint retention decision — and
+// never opens, hashes, or indexes a candidate. A candidate that is excluded, not a
+// regular file, skipped, or kept hash-only is passed over, so it cannot hide a later
+// eligible one.
+func secretCaptureCandidates(ctx context.Context, layout paths.Layout, cfg domconfig.Config) captureCheck {
+	var out captureCheck
+	if !cfg.Checkpoint.StoreFileContents {
+		return out // no checkpoint owns any file's bytes
 	}
+	entries, err := os.ReadDir(layout.Root())
+	if err != nil {
+		out.uncertain = "listing the project root: " + err.Error()
+		return out
+	}
+	walker := worktreefs.New()
+	scope := cfg.HistoryScanScope()
+	retention := checkpointcmd.NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns)
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
+		if ctx.Err() != nil {
+			return captureCheck{} // Run reports the interruption, not a partial answer
 		}
 		name := e.Name()
-		lower := strings.ToLower(name)
+		if e.IsDir() || !secretLookingName(name) {
+			continue
+		}
+		var captured bool
+		err := walker.ClassifyRootFile(ctx, layout, scope, name, func(n worktree.Node) error {
+			if n.Kind != worktree.KindRegular || n.Skipped {
+				return nil
+			}
+			captured = retention.Storage(n.Path, scanner.RegularStorage(cfg.Hashing, n.Size())) == worktree.StorageBlob
+			return nil
+		})
 		switch {
-		case lower == ".env" || strings.HasPrefix(lower, ".env."):
-			return name
-		case lower == ".netrc" || lower == ".pgpass" || lower == ".npmrc":
-			return name
-		case strings.HasPrefix(lower, "id_rsa") || strings.HasPrefix(lower, "id_dsa") ||
-			strings.HasPrefix(lower, "id_ecdsa") || strings.HasPrefix(lower, "id_ed25519"):
-			return name
-		case lower == "credentials" || lower == "credentials.json" || lower == "secrets.json":
-			return name
+		case ctx.Err() != nil:
+			return captureCheck{}
+		case err != nil:
+			if out.uncertain == "" {
+				out.uncertain = name + ": " + err.Error()
+			}
+		case captured && out.eligible == "":
+			out.eligible = name
 		}
 	}
-	return ""
+	return out
+}
+
+// secretLookingName reports whether a top-level file name conventionally holds
+// credentials. Matching is case-insensitive and by name only; it is a bounded
+// candidate set, not secret detection.
+func secretLookingName(name string) bool {
+	lower := strings.ToLower(name)
+	switch {
+	case lower == ".env" || strings.HasPrefix(lower, ".env."):
+		return true
+	case lower == ".netrc" || lower == ".pgpass" || lower == ".npmrc":
+		return true
+	case strings.HasPrefix(lower, "id_rsa") || strings.HasPrefix(lower, "id_dsa") ||
+		strings.HasPrefix(lower, "id_ecdsa") || strings.HasPrefix(lower, "id_ed25519"):
+		return true
+	case lower == "credentials" || lower == "credentials.json" || lower == "secrets.json":
+		return true
+	}
+	return false
 }
 
 // checkPermissions verifies the awa-owned state directory and its top-level

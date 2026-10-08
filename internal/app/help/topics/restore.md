@@ -61,7 +61,9 @@ An entry hash proves identity, not recoverability. A regular file is restorable
 only when its source state points at a verified content blob. `hash-only`
 evidence stays useful for comparison but cannot manufacture bytes, and awa never
 recovers content from a current file that happens to match, from another path,
-from Git, or from the network.
+from Git, or from the network. A changed path the source holds hash-only — such
+as an env file `hash_only_patterns` selected — blocks the selection that names
+it rather than silently dropping out; narrow the selection to restore the rest.
 
 Symlinks are recreated from their stored target and are never followed. Special
 files (devices, sockets, fifos) are not restored.
@@ -109,7 +111,8 @@ undo:    awa restore --apply restore:<operation-id>:before -- generated/client
 ```
 
 Content is captured whatever the project's storage preferences are — including
-`[checkpoint] store_file_contents = false` and a file large enough that
+`[checkpoint] store_file_contents = false`, a file `[checkpoint]
+hash_only_patterns` selects, and a file large enough that
 `[hashing] large_file_policy = hash-only` recorded its identity only. Those bytes
 are exactly what would otherwise be unrecoverable, and a readable file stays
 readable no matter what a checkpoint would have stored. If the capture cannot be

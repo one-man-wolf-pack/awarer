@@ -106,3 +106,11 @@ type IndexedEntry struct {
 	Content hashing.ContentHash
 	Storage ContentStorageIntent
 }
+
+// PathSelector reports whether a compiled, ordered pattern list selects a canonical
+// project-relative path. It answers for the path as recorded — the virtual path a
+// followed symlink is reached by, never its physical target — and never controls
+// traversal. The concrete pattern language lives in infrastructure.
+type PathSelector interface {
+	Selects(p RelPath) bool
+}

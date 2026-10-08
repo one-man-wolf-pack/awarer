@@ -90,7 +90,8 @@ One layering rule deserves stating before you write a second layer: a later laye
 replaces the whole value of a key, and for a list that means the entire list rather
 than a merge. A private `.awa/config.toml` setting `extra_excludes` discards the
 shared `awa.toml` list instead of adding to it — same for `include`,
-`env_allowlist`, `default_scope`, and `extra_effect_roots`. To extend a shared
+`env_allowlist`, `default_scope`, `extra_effect_roots`, and
+`hash_only_patterns`. To extend a shared
 list, restate its entries in your layer, and use `awa config effective` to confirm
 what actually resolved.
 

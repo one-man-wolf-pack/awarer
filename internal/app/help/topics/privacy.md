@@ -7,7 +7,8 @@ untracked.
 ## What `.awa/` stores
 
 - checkpoint manifests and, when `store_file_contents` is on (default), the
-  file contents themselves as content-addressed blobs;
+  contents of files `[checkpoint] hash_only_patterns` does not select, as
+  content-addressed blobs;
 - run cache/history: the command line, cwd, exit status, timings, and captured
   stdout/stderr;
 - the run key inputs and diagnostics.
@@ -15,11 +16,42 @@ untracked.
 Three facts combine in a way worth stating explicitly: a checkpoint always covers
 untracked files, checkpoints store file contents by default, and `.gitignore` is
 not an input boundary (see [awa help ignores](ignores.md)). So a gitignored,
-never-committed file — a local `.env`, a key, a seeded fixture database — is
-inside the scanned scope and its bytes can be stored as a checkpoint blob.
+never-committed file — a key, a credentials file, a seeded fixture database —
+is inside the scanned scope and its bytes can be stored as a checkpoint blob.
 Deleting the file from the worktree later does not remove it from an older
-checkpoint. If that is not what you want for a particular path, exclude it
-deliberately rather than relying on git having ignored it.
+checkpoint. If that is not what you want for a particular path, select it for
+hash-only retention or exclude it deliberately rather than relying on git
+having ignored it.
+
+## Env files: identity, not bytes
+
+`[checkpoint] hash_only_patterns` selects files a new checkpoint records
+hash-only: content hash and metadata, no bytes. The default selects conventional
+env files — `.env`, `.env.*`, and `*.env` at any depth — except `.env.example`,
+`.env.sample`, and `.env.template`. Those exceptions are naming conventions, not
+proof a file holds no secret, and any other secret-bearing name needs a pattern
+of your own.
+
+- Selection is not exclusion. A selected file is still scanned, still shows in
+  `awa changes`, and is still a run input, so editing it still invalidates a
+  cached run. Excluding a path (see [awa help ignores](ignores.md)) keeps it out
+  of positive evidence altogether.
+- The price is capability: a newer checkpoint has no text diff and no restorable
+  bytes for a selected file. Checkpoints are not backups of your env files.
+- Setting the key replaces the whole list; restate the defaults to keep them, or
+  set `[]` to store env bytes again. The key and its default are introduced in
+  this release — older binaries reject the key as unknown — and the default also
+  applies to projects configured earlier, including an explicit
+  `store_file_contents = true`.
+- Nothing here removes bytes older checkpoints already stored; they keep them
+  until `awa gc` retires those checkpoints or you delete `.awa/`.
+- Selection is per path: an unselected file with identical content still stores
+  those bytes.
+- A hash is not encryption. A short or guessable value can be confirmed against
+  its hash, and file metadata stays visible.
+- `awa restore --apply` still captures the current bytes of every path it will
+  replace, selected or not, so its undo works (see
+  [awa help restore](restore.md)).
 
 ## What it does NOT store
 
@@ -110,9 +142,11 @@ is never presented as complete.
 - `.awa/.gitignore` keeps the directory out of git; awa restores it on
   checkpoint and run, and `awa doctor` reports if it is missing or ineffective.
   awa never edits your repository-root `.gitignore`.
-- `awa doctor` also flags secret-looking env allowlist names, content storage in
-  a project that appears to hold secrets, overly broad permissions, and nested
-  or ancestor `.awa` markers.
+- `awa doctor` also flags secret-looking env allowlist names, a secret-looking
+  top-level file a checkpoint would store bytes for, overly broad permissions,
+  and nested or ancestor `.awa` markers. That file check covers a short list of
+  root-level names only; its silence says nothing about the rest of the project,
+  older checkpoints, or captured run output.
 
 Before you copy, snapshot, or share a repository, remember `.awa/` travels with
 it:

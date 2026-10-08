@@ -56,6 +56,10 @@ type walk struct {
 	protected map[string]bool // base names never scanned, whatever the ignore rules say
 	scope     config.ScanScope
 	visit     func(worktree.Node) error
+	// leavesOnly stops a followed directory symlink from being descended: the
+	// single-entry classification (see ClassifyRootFile) asks about one leaf, never
+	// a subtree.
+	leavesOnly bool
 }
 
 // Walk implements worktree.Walker.
@@ -369,6 +373,9 @@ func (w *walk) follow(symlinkAbs, virtualRel string, depth int, chain map[string
 			return skipLeaf(worktree.ReasonSymlinkCycle)
 		}
 
+		if w.leavesOnly {
+			return nil
+		}
 		if err := w.emitDir(virtualRel, tr); err != nil {
 			return err
 		}

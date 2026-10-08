@@ -31,13 +31,17 @@ path is a usage error. Path filters belong to comparison output (see
 
 What a checkpoint records is project policy, not a per-invocation flag, and it
 lives in the `[checkpoint]` config table: whether file contents are stored or
-only hashed, whether renames are detected, and the default diff context. Which
+only hashed, which files keep only their hash (`hash_only_patterns`, by default
+conventional env files), whether renames are detected, and the default diff
+context. Which
 paths are in scope is a separate decision with its own rules (see
 [awa help ignores](ignores.md)); within that scope a checkpoint always includes
-files git does not track, and no setting changes that. Turning off
-`store_file_contents` is the one that changes a checkpoint's recorded storage
-policy, so records made before and after that change are not equivalent
-evidence. The keys and their defaults are in
+files git does not track, and no setting changes that. `store_file_contents`
+and `hash_only_patterns` change a checkpoint's recorded storage policy, not its
+tree identity: a hash-only file is still compared, but that checkpoint cannot
+show its text diff or restore its bytes (see [awa help privacy](privacy.md)).
+Records made before and after such a change are not equivalent evidence. The
+keys and their defaults are in
 [awa help config](../reference/configuration.md).
 
 ## Listing

@@ -85,6 +85,7 @@ func Sections() []Section {
 			Title: "Checkpoint recording",
 			Fields: []Field{
 				{"store_file_contents", boolean(d.Checkpoint.StoreFileContents), "bool", "Whether checkpoint blobs are stored (affects checkpoint policy identity).", "Turn off to record checkpoint hashes without keeping content."},
+				{"hash_only_patterns", list(d.Checkpoint.HashOnlyPatterns), "pattern list", "Ordered .awaignore-style patterns selecting regular files a new checkpoint records hash-only: identity and metadata, no owned bytes, so no stored text diff or byte restore from that checkpoint. Selection, not exclusion: the file stays scanned, compared, and a run input. Negation removes only this list's selection; it never overrides store_file_contents = false, large_file_policy, or an exclude. Setting the key replaces the whole default list; [] selects nothing. Introduced in this release: older binaries reject the key as unknown, and before it nothing was selected.", "Add your own secret-bearing names (restate the env defaults to keep them), or set [] to keep env file bytes in checkpoints."},
 				{"diff_context", integer(d.Checkpoint.DiffContext), "int", "Default number of context lines in checkpoint diffs.", "Adjust the default hunk context."},
 				{"rename_detection", boolean(d.Checkpoint.RenameDetection), "bool", "Whether diffs detect renames.", "Turn off for pure add/delete diffs."},
 			},

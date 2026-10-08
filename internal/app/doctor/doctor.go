@@ -141,9 +141,14 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 	s.checkStateGitignore(layout, rep)
 	// Local-privacy diagnostics: config posture, private permissions, and ambiguous
 	// project roots.
-	s.checkConfig(layout, req.Resolved, rep)
+	s.checkConfig(ctx, layout, req.Resolved, rep)
 	s.checkPermissions(layout, rep)
 	s.checkMarkers(layout, rep)
+	// The capture-eligibility check classifies candidates under ctx; a cancellation
+	// there is an interruption, never an incomplete-check finding.
+	if err := ctx.Err(); err != nil {
+		return doctor.DoctorResult{}, err
+	}
 
 	if req.Repair {
 		// The repairs are destructive (removing orphan temp and stale locks, rebuilding

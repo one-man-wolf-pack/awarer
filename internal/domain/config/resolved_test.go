@@ -261,6 +261,7 @@ func TestChangedKeysMapsEachFieldToItsKey(t *testing.T) {
 		{"hashing.max_file_size", func(c *Config) { c.Hashing.MaxFileSize = d.Hashing.MaxFileSize + 1 }},
 		{"hashing.large_file_policy", func(c *Config) { c.Hashing.LargeFilePolicy = LargeFilePolicy(99) }},
 		{"checkpoint.store_file_contents", func(c *Config) { c.Checkpoint.StoreFileContents = !d.Checkpoint.StoreFileContents }},
+		{"checkpoint.hash_only_patterns", func(c *Config) { c.Checkpoint.HashOnlyPatterns = []string{} }},
 		{"checkpoint.diff_context", func(c *Config) { c.Checkpoint.DiffContext = d.Checkpoint.DiffContext + 1 }},
 		{"checkpoint.rename_detection", func(c *Config) { c.Checkpoint.RenameDetection = !d.Checkpoint.RenameDetection }},
 		{"run.default_scope", func(c *Config) { c.Run.DefaultScope = []string{"src"} }},

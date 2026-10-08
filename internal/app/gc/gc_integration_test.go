@@ -114,6 +114,7 @@ func (e *env) checkpointAt(t testing.TB, ts time.Time) checkpoint.CheckpointHead
 		Checkpoints: checkpointjson.NewRepo(layout),
 		Git:         fakeCapture{},
 		Content:     worktreefs.NewContentReader(layout.Root()),
+		Patterns:    worktreefs.CompilePatterns,
 		Now:         func() time.Time { return ts },
 		Rand:        rand.Reader,
 		Version:     "test",

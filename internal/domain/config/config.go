@@ -31,6 +31,7 @@ func (c Config) Clone() Config {
 	c.Scope.Include = slices.Clone(c.Scope.Include)
 	c.Scope.ExtraExcludes = slices.Clone(c.Scope.ExtraExcludes)
 	c.History.ExtraExcludes = slices.Clone(c.History.ExtraExcludes)
+	c.Checkpoint.HashOnlyPatterns = slices.Clone(c.Checkpoint.HashOnlyPatterns)
 	c.Run.DefaultScope = slices.Clone(c.Run.DefaultScope)
 	c.Run.ExtraExcludes = slices.Clone(c.Run.ExtraExcludes)
 	c.Run.EnvAllowlist = slices.Clone(c.Run.EnvAllowlist)
@@ -134,9 +135,13 @@ type Hashing struct {
 	LargeFilePolicy LargeFilePolicy
 }
 
-// Checkpoint controls checkpoint recording behavior.
+// Checkpoint controls checkpoint recording behavior. HashOnlyPatterns is the
+// ordered selective-retention list: regular files it selects keep their identity
+// in a checkpoint but not their bytes. A configuration layer that sets it replaces
+// the whole list; an explicit empty list selects nothing.
 type Checkpoint struct {
 	StoreFileContents bool
+	HashOnlyPatterns  []string
 	DiffContext       int
 	RenameDetection   bool
 }
@@ -272,6 +277,16 @@ var (
 	baselineExcludes       = []string{"node_modules", ".next", ".nuxt", ".turbo", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", "target"}
 	historyDefaultExcludes = []string{"dist", "build", "coverage"}
 )
+
+// hashOnlyDefaults is the product default selective-retention list: conventional
+// env files keep identity only, while the conventional sample/template names stay
+// ordinary. The exceptions are naming conventions, not evidence that those files
+// hold no secrets. Unexported and only ever copied (see HashOnlyDefaults).
+var hashOnlyDefaults = []string{".env", ".env.*", "*.env", "!.env.example", "!.env.sample", "!.env.template"}
+
+// HashOnlyDefaults returns a fresh copy of the product default
+// checkpoint.hash_only_patterns list.
+func HashOnlyDefaults() []string { return append([]string(nil), hashOnlyDefaults...) }
 
 // effectRootExtra are watched generated-output directory names beyond the
 // run-input-blind baseline excludes. build/dist/out/coverage are visible to the run
@@ -480,6 +495,7 @@ func Defaults() Config {
 		},
 		Checkpoint: Checkpoint{
 			StoreFileContents: true,
+			HashOnlyPatterns:  HashOnlyDefaults(),
 			DiffContext:       3,
 			RenameDetection:   true,
 		},
@@ -568,6 +584,7 @@ func (c Config) Validate() error {
 	p = append(p, pathProblems("scope.extra_excludes", c.Scope.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("history.extra_excludes", c.History.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("run.extra_excludes", c.Run.ExtraExcludes, nonEmptyOnly)...)
+	p = append(p, pathProblems("checkpoint.hash_only_patterns", c.Checkpoint.HashOnlyPatterns, nonEmptyOnly)...)
 	p = append(p, effectRootSelectorProblems(c.Run.WatchedEffectRoots)...)
 	p = append(p, envAllowlistProblems(c.Run.EnvAllowlist)...)
 	if !c.Hashing.TrustMode.Valid() {

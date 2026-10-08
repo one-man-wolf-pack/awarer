@@ -96,10 +96,10 @@ func PrecedenceMarkdown() string {
 		"list, never a merge. A local `.awa/config.toml` that sets\n" +
 		"`[scope].extra_excludes` discards the shared `awa.toml` list rather than\n" +
 		"adding to it, and the same is true of `include`, `env_allowlist`,\n" +
-		"`default_scope`, and `extra_effect_roots`. To keep a shared list and add to\n" +
-		"it, restate the shared entries in the overriding layer. `awa config\n" +
-		"effective` shows the resolved list and the layer it came from, which is the\n" +
-		"reliable way to catch a list you did not mean to drop.\n" +
+		"`default_scope`, `extra_effect_roots`, and `hash_only_patterns`. To keep a\n" +
+		"shared list and add to it, restate the shared entries in the overriding\n" +
+		"layer. `awa config effective` shows the resolved list and the layer it came\n" +
+		"from, which is the reliable way to catch a list you did not mean to drop.\n" +
 		"\n" +
 		"Each active layer that changes observation, hashing, diff, run cache\n" +
 		"identity, storage, or output policy is folded into the relevant config\n" +
@@ -172,6 +172,17 @@ func PatternSemanticsMarkdown() string {
 		"  default.\n" +
 		"- `[scope].extra_excludes` and `[run].extra_excludes` — gitignore-style\n" +
 		"  patterns, additive on top of the built-in baseline excludes.\n" +
+		"- `[checkpoint].hash_only_patterns` — the same matcher as `.awaignore`,\n" +
+		"  applied case-sensitively to the project-relative path (the path a followed\n" +
+		"  symlink is reached by, not its target), in order, so a later `!` exception\n" +
+		"  un-selects. A slash-free pattern such as `*.env` matches at any depth and a\n" +
+		"  leading slash anchors to the root; other patterns containing a slash anchor\n" +
+		"  according to their syntax (`foo/*.env` matches only at the root), so prefer\n" +
+		"  those two forms. A pattern matching a directory selects every file below it.\n" +
+		"  The matcher is not fully Git-compatible: `?` is a literal character, not a\n" +
+		"  wildcard, and some malformed patterns are dropped without an error. It\n" +
+		"  selects files for hash-only checkpoint retention and never changes what is\n" +
+		"  scanned.\n" +
 		"- `[run].extra_effect_roots` — literal selectors, never globs, in one of two\n" +
 		"  forms. A single segment is a directory NAME matched by basename wherever it\n" +
 		"  appears: `\"target\"` watches every `target/`. A slash-separated\n" +

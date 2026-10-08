@@ -48,7 +48,7 @@ func TestConfigFindingNamesSourceLayer(t *testing.T) {
 // (OC-13).
 func TestConfigDefaultFindingHasNoSourcePath(t *testing.T) {
 	e := newEnv(t)
-	if err := os.WriteFile(filepath.Join(e.root, ".env"), []byte("TOKEN=abc\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(e.root, ".netrc"), []byte("machine example.invalid\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// No config layers: store_file_contents is the product default.
@@ -93,8 +93,9 @@ func TestContentStorageEnabledFinding(t *testing.T) {
 	if res := e.run(t, noGit(), Request{}); len(findingsByCode(res, dom.CodeContentStorageEnabled)) != 0 {
 		t.Fatalf("content storage flagged without a secret file: %+v", res.Findings())
 	}
-	// A .env in the project root makes content storage a real leak risk.
-	if err := os.WriteFile(filepath.Join(e.root, ".env"), []byte("TOKEN=abc\n"), 0o600); err != nil {
+	// A .netrc in the project root, which no default selection keeps hash-only, makes
+	// content storage a real leak risk.
+	if err := os.WriteFile(filepath.Join(e.root, ".netrc"), []byte("machine example.invalid\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	res := e.run(t, noGit(), Request{})

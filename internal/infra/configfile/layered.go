@@ -57,9 +57,10 @@ type overlayHashing struct {
 }
 
 type overlayCheckpoint struct {
-	StoreFileContents *bool `toml:"store_file_contents"`
-	DiffContext       *int  `toml:"diff_context"`
-	RenameDetection   *bool `toml:"rename_detection"`
+	StoreFileContents *bool     `toml:"store_file_contents"`
+	HashOnlyPatterns  *[]string `toml:"hash_only_patterns"`
+	DiffContext       *int      `toml:"diff_context"`
+	RenameDetection   *bool     `toml:"rename_detection"`
 }
 
 type overlayRun struct {
@@ -336,6 +337,12 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 		if c.StoreFileContents != nil {
 			cfg.Checkpoint.StoreFileContents = *c.StoreFileContents
 			origins["checkpoint.store_file_contents"] = layer
+		}
+		if c.HashOnlyPatterns != nil {
+			// An explicit [] is a real policy (select nothing), distinct from an absent
+			// key, which keeps the default; keep it non-nil so every view shows [].
+			cfg.Checkpoint.HashOnlyPatterns = append([]string{}, *c.HashOnlyPatterns...)
+			origins["checkpoint.hash_only_patterns"] = layer
 		}
 		if c.DiffContext != nil {
 			cfg.Checkpoint.DiffContext = *c.DiffContext

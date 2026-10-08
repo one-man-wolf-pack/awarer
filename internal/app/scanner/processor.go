@@ -26,12 +26,11 @@ const maxSkippedSampleBuffer = 256
 // node. It retains no full entry/skipped slice: the sorter spills to disk past its
 // buffer, so a scan of millions of paths stays memory-bounded.
 type processor struct {
-	ctx     context.Context
-	hasher  hashing.Hasher
-	index   worktree.IndexLookup
-	cfg     config.Config
-	opts    Options
-	maxSize int64
+	ctx    context.Context
+	hasher hashing.Hasher
+	index  worktree.IndexLookup
+	cfg    config.Config
+	opts   Options
 
 	sorter  *manifestsort.Sorter
 	omitted worktree.FieldSet
@@ -119,6 +118,25 @@ func (p *processor) visit(n worktree.Node) error {
 	}
 }
 
+// RegularStorage is the large-file policy decision for a regular file of the given
+// size: StorageSkipped (recorded as a skipped input), StorageHashOnly, or StorageBlob.
+// It is metadata-only — size against the configured threshold — so a caller asking
+// whether a file would be captured reaches the same answer the scan does without
+// reading it.
+func RegularStorage(h config.Hashing, size int64) worktree.ContentStorageIntent {
+	if size <= h.MaxFileSize.Bytes() {
+		return worktree.StorageBlob
+	}
+	switch h.LargeFilePolicy {
+	case config.LargeFileSkip:
+		return worktree.StorageSkipped
+	case config.LargeFileHashOnly:
+		return worktree.StorageHashOnly
+	default:
+		return worktree.StorageBlob
+	}
+}
+
 // visitRegular hashes a regular file (or applies the large-file policy), reusing
 // an indexed hash when the trust mode permits.
 func (p *processor) visitRegular(n worktree.Node) error {
@@ -130,15 +148,9 @@ func (p *processor) visitRegular(n worktree.Node) error {
 		return fmt.Errorf("scanner: regular node %s has no content opener", n.Path)
 	}
 
-	large := n.Size() > p.maxSize
-
-	if large && p.cfg.Hashing.LargeFilePolicy == config.LargeFileSkip {
+	storage := RegularStorage(p.cfg.Hashing, n.Size())
+	if storage == worktree.StorageSkipped {
 		return p.skip(n, worktree.ReasonLargeFileSkipPolicy)
-	}
-
-	storage := worktree.StorageBlob
-	if large && p.cfg.Hashing.LargeFilePolicy == config.LargeFileHashOnly {
-		storage = worktree.StorageHashOnly
 	}
 
 	// An index lookup failure (corruption, I/O, schema) is a hard error: the index

@@ -92,6 +92,7 @@ func (e *env) checkpointWith(t testing.TB, cfg config.Config, files map[string]s
 		Checkpoints: checkpointjson.NewRepo(layout),
 		Git:         fakeGit{},
 		Content:     worktreefs.NewContentReader(layout.Root()),
+		Patterns:    worktreefs.CompilePatterns,
 		Now:         func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		Rand:        rand.Reader,
 		Version:     "test",

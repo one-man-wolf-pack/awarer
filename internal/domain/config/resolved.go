@@ -111,6 +111,9 @@ var keySpecs = []keySpec{
 	{"hashing.max_file_size", func(a, b Config) bool { return a.Hashing.MaxFileSize != b.Hashing.MaxFileSize }},
 	{"hashing.large_file_policy", func(a, b Config) bool { return a.Hashing.LargeFilePolicy != b.Hashing.LargeFilePolicy }},
 	{"checkpoint.store_file_contents", func(a, b Config) bool { return a.Checkpoint.StoreFileContents != b.Checkpoint.StoreFileContents }},
+	{"checkpoint.hash_only_patterns", func(a, b Config) bool {
+		return !slices.Equal(a.Checkpoint.HashOnlyPatterns, b.Checkpoint.HashOnlyPatterns)
+	}},
 	{"checkpoint.diff_context", func(a, b Config) bool { return a.Checkpoint.DiffContext != b.Checkpoint.DiffContext }},
 	{"checkpoint.rename_detection", func(a, b Config) bool { return a.Checkpoint.RenameDetection != b.Checkpoint.RenameDetection }},
 	{"run.default_scope", func(a, b Config) bool { return !slices.Equal(a.Run.DefaultScope, b.Run.DefaultScope) }},

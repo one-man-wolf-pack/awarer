@@ -156,11 +156,15 @@ const (
 	// through the allowlist; a code-injecting name lets arbitrary code *enter* the child
 	// the run supervises, which is a capability concern rather than a confidentiality
 	// one, and its remediation differs.
-	CodeEnvAllowlistInjectsCode    FindingCode = "env-allowlist-injects-code"
-	CodeContentStorageEnabled      FindingCode = "content-storage-enabled"
-	CodeNestedProjectMarker        FindingCode = "nested-project-marker"
-	CodeNestedMarkerScanIncomplete FindingCode = "nested-marker-scan-incomplete"
-	CodeAncestorProjectMarker      FindingCode = "ancestor-project-marker"
+	CodeEnvAllowlistInjectsCode FindingCode = "env-allowlist-injects-code"
+	CodeContentStorageEnabled   FindingCode = "content-storage-enabled"
+	// CodeContentCaptureCheckIncomplete reports that the bounded capture-eligibility
+	// check could not inspect a candidate or the root's ignore rules. It is never folded
+	// into a pass: an unreadable answer is not evidence that nothing is captured.
+	CodeContentCaptureCheckIncomplete FindingCode = "content-capture-check-incomplete"
+	CodeNestedProjectMarker           FindingCode = "nested-project-marker"
+	CodeNestedMarkerScanIncomplete    FindingCode = "nested-marker-scan-incomplete"
+	CodeAncestorProjectMarker         FindingCode = "ancestor-project-marker"
 )
 
 // findingCodes is the canonical enumeration of the closed vocabulary. It is the one
@@ -214,6 +218,7 @@ var findingCodes = []FindingCode{
 	CodeEnvAllowlistSuspicious,
 	CodeEnvAllowlistInjectsCode,
 	CodeContentStorageEnabled,
+	CodeContentCaptureCheckIncomplete,
 	CodeNestedProjectMarker,
 	CodeNestedMarkerScanIncomplete,
 	CodeAncestorProjectMarker,

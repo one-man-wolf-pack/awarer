@@ -130,10 +130,12 @@ func TestNewViewClonesSlices(t *testing.T) {
 	v.Run.DefaultScope[0] = "MUTATED"
 	v.Run.EffectiveExcludes[0] = "MUTATED"
 	v.Run.EnvAllowlist[0] = "MUTATED"
+	v.Checkpoint.HashOnlyPatterns[0] = "MUTATED"
 
 	if cfg.Scope.Include[0] == "MUTATED" ||
 		cfg.Run.DefaultScope[0] == "MUTATED" ||
-		cfg.Run.EnvAllowlist[0] == "MUTATED" {
+		cfg.Run.EnvAllowlist[0] == "MUTATED" ||
+		cfg.Checkpoint.HashOnlyPatterns[0] == "MUTATED" {
 		t.Error("mutating View slices leaked into the source Config")
 	}
 }

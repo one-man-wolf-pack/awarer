@@ -196,7 +196,8 @@ func equalConfig(a, b Config) bool {
 		!equalStrings(a.History.ExtraExcludes, b.History.ExtraExcludes) ||
 		!equalStrings(a.Run.DefaultScope, b.Run.DefaultScope) ||
 		!equalStrings(a.Run.ExtraExcludes, b.Run.ExtraExcludes) ||
-		!equalStrings(a.Run.EnvAllowlist, b.Run.EnvAllowlist) {
+		!equalStrings(a.Run.EnvAllowlist, b.Run.EnvAllowlist) ||
+		!equalStrings(a.Checkpoint.HashOnlyPatterns, b.Checkpoint.HashOnlyPatterns) {
 		return false
 	}
 	scopeScalarsEqual := a.Scope.UseGitignore == b.Scope.UseGitignore &&
@@ -214,7 +215,9 @@ func equalConfig(a, b Config) bool {
 	return scopeScalarsEqual &&
 		runScalarsEqual &&
 		a.Hashing == b.Hashing &&
-		a.Checkpoint == b.Checkpoint &&
+		a.Checkpoint.StoreFileContents == b.Checkpoint.StoreFileContents &&
+		a.Checkpoint.DiffContext == b.Checkpoint.DiffContext &&
+		a.Checkpoint.RenameDetection == b.Checkpoint.RenameDetection &&
 		a.GC == b.GC &&
 		a.Diff == b.Diff &&
 		a.Locks == b.Locks

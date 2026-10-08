@@ -8,8 +8,8 @@ awa doctor [--repair] [--strict]
 store, run cache, worktree index, lock files, and the `.awa/` git guard — and
 prints a one-line health verdict plus one line per finding. It also
 raises local evidence/privacy findings: secret-looking env allowlist names,
-content storage in a project that appears to hold secrets, overly broad `.awa/`
-permissions, and nested or ancestor `.awa` markers (see
+a secret-looking top-level file a checkpoint would store bytes for, overly broad
+`.awa/` permissions, and nested or ancestor `.awa` markers (see
 [awa help privacy](privacy.md)).
 
 ```text
@@ -60,8 +60,11 @@ env-allowlist-suspicious      an allowlisted env name looks like a secret
 env-allowlist-injects-code    an allowlisted env name can load or execute code
                               in the wrapped command (LD_PRELOAD, DYLD_*,
                               BASH_ENV, NODE_OPTIONS, RUBYOPT, ...)
-content-storage-enabled       file contents are stored in a project that looks
-                              like it holds secrets
+content-storage-enabled       a secret-looking top-level file is in checkpoint
+                              scope and not hash-only, so its bytes may be stored
+content-capture-check-incomplete
+                              that file check could not inspect a candidate or
+                              an ignore file; the answer is unknown, not clean
 nested-*, ancestor-*          another .awa marker below or above this root, or a
                               nested-marker scan that could not complete
 repair-failed                 a repair was attempted and did not succeed

@@ -2,6 +2,7 @@ package configfile
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,6 +200,8 @@ func TestComposeListReplacesWholesale(t *testing.T) {
 			func(c config.Config) []string { return c.Run.EnvAllowlist }, "NEW_TOOL_VAR"},
 		{"run.extra_effect_roots", "[run]\nextra_effect_roots = [\"gen\", \"out2\"]\n", "[run]\nextra_effect_roots = [\"artifacts\"]\n",
 			func(c config.Config) []string { return c.Run.WatchedEffectRoots }, "artifacts"},
+		{"checkpoint.hash_only_patterns", "[checkpoint]\nhash_only_patterns = [\"*.key\", \"!public.key\"]\n", "[checkpoint]\nhash_only_patterns = [\"secrets/\"]\n",
+			func(c config.Config) []string { return c.Checkpoint.HashOnlyPatterns }, "secrets/"},
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {
@@ -214,6 +217,52 @@ func TestComposeListReplacesWholesale(t *testing.T) {
 			}
 			if origins[c.key] != config.LayerLocal {
 				t.Errorf("%s origin = %q, want local", c.key, origins[c.key])
+			}
+		})
+	}
+}
+
+// TestHashOnlyPatternsResolution pins the selective-retention list at the layer
+// boundary: an unspecified list is the product default whatever else a layer says —
+// including an explicit store_file_contents = true, which selects no legacy empty
+// default — while an explicit [] is a real empty policy that replaces even a lower
+// layer's custom list, and a custom list replaces the defaults entirely.
+func TestHashOnlyPatternsResolution(t *testing.T) {
+	const key = "checkpoint.hash_only_patterns"
+	defaults := config.HashOnlyDefaults()
+	cases := []struct {
+		name   string
+		layers []string
+		want   []string
+		origin config.Layer
+	}{
+		{"no config", nil, defaults, config.LayerDefault},
+		{"unrelated config", []string{"[run]\nttl = \"1d\"\n"}, defaults, config.LayerDefault},
+		{"explicit storage on", []string{"[checkpoint]\nstore_file_contents = true\n"}, defaults, config.LayerDefault},
+		{"explicit empty", []string{"[checkpoint]\nhash_only_patterns = []\n"}, []string{}, config.LayerLocal},
+		{"custom replaces defaults", []string{"[checkpoint]\nhash_only_patterns = [\"*.pem\"]\n"}, []string{"*.pem"}, config.LayerLocal},
+		{"empty over custom", []string{"[checkpoint]\nhash_only_patterns = [\"*.pem\"]\n", "[checkpoint]\nhash_only_patterns = []\n"}, []string{}, config.LayerLocal},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var layers []NamedOverlay
+			for i, text := range c.layers {
+				layer := config.LayerLocal
+				if i == 0 && len(c.layers) > 1 {
+					layer = config.LayerShared
+				}
+				layers = append(layers, NamedOverlay{Layer: layer, Overlay: overlay(t, text)})
+			}
+			cfg, origins, err := Compose(layers)
+			if err != nil {
+				t.Fatalf("Compose: %v", err)
+			}
+			got := cfg.Checkpoint.HashOnlyPatterns
+			if got == nil || !slices.Equal(got, c.want) {
+				t.Errorf("hash_only_patterns = %#v, want %#v", got, c.want)
+			}
+			if origins[key] != c.origin {
+				t.Errorf("origin = %q, want %q", origins[key], c.origin)
 			}
 		})
 	}

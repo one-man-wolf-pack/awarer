@@ -165,6 +165,7 @@ func (h *harness) checkpointNow(cfg domainconfig.Config) checkpoint.CheckpointID
 		Checkpoints: checkpointjson.NewRepo(h.layout),
 		Git:         noGit{},
 		Content:     worktreefs.NewContentReader(h.layout.Root()),
+		Patterns:    worktreefs.CompilePatterns,
 		Now:         func() time.Time { return stamp },
 		Rand:        rand.Reader,
 		Version:     "test",

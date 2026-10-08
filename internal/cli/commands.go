@@ -1322,6 +1322,7 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	w.Line("")
 	w.Line("[checkpoint]")
 	kv("checkpoint.store_file_contents", "store_file_contents = %t", v.Checkpoint.StoreFileContents)
+	kv("checkpoint.hash_only_patterns", "hash_only_patterns = %s", quoteList(v.Checkpoint.HashOnlyPatterns))
 	kv("checkpoint.diff_context", "diff_context = %d", v.Checkpoint.DiffContext)
 	kv("checkpoint.rename_detection", "rename_detection = %t", v.Checkpoint.RenameDetection)
 	w.Line("")

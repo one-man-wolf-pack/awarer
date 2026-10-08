@@ -102,6 +102,7 @@ func setup(t *testing.T) *harness {
 		Checkpoints: checkpoints,
 		Git:         fakeGit{},
 		Content:     content,
+		Patterns:    worktreefs.CompilePatterns,
 		Now:         func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		Rand:        rand.Reader,
 		Version:     "test",
@@ -172,7 +173,7 @@ func (h *harness) requireNoStoredBlobs(t *testing.T) {
 // a per-entry rejection surfaces.
 func (h *harness) materialize(t *testing.T, cfg config.Config, scan scanner.Result) error {
 	t.Helper()
-	src := &manifestSource{svc: h.svc, cfg: cfg, scan: scan}
+	src := &manifestSource{svc: h.svc, retention: NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns), scan: scan}
 	cur, err := src.Open(context.Background())
 	if err != nil {
 		t.Fatalf("open manifest source: %v", err)

@@ -59,8 +59,11 @@ type HashingView struct {
 
 type CheckpointView struct {
 	StoreFileContents bool `json:"store_file_contents"`
-	DiffContext       int  `json:"diff_context"`
-	RenameDetection   bool `json:"rename_detection"`
+	// HashOnlyPatterns is always an array: an explicit empty selection is policy
+	// and renders as [], never null.
+	HashOnlyPatterns []string `json:"hash_only_patterns"`
+	DiffContext      int      `json:"diff_context"`
+	RenameDetection  bool     `json:"rename_detection"`
 }
 
 type RunView struct {
@@ -135,6 +138,7 @@ func NewView(c config.Config) View {
 		},
 		Checkpoint: CheckpointView{
 			StoreFileContents: c.Checkpoint.StoreFileContents,
+			HashOnlyPatterns:  append([]string{}, c.Checkpoint.HashOnlyPatterns...),
 			DiffContext:       c.Checkpoint.DiffContext,
 			RenameDetection:   c.Checkpoint.RenameDetection,
 		},

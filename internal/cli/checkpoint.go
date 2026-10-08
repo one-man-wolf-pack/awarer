@@ -49,6 +49,7 @@ func buildCheckpointService(ctx context.Context, layout paths.Layout, cfg domain
 		Checkpoints: checkpointjson.NewRepo(layout),
 		Git:         gitmeta.New(layout.Root()),
 		Content:     worktreefs.NewContentReader(layout.Root()),
+		Patterns:    worktreefs.CompilePatterns,
 		Now:         time.Now,
 		Rand:        rand.Reader,
 		Version:     app.VersionString(),
