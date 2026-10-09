@@ -13,7 +13,7 @@ import (
 // run-cache keys an allowlisted variable's value without persisting it raw.
 func awaEnv(t *testing.T, dir string, env []string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(awaBin, args...)
+	cmd := exec.Command(awaBinary(), args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	var out, errBuf strings.Builder

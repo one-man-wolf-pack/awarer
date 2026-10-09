@@ -150,15 +150,20 @@ release-gate: _gate _licenses-full _analyze stress _crossbuild _smoke
 
 # ── Maintenance ──────────────────────────────────────────────────────────────
 
-# Remove the built binary, the generated site, and the release artifacts.
+# Remove the built binary, the generated site, the release artifacts, and the Go test
+# artifacts left in the repository root.
 #
 # Every path here is a fixed literal this repository generates: site/dist is what `site`
-# writes, and dist is GoReleaser's own. Neither takes a caller-supplied value, so nothing
-# a stray environment variable can point elsewhere reaches a recursive remove.
-[doc('Remove the built binary, the generated site, and the release artifacts.')]
+# writes, dist is GoReleaser's own, and the root *.test, *.out, and coverage.txt are what
+# `go test -c` and coverage runs leave behind (all already ignored by Git). None takes a
+# caller-supplied value, so nothing a stray environment variable can point elsewhere
+# reaches a remove. The shared Go build and test caches are left alone: they serve
+# every project on the machine.
+[doc('Remove the built binary, the generated site, the release artifacts, and root Go test artifacts.')]
 [group('Maintenance')]
 clean:
     rm -f awa
+    rm -f -- *.test *.out coverage.txt
     rm -rf site/dist dist
     go clean
 

@@ -25,7 +25,7 @@ type cmdResult struct {
 // A non-exit failure (the binary could not run at all) is reported as code -1 with
 // the error appended to stderr.
 func awaCmd(dir string, args ...string) cmdResult {
-	cmd := exec.Command(awaBin, args...)
+	cmd := exec.Command(awaBinary(), args...)
 	cmd.Dir = dir
 	var out, errBuf strings.Builder
 	cmd.Stdout = &out

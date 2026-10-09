@@ -436,7 +436,7 @@ func TestAcceptanceStateResolveLatestRace(t *testing.T) {
 				// it drives the filesystem and binary directly and ignores errors: moving
 				// latest is the probe's setup, not its subject.
 				_ = os.WriteFile(filepath.Join(root, "a.txt"), []byte("rev"+string(rune('a'+i%26))), 0o644)
-				cmd := exec.Command(awaBin, "checkpoint", "-m", "race")
+				cmd := exec.Command(awaBinary(), "checkpoint", "-m", "race")
 				cmd.Dir = root
 				_ = cmd.Run()
 			}

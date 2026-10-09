@@ -101,7 +101,7 @@ var (
 func helper(t *testing.T) string {
 	t.Helper()
 	helperOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "awa-helper-*")
+		dir, err := os.MkdirTemp(buildDir, "helper-*")
 		if err != nil {
 			helperErr = err
 			return

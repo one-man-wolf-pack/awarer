@@ -12,7 +12,7 @@ import (
 // mid-run. It returns the command and the buffers its streams are captured into.
 func startAwa(t *testing.T, dir string, args ...string) (*exec.Cmd, *strings.Builder, *strings.Builder) {
 	t.Helper()
-	cmd := exec.Command(awaBin, args...)
+	cmd := exec.Command(awaBinary(), args...)
 	cmd.Dir = dir
 	var out, errBuf strings.Builder
 	cmd.Stdout = &out

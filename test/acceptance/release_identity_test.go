@@ -51,7 +51,7 @@ func TestTheVersionStampReachesAwaVersion(t *testing.T) {
 	// build's linker flag rather than from a tag that happens to exist.
 	const poison = "v9999.999.999"
 
-	// Its own build, not the package's shared awaBin: that one carries no linker flags, so
+	// Its own build, not the package's shared awaBinary(): that one carries no linker flags, so
 	// asserting a version against it could only ever read the development default back.
 	bin := filepath.Join(t.TempDir(), "awa")
 	build := exec.Command("go", "build", "-ldflags", stampAssignment+poison, "-o", bin, "../../cmd/awa")

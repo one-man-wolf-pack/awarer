@@ -120,7 +120,7 @@ var (
 func localeReader(t *testing.T) string {
 	t.Helper()
 	localeReaderOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "awa-locale-reader-*")
+		dir, err := os.MkdirTemp(buildDir, "locale-reader-*")
 		if err != nil {
 			localeReaderErr = err
 			return
@@ -150,7 +150,7 @@ func localeReader(t *testing.T) string {
 // control of the child environment.
 func awaExactEnv(t *testing.T, dir string, env []string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(awaBin, args...)
+	cmd := exec.Command(awaBinary(), args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	var out, errBuf strings.Builder
@@ -349,7 +349,7 @@ func TestNestedRunGainsNoAuthority(t *testing.T) {
 
 	env := append(minimalEnv(), "LANG=en_US.UTF-8", "SECRET_OUTER=leak")
 	_, stdout, stderr := awaExactEnv(t, root, env,
-		"run", "--no-cache", "--", awaBin, "run", "--no-cache", "--", reader, "-dump-env")
+		"run", "--no-cache", "--", awaBinary(), "run", "--no-cache", "--", reader, "-dump-env")
 
 	child := childEnvFromDump(stdout)
 	if got, ok := child["AWA_RUN"]; !ok || got != "1" {

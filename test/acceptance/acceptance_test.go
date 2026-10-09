@@ -4,37 +4,95 @@ package acceptance
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// awaBin is the path to the binary built in TestMain.
-var awaBin string
+// buildDir holds every binary the suite builds — awa and the fixture commands — so
+// TestMain removes them all in one place when the run ends.
+var buildDir string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "awa-acceptance-*")
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
+	buildDir = dir
+	// Not a defer: os.Exit skips deferred calls, so a deferred removal would leave the
+	// built binaries behind after every run.
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
-	awaBin = filepath.Join(dir, "awa")
-	build := exec.Command("go", "build", "-o", awaBin, "../../cmd/awa")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		panic("building awa: " + err.Error())
+var (
+	awaOnce sync.Once
+	awaBin  string
+	awaErr  error
+)
+
+// awaBinary builds the awa binary on first use and returns its path. The build runs
+// inside a test rather than in TestMain because go test records the files a test
+// touches only once the tests start, and recordBuildInputs must be recorded — and must
+// precede the build — for the suite's cached result to follow the code it exercises.
+// A failed build panics: no scenario can run without the binary.
+func awaBinary() string {
+	awaOnce.Do(func() {
+		if err := recordBuildInputs(); err != nil {
+			awaErr = fmt.Errorf("recording build inputs: %w", err)
+			return
+		}
+		bin := filepath.Join(buildDir, "awa")
+		build := exec.Command("go", "build", "-o", bin, "../../cmd/awa")
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			awaErr = fmt.Errorf("building awa: %w", err)
+			return
+		}
+		awaBin = bin
+	})
+	if awaErr != nil {
+		panic(awaErr)
 	}
+	return awaBin
+}
 
-	os.Exit(m.Run())
+// recordBuildInputs stats every file the awa binary can be built from. go test caches
+// this package's result by its own test binary and the files the test touches, and the
+// awa binary is built by a child go process it cannot see; without these stats, a change
+// confined to the CLI or application code would replay a stale cached pass. Unit-test
+// files are skipped because they never reach the binary.
+func recordBuildInputs() error {
+	for _, f := range []string{"../../go.mod", "../../go.sum"} {
+		if _, err := os.Stat(f); err != nil {
+			return err
+		}
+	}
+	for _, root := range []string{"../../cmd", "../../internal"} {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.HasSuffix(p, "_test.go") {
+				return err
+			}
+			_, err = os.Stat(p)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // awa runs the built binary in dir and returns exit code, stdout, and stderr.
 func awa(t *testing.T, dir string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(awaBin, args...)
+	cmd := exec.Command(awaBinary(), args...)
 	cmd.Dir = dir
 	var out, errBuf strings.Builder
 	cmd.Stdout = &out

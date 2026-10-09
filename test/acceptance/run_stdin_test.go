@@ -39,7 +39,7 @@ func awaWithStdin(t *testing.T, dir string, holdOpen bool, args ...string) (int,
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, awaBin, args...)
+	cmd := exec.CommandContext(ctx, awaBinary(), args...)
 	cmd.Dir = dir
 	cmd.Stdin = r
 	var out, errBuf strings.Builder
