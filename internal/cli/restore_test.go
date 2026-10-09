@@ -289,6 +289,108 @@ func TestStateProviderRefusesARecoveryObservationReference(t *testing.T) {
 	}
 }
 
+func TestComparisonJSONNamesARecoveryOperand(t *testing.T) {
+	root, checkpointID := restoreProject(t)
+
+	code, stdout, stderr := run("restore", "--root", root, "--json", "--apply", checkpointID, "--", filepath.Join(root, "generated", "client"))
+	if code != int(ExitSuccess) {
+		t.Fatalf("apply exit = %d, stderr = %q", code, stderr)
+	}
+	var applied struct {
+		Data struct {
+			Recovery struct {
+				OperationID string `json:"operation_id"`
+				Ref         string `json:"ref"`
+			} `json:"recovery"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &applied); err != nil || applied.Data.Recovery.Ref == "" {
+		t.Fatalf("decode apply json: %v\n%s", err, stdout)
+	}
+	recoveryRef := applied.Data.Recovery.Ref
+
+	metaBytes, err := os.ReadFile(filepath.Join(paths.New(root).RestoresDir(), applied.Data.Recovery.OperationID, "meta.json"))
+	if err != nil {
+		t.Fatalf("read recovery meta: %v", err)
+	}
+	var meta struct {
+		Manifest struct {
+			TreeHash string `json:"tree_hash"`
+		} `json:"manifest"`
+	}
+	if err := json.Unmarshal(metaBytes, &meta); err != nil || meta.Manifest.TreeHash == "" {
+		t.Fatalf("decode recovery meta: %v\n%s", err, metaBytes)
+	}
+	recoveryTree := meta.Manifest.TreeHash
+
+	type comparisonDoc struct {
+		Data struct {
+			Left    map[string]any `json:"left"`
+			Right   map[string]any `json:"right"`
+			Changes []any          `json:"changes"`
+			Files   []any          `json:"files"`
+		} `json:"data"`
+	}
+	compare := func(t *testing.T, args ...string) comparisonDoc {
+		t.Helper()
+		code, stdout, stderr := run(append([]string{args[0], "--root", root, "--json"}, args[1:]...)...)
+		if code != int(ExitSuccess) {
+			t.Fatalf("%v exit = %d, stderr = %q", args, code, stderr)
+		}
+		var doc comparisonDoc
+		if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+			t.Fatalf("decode %v: %v\n%s", args, err, stdout)
+		}
+		return doc
+	}
+	assertRecovery := func(t *testing.T, side string, v map[string]any) {
+		t.Helper()
+		if v["kind"] != "recovery-observation" || v["ref"] != recoveryRef || v["tree_hash"] != recoveryTree {
+			t.Errorf("%s = %v, want recovery-observation %s at %s", side, v, recoveryRef, recoveryTree)
+		}
+		for _, field := range []string{"checkpoint_id", "message", "created_at", "run_id", "run_observation"} {
+			if _, ok := v[field]; ok {
+				t.Errorf("%s carries %s: %v", side, field, v)
+			}
+		}
+	}
+
+	checkpointTree := compare(t, "changes", checkpointID+"..now").Data.Left["tree_hash"]
+	if checkpointTree == recoveryTree {
+		t.Fatalf("fixture cannot distinguish the recovery tree from its source checkpoint: %v", checkpointTree)
+	}
+
+	for _, command := range []string{"changes", "diff"} {
+		t.Run(command, func(t *testing.T) {
+			delta := func(doc comparisonDoc) []any {
+				if command == "diff" {
+					return doc.Data.Files
+				}
+				return doc.Data.Changes
+			}
+
+			left := compare(t, command, recoveryRef+"..now")
+			assertRecovery(t, "left", left.Data.Left)
+			if left.Data.Right["kind"] != "now" || len(delta(left)) == 0 {
+				t.Errorf("recovery..now right = %v with %d entries, want now and a non-empty delta", left.Data.Right, len(delta(left)))
+			}
+
+			right := compare(t, command, checkpointID+".."+recoveryRef)
+			assertRecovery(t, "right", right.Data.Right)
+			if right.Data.Left["kind"] != "checkpoint" || right.Data.Left["checkpoint_id"] != checkpointID || len(delta(right)) == 0 {
+				t.Errorf("checkpoint..recovery left = %v with %d entries, want the source checkpoint and a non-empty delta", right.Data.Left, len(delta(right)))
+			}
+
+			empty := compare(t, command, recoveryRef+".."+recoveryRef)
+			assertRecovery(t, "left", empty.Data.Left)
+			assertRecovery(t, "right", empty.Data.Right)
+			if d := delta(empty); d == nil || len(d) != 0 {
+				t.Errorf("recovery..recovery delta = %v, want an empty array", d)
+			}
+		})
+	}
+}
+
 // readWorktree reads a project file for an assertion.
 func readWorktree(t *testing.T, root, rel string) string {
 	t.Helper()

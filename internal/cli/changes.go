@@ -557,6 +557,8 @@ func stateView(s *state.ResolvedState) stateRefView {
 			v.RunReuse = reuse
 			v.RunReuseReason = reason
 		}
+	case state.KindRestoreObservation:
+		v.Kind = "recovery-observation"
 	}
 	return v
 }
