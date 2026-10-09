@@ -167,6 +167,7 @@ reading in order.
   [awa help inspect](inspect.md)
 - something is slow, stale, blocked, or broken —
   [awa help troubleshooting](troubleshooting.md)
+- reviewing an existing project's setup — [awa help maintenance](maintenance.md)
 - consuming awa from a script — [awa help json](json.md)
 
 ## See also
@@ -174,6 +175,5 @@ reading in order.
 - [awa help run](run.md)
 - [awa help record](record.md)
 - [awa help checkpoints](checkpoints.md)
-- [awa help restore](restore.md)
 - [awa help privacy](privacy.md)
 - [awa help exit-codes](exit-codes.md)

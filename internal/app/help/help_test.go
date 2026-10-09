@@ -15,7 +15,7 @@ import (
 var wantCanonical = []string{
 	"agents", "install", "quickstart", "workflows", "status",
 	"run", "record", "inspect", "checkpoints", "diff", "restore", "refs",
-	"config", "ignores", "doctor", "gc", "troubleshooting",
+	"config", "ignores", "doctor", "gc", "maintenance", "troubleshooting",
 	"privacy", "integrations", "platform", "json", "exit-codes",
 }
 

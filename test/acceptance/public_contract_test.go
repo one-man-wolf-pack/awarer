@@ -40,7 +40,7 @@ var publicSubcommands = [][]string{
 var publicTopics = []string{
 	"agents", "install", "quickstart", "workflows", "status",
 	"run", "record", "inspect", "checkpoints", "diff", "restore", "refs",
-	"config", "ignores", "doctor", "gc", "troubleshooting",
+	"config", "ignores", "doctor", "gc", "maintenance", "troubleshooting",
 	"privacy", "integrations", "platform", "json", "exit-codes",
 }
 
@@ -72,6 +72,36 @@ func TestHelpWorksOutsideProject(t *testing.T) {
 		}
 		if stderr != "" {
 			t.Errorf("awa %s: stderr = %q, want empty", strings.Join(args, " "), stderr)
+		}
+	}
+}
+
+// TestHelpTopicsIgnoreInvalidConfig proves topic help never reads configuration: an
+// agent asked to review a broken setup must still be able to read the guidance for it.
+// The directory carries a root marker beside an unparseable awa.toml, and the
+// config-reading control proves that configuration really is discoverable and broken
+// here, so the help results are not passing for want of anything to load.
+func TestHelpTopicsIgnoreInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".awa"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "awa.toml"), []byte("[run\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := awa(t, dir, "config", "validate"); code != 4 {
+		t.Fatalf("config validate exit = %d, want 4: the fixture does not present an invalid config", code)
+	}
+
+	surfaces := [][]string{{"help"}, {"help", "topics"}}
+	for _, topic := range publicTopics {
+		surfaces = append(surfaces, []string{"help", topic})
+	}
+	for _, args := range surfaces {
+		code, stdout, stderr := awa(t, dir, args...)
+		if code != 0 || strings.TrimSpace(stdout) == "" || stderr != "" {
+			t.Errorf("awa %s beside an invalid config: exit = %d, stdout empty = %v, stderr = %q",
+				strings.Join(args, " "), code, strings.TrimSpace(stdout) == "", stderr)
 		}
 	}
 }

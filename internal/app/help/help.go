@@ -201,6 +201,11 @@ var catalogSpec = []entry{
 		kind:    string(docbundle.KindTopic), file: "gc.md", outPath: topicsDir + "/gc.md",
 	},
 	{
+		slug: "maintenance", title: "maintaining an existing project — setup review and cleanup decisions",
+		summary: "review an existing project's setup; decide changes explicitly",
+		kind:    string(docbundle.KindTopic), file: "maintenance.md", outPath: topicsDir + "/maintenance.md",
+	},
+	{
 		slug: "troubleshooting", title: "diagnosing awa — slow, stale, blocked, or broken",
 		summary: "symptom-to-command decision paths and recovery",
 		kind:    string(docbundle.KindTopic), file: "troubleshooting.md", outPath: topicsDir + "/troubleshooting.md",

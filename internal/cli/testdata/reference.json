@@ -1154,6 +1154,10 @@
         "summary": "reclaim unreferenced checkpoints, runs, and blobs"
       },
       {
+        "name": "maintenance",
+        "summary": "review an existing project's setup; decide changes explicitly"
+      },
+      {
         "name": "troubleshooting",
         "summary": "symptom-to-command decision paths and recovery"
       },
