@@ -250,7 +250,7 @@
       "summary": "run a command with caching and supervised history",
       "usage": [
         "run [run flags] -- <command> [args...]",
-        "run <subcommand> [flags]   (ls, log, show, rm, explain)"
+        "run <subcommand> [flags]   (ls, log, show, rm, explain, audit)"
       ],
       "topic": "run",
       "exit_note": "exit code: awa run returns the wrapped command's own exit code after a hit or a miss. Because that can overlap awa's 1-6 codes, use --json (run.exit_origin) or the run log to tell an awa-origin failure from a child result.",
@@ -559,6 +559,32 @@
               ],
               "desc": "report what would be removed without deleting",
               "takes_value": false
+            }
+          ]
+        },
+        {
+          "name": "audit",
+          "summary": "summarize stored reuse reasons of recent runs",
+          "usage": [
+            "run audit [-n <count>]"
+          ],
+          "topic": "maintenance",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ],
+          "flags": [
+            {
+              "spellings": [
+                "-n",
+                "--limit"
+              ],
+              "desc": "audit the newest <count> runs (at most 1000)",
+              "default": "200",
+              "takes_value": true,
+              "value": "<count>"
             }
           ]
         },

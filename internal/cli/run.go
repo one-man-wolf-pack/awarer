@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +35,7 @@ import (
 // runCmdHelp is the command-specific help for "awa run", shared by the registry
 // entry and the wrapper-help path (awa run --help) so they cannot drift.
 var runCmdHelp = commandHelp{
-	usage: []string{"run [run flags] -- <command> [args...]", "run <subcommand> [flags]   (ls, log, show, rm, explain)"},
+	usage: []string{"run [run flags] -- <command> [args...]", "run <subcommand> [flags]   (ls, log, show, rm, explain, audit)"},
 	long:  "Run a command through the deterministic run cache: a cache hit replays stored stdout/stderr/exit; a miss executes, observes, and (policy permitting) records a reusable entry. Prefer the explicit -- form so awa flags never mix with the wrapped command's flags.",
 	flags: []flagHelp{
 		{"--display <mode>", "terminal display: full|summary|tail:<n>|none", "full"},
@@ -56,14 +57,14 @@ var runCmdHelp = commandHelp{
 }
 
 // runSubcommands are the reserved "awa run <name>" verbs (ls, log, show, rm,
-// explain). It is the single source for dispatch and help, attached to the run
+// explain, audit). It is the single source for dispatch and help, attached to the run
 // command's registry entry (see newRouter) so help and the CLI reference read the
 // same slice runRun dispatches from.
 //
 // Only ls and explain honor --trust-mode/--strict: both resolve the run cache
 // decision against the current state (ls the reusable-now set, explain the modeled
 // hit/miss) through loadProjectConfig, which applies the trust override — exactly
-// as "awa run" does. log/show/rm read stored history and never consult the trust
+// as "awa run" does. log/show/rm/audit read stored history and never consult the trust
 // policy, so they reject it rather than accept-and-ignore it.
 var runSubcommands = []subcommand{
 	{name: "ls", run: runRunLs, summary: "list reusable runs for the current state", caps: []capability{capRoot, capConfig, capJSON, capTrustMode}, help: commandHelp{
@@ -120,6 +121,15 @@ var runSubcommands = []subcommand{
 		examples: []string{"awa run rm --older-than 720h --dry-run"},
 		topic:    "inspect",
 	}},
+	{name: "audit", run: runRunAudit, summary: "summarize stored reuse reasons of recent runs", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
+		usage: []string{"run audit [-n <count>]"},
+		long:  "Summarize the primary stored reuse reason of each of the newest retained runs, from their metadata alone: no worktree scan, no output or manifest read. Selected runs whose metadata is corrupt, incompatible, vanished, unreadable, or over the read budget keep their place and are reported, never replaced by older runs. History holds retained executions, not every invocation, so this is not a hit rate, and a run reusable when stored need not be reusable now.",
+		flags: []flagHelp{
+			{"-n, --limit <count>", fmt.Sprintf("audit the newest <count> runs (at most %d)", apprun.MaxAuditLimit), strconv.Itoa(apprun.DefaultAuditLimit)},
+		},
+		examples: []string{"awa run audit", "awa run audit -n 50 --json"},
+		topic:    "maintenance",
+	}},
 	{name: "explain", run: runRunExplain, summary: "explain how the run cache would behave", caps: []capability{capRoot, capConfig, capJSON, capTrustMode}, operands: operandWrappedCommand, help: commandHelp{
 		usage: []string{"run explain -- <command> [args...]", "run explain --last", "run explain --from-run <id> --to-now"},
 		long:  "Compute the same key and cacheability decision awa run would, without executing or recording. Reports the outcome (hit/miss/uncached/disabled), the reason, and the nearest candidates. It is a diagnostic and always exits 0. In command mode (-- <command>) it accepts the same input/policy flags as run; the stored-run modes (--last/--from-run) take no other flags.",
@@ -144,7 +154,7 @@ var runSubcommands = []subcommand{
 }
 
 // runRun handles "awa run". It either dispatches a reserved subcommand (ls, log,
-// show, rm, explain) or runs a wrapped command through the cache. The command is the
+// show, rm, explain, audit) or runs a wrapped command through the cache. The command is the
 // operands after "--", or — in the short form — the first non-flag token of the
 // arguments and everything after it.
 func runRun(w *output.Writer, inv invocation) error {

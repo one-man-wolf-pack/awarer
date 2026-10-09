@@ -71,6 +71,7 @@ var docCoverage = map[string]coverageOwner{
 	"command:run log":          {topic: "inspect"},
 	"command:run show":         {topic: "inspect"},
 	"command:run rm":           {topic: "inspect"},
+	"command:run audit":        {topic: "maintenance"},
 	"command:config path":      {topic: "troubleshooting"},
 	"command:config show":      {topic: "quickstart"},
 	"command:config effective": {topic: "quickstart"},

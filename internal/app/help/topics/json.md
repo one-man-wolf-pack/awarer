@@ -108,6 +108,33 @@ envelope plus the keys a document always carries — `awa run ls --json` always 
 its `diagnostics.performance` array, empty when nothing crossed the latency
 threshold, so machine-readable latency facts never live only on stderr.
 
+## Reading the run audit
+
+`awa run audit --json` (`run.audit`) counts retained recorded executions, not
+invocations: a replayed hit leaves no record, so the document has no hit rate.
+Its facts are separate, and an unknown total is never written as zero:
+
+- `window` — `requested`, `selected`, and `max`; `older` is `present` when
+  retained runs exist beyond the window, else `none`; `coverage` is
+  `newest-window`, `all-retained`, or `none`; `history` is `present`, `empty`
+  (history exists with no runs), or `missing` (no run history exists in this store).
+- `reads` — `classified` and `unavailable` sum to `selected`; `complete` is false
+  when any selected run went unread. `availability` names why, per state:
+  `corrupt`, `incompatible`, `vanished`, `unreadable`, `over-record-budget`, or
+  `unread-budget` when the total byte budget ran out. A budget refusal is not
+  corruption; the run stays readable elsewhere.
+- `classifications` — one entry per stored `kind`/`reason` with its `group`:
+  `reusable-when-stored`, `deliberate-recording`, `policy-blocker`,
+  `changed-state`, `observation-unavailable`, or `failure-cache-policy`. Each run
+  counts once, by its primary stored reason only; `reusable-when-stored` is
+  history, not a claim that the run is reusable now.
+- `examples` — at most a few full `run_ids`, with a `bounded` completeness fact
+  separate from the exact `count`.
+- `suggestions` — typed `{kind, reason, argv, display}` drilldowns; use `argv`.
+
+How to read and act on the audit is in [awa help maintenance](maintenance.md);
+the stored reason tokens are in [awa help run](run.md).
+
 ## See also
 
 - [awa help exit-codes](exit-codes.md)

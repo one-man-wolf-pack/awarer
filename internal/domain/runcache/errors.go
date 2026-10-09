@@ -43,3 +43,9 @@ var ErrIncompatibleEntry = errors.New("run entry uses an incompatible metadata s
 // observation should exist but is damaged), so a run-observation reference fails loud
 // with the right reason.
 var ErrObservationUnavailable = errors.New("run observation is unavailable")
+
+// ErrReadBudgetExceeded reports that a bounded diagnostic read refused a run's
+// metadata because it exceeds the byte budget the caller allowed. It is not a
+// validity verdict: the same record may be perfectly readable through Get, so a
+// caller reports it as unmeasured evidence rather than as corruption.
+var ErrReadBudgetExceeded = errors.New("run metadata exceeds the read budget")

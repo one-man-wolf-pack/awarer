@@ -276,6 +276,7 @@ func TestRunSubcommandOperandSplit(t *testing.T) {
 		"log":     operandNone,
 		"show":    operandNone,
 		"rm":      operandNone,
+		"audit":   operandNone,
 		"explain": operandWrappedCommand,
 	}
 	for _, sc := range runSubcommands {
@@ -314,7 +315,7 @@ func TestSubcommandsOutsideRunTakeNoOperands(t *testing.T) {
 // "normalizes" the set in either direction fails here, and a new run subcommand
 // must be classified rather than silently defaulting.
 func TestRunSubcommandTrustModeSplit(t *testing.T) {
-	wantTrust := map[string]bool{"ls": true, "explain": true, "log": false, "show": false, "rm": false}
+	wantTrust := map[string]bool{"ls": true, "explain": true, "log": false, "show": false, "rm": false, "audit": false}
 	for _, sc := range runSubcommands {
 		want, ok := wantTrust[sc.name]
 		if !ok {

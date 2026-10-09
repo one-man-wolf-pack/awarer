@@ -180,6 +180,13 @@ type Store interface {
 	Lookup(key RunKey) (CacheEntry, bool, error)
 	Begin(limits CaptureLimits) (PendingRun, error)
 	Get(id RunID) (RunEntry, error)
+	// GetWithin is Get under a diagnostic byte bound: it reads at most maxBytes of
+	// metadata and applies exactly Get's decoding and validation. Metadata larger
+	// than the bound returns ErrReadBudgetExceeded without decoding a prefix — a
+	// refusal that says nothing about the record's validity. It also returns how
+	// many metadata bytes it actually read, so a caller can hold an aggregate budget.
+	// It opens no payload or manifest.
+	GetWithin(id RunID, maxBytes int64) (RunEntry, int64, error)
 	// OpenBeforeManifest and OpenAfterManifest return a verified stream over a
 	// recorded run's pre/post observed-state manifest. OpenAfterManifest returns
 	// ErrObservationUnavailable for a post-scan-failed run, the only run without an
@@ -223,6 +230,11 @@ type Store interface {
 	// many ids share a single shard — is counted in bounded memory. It walks every id,
 	// so it takes a context and honors cancellation mid-count.
 	CountRefs(ctx context.Context) (int, error)
+	// HistoryPresent reports whether the run-entry history directory exists, without
+	// listing it: false is known missing history (no history location exists now),
+	// true with no ids is known empty history. A history location that is not a real
+	// directory is ErrCorruptStore, never a missing history.
+	HistoryPresent() (bool, error)
 	OpenStdout(id RunID) (io.ReadCloser, error)
 	OpenStderr(id RunID) (io.ReadCloser, error)
 	Delete(id RunID) error

@@ -254,6 +254,28 @@ func (r *Repo) Get(id runcache.RunID) (runcache.RunEntry, error) {
 		}
 		return runcache.RunEntry{}, err
 	}
+	return r.entryFromMeta(id, data)
+}
+
+// GetWithin loads a run entry like Get, reading at most maxBytes of metadata. The
+// bound is a diagnostic budget, not a validity rule: metadata over it is refused
+// with ErrReadBudgetExceeded before any decoding, and Get still reads the same
+// record normally.
+func (r *Repo) GetWithin(id runcache.RunID, maxBytes int64) (runcache.RunEntry, int64, error) {
+	data, err := r.readFileWithin(r.entryDirRel(id)+"/"+metaName, maxBytes)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return runcache.RunEntry{}, 0, fmt.Errorf("%w: %s", runcache.ErrNotFound, id.Short())
+		}
+		return runcache.RunEntry{}, int64(len(data)), err
+	}
+	entry, err := r.entryFromMeta(id, data)
+	return entry, int64(len(data)), err
+}
+
+// entryFromMeta decodes and validates one run's metadata bytes. It is the single
+// interpretation of meta.json shared by every read path, bounded or not.
+func (r *Repo) entryFromMeta(id runcache.RunID, data []byte) (runcache.RunEntry, error) {
 	entry, err := decodeMeta(data)
 	if err != nil {
 		// An incompatible entry is intact and self-describing; this build simply has no
@@ -929,6 +951,20 @@ func (r *Repo) MeasureEntry(ctx context.Context, id runcache.RunID) (fsx.TreeSiz
 	return fsx.SizeTreeAt(ctx, shardDir, id.String())
 }
 
+// HistoryPresent reports whether the entries directory exists. It opens only that
+// directory through the no-follow traversal and reads none of it.
+func (r *Repo) HistoryPresent() (bool, error) {
+	d, err := fsx.OpenDirNoFollow(r.root, r.entriesRel())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, r.storeCorrupt(r.entriesRel(), err)
+	}
+	_ = d.Close()
+	return true, nil
+}
+
 // listIDs returns the id strings of every entry directory. It reads only
 // directory entries (no JSON decoding), descending entries/<shard>/<id>.
 func (r *Repo) listIDs(ctx context.Context) ([]string, error) {
@@ -1000,22 +1036,58 @@ func (r *Repo) eachEntryName(ctx context.Context, fn func(name string) error) er
 // readFile reads a store-owned file anchored at the project root, refusing to
 // follow a symlink at any component or to read a non-regular node.
 func (r *Repo) readFile(rel string) ([]byte, error) {
-	f, err := fsx.OpenNoFollowAt(r.root, rel)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		return nil, r.storeCorrupt(rel, err)
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
+	f, _, err := r.openRegular(rel)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %s is not a regular file (%s)", runcache.ErrCorruptStore, rel, info.Mode().Type())
-	}
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(f)
+}
+
+// readFileWithin is readFile under a byte bound. A file whose size already exceeds
+// maxBytes is refused without reading; one that grows past it while being read is
+// refused after reading maxBytes+1 bytes, so a truncated prefix is never returned.
+// On refusal the returned slice holds the bytes actually read, for the caller's
+// work accounting.
+func (r *Repo) readFileWithin(rel string, maxBytes int64) ([]byte, error) {
+	f, info, err := r.openRegular(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	if maxBytes < 0 || info.Size() > maxBytes {
+		return nil, fmt.Errorf("%w: %s is %d bytes, over %d", runcache.ErrReadBudgetExceeded, rel, info.Size(), maxBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return data, err
+	}
+	if int64(len(data)) > maxBytes {
+		return data, fmt.Errorf("%w: %s grew past %d bytes while being read", runcache.ErrReadBudgetExceeded, rel, maxBytes)
+	}
+	return data, nil
+}
+
+// openRegular opens a store-owned file without following a symlink at any
+// component and refuses a non-regular node. A missing file keeps os.ErrNotExist.
+func (r *Repo) openRegular(rel string) (*os.File, os.FileInfo, error) {
+	f, err := fsx.OpenNoFollowAt(r.root, rel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+		return nil, nil, r.storeCorrupt(rel, err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("%w: %s is not a regular file (%s)", runcache.ErrCorruptStore, rel, info.Mode().Type())
+	}
+	return f, info, nil
 }
 
 // removeFile unlinks name inside relDir under root through a verified directory

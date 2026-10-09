@@ -95,7 +95,26 @@ A record-only or non-reusable run is still useful: it keeps what ran, its exit,
 its output, and the before/after state. Do not count records to judge the cache.
 A hit replays a stored result and creates no new execution record, so history
 counts executions, not hits; and a run that was reusable when stored need not be
-reusable now. Ask the current question instead:
+reusable now. To see why recent runs were stored the way they were, audit
+their metadata:
+
+```text
+awa run audit           # newest 200 retained runs, by primary stored reason
+awa run audit -n 50     # a smaller window (at most 1000)
+```
+
+The audit reads only each selected run's metadata, under a per-run and a total
+byte budget. It does not scan the worktree or effect roots and opens no captured
+output or manifest, though finding the newest runs may still list every stored
+run id. Its denominator is
+the retained runs in the window, so it reports counts, never a hit rate. Each run
+counts once by its primary stored reason, which can hide another condition:
+`--record` with piped input is stored as `record-only`, not `stdin-not-keyed`.
+A selected run that is corrupt, incompatible, vanished, unreadable, or over
+budget keeps its place and is reported as unavailable; older runs never fill
+in. Its suggestions only inspect, such as `run show --meta`, `changes` between
+a mutated run's before and after, or `run explain --from-run` for today's
+identity. Ask the current question instead:
 
 ```text
 awa run ls --near                         # what is reusable against this state

@@ -27,7 +27,7 @@ var publicCommands = []string{
 // publicSubcommands is every "<command> <sub>" pair the binary dispatches, whether
 // its --help page is authored or derived from the summary.
 var publicSubcommands = [][]string{
-	{"run", "ls"}, {"run", "log"}, {"run", "show"}, {"run", "rm"}, {"run", "explain"},
+	{"run", "ls"}, {"run", "log"}, {"run", "show"}, {"run", "rm"}, {"run", "explain"}, {"run", "audit"},
 	{"config", "path"}, {"config", "show"}, {"config", "effective"},
 	{"config", "validate"}, {"config", "template"}, {"config", "init"},
 	{"state", "resolve"}, {"state", "compare"},
