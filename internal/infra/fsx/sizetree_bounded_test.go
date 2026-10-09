@@ -138,3 +138,56 @@ func TestSizeTreeWithinCancellationIsAnError(t *testing.T) {
 		t.Fatal("a cancelled walk must return an error")
 	}
 }
+
+// TestSizeDirWithinLimits: the open directory is the first level and not an examined
+// entry, so a budget of n stats exactly n children, and the depth limit counts from it.
+func TestSizeDirWithinLimits(t *testing.T) {
+	parent := t.TempDir()
+	writeSized(t, filepath.Join(parent, "out", "a"), 3)
+	writeSized(t, filepath.Join(parent, "out", "sub", "deep"), 5)
+	open := func() *os.File {
+		d, err := os.Open(filepath.Join(parent, "out"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = d.Close() })
+		return d
+	}
+
+	full, err := SizeDirWithin(context.Background(), open(), TreeLimits{MaxEntries: 3}, nil)
+	if err != nil || full.Bytes != 8 || full.Entries != 3 || !full.Complete() {
+		t.Fatalf("SizeDirWithin(3 entries) = %+v, %v; want 8 complete over 3 entries", full, err)
+	}
+	short, err := SizeDirWithin(context.Background(), open(), TreeLimits{MaxEntries: 2}, nil)
+	if err != nil || !short.EntryBudgetReached || short.Entries != 2 {
+		t.Fatalf("SizeDirWithin(2 entries) = %+v, %v; want the budget reached after 2", short, err)
+	}
+	shallow, err := SizeDirWithin(context.Background(), open(), TreeLimits{MaxDepth: 1}, nil)
+	if err != nil || shallow.Bytes != 3 || !shallow.DepthLimitReached {
+		t.Fatalf("SizeDirWithin(depth 1) = %+v, %v; want 3 with the depth limit reached", shallow, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := SizeDirWithin(ctx, open(), TreeLimits{}, nil); err == nil {
+		t.Fatal("SizeDirWithin(cancelled) succeeded; cancellation must be an error")
+	}
+}
+
+// TestSizeDirWithinSkipsNamedSubtrees: a skipped name is left out at every depth —
+// neither its bytes nor its entries count — while sibling content is still measured.
+func TestSizeDirWithinSkipsNamedSubtrees(t *testing.T) {
+	parent := t.TempDir()
+	writeSized(t, filepath.Join(parent, "out", "visible"), 1)
+	writeSized(t, filepath.Join(parent, "out", ".git", "object"), 100)
+	writeSized(t, filepath.Join(parent, "out", "sub", ".awa", "blob"), 200)
+	writeSized(t, filepath.Join(parent, "out", "sub", "kept"), 4)
+	d, err := os.Open(filepath.Join(parent, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+	got, err := SizeDirWithin(context.Background(), d, TreeLimits{}, map[string]bool{".git": true, ".awa": true})
+	if err != nil || got.Bytes != 5 || got.Entries != 3 || !got.Complete() {
+		t.Fatalf("SizeDirWithin = %+v, %v; want 5 bytes over 3 entries, complete", got, err)
+	}
+}

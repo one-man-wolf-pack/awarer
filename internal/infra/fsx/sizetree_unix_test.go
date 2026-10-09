@@ -113,3 +113,56 @@ func TestSizeTreeWithinUnixBoundaries(t *testing.T) {
 		t.Fatalf("SizeTreeWithin = %+v, want 123 bytes with only the unreadable flag", got)
 	}
 }
+
+// TestSizeDirWithinMeasuresNativeNames: a backslash is an ordinary character in a Unix
+// name, so the directory walk measures such a file and a directory beneath it, where
+// the store walk's name rule would refuse them as unreadable. The store walk keeps
+// that rule; only the native walk accepts the name.
+func TestSizeDirWithinMeasuresNativeNames(t *testing.T) {
+	parent := t.TempDir()
+	writeSized(t, filepath.Join(parent, "out", `a\b`), 5)
+	writeSized(t, filepath.Join(parent, "out", `dir\x`, "f"), 7)
+	writeSized(t, filepath.Join(parent, "out", "plain"), 11)
+	d, err := os.Open(filepath.Join(parent, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+
+	got, err := SizeDirWithin(context.Background(), d, TreeLimits{MaxEntries: 100, MaxDepth: 8}, nil)
+	if err != nil || got.Bytes != 23 || !got.Complete() {
+		t.Fatalf("SizeDirWithin = %+v, %v; want 23 complete", got, err)
+	}
+	store, err := SizeTreeWithin(context.Background(), openParent(t, parent), "out", TreeLimits{})
+	if err != nil || store.Bytes != 11 || !store.Unreadable {
+		t.Fatalf("SizeTreeWithin = %+v, %v; want the store rule unchanged (11, unreadable)", store, err)
+	}
+}
+
+// TestSizeDirWithinReadsMetadataOnly: a file no one may open is measured, and an
+// unreadable subdirectory is a typed gap, not an error.
+func TestSizeDirWithinReadsMetadataOnly(t *testing.T) {
+	skipIfRoot(t)
+	parent := t.TempDir()
+	sealed := filepath.Join(parent, "out", "sealed")
+	writeSized(t, sealed, 123)
+	if err := os.Chmod(sealed, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	writeSized(t, filepath.Join(parent, "out", "locked", "hidden"), 1000)
+	locked := filepath.Join(parent, "out", "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	d, err := os.Open(filepath.Join(parent, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+
+	got, err := SizeDirWithin(context.Background(), d, TreeLimits{}, nil)
+	if err != nil || got.Bytes != 123 || !got.Unreadable || got.EntryBudgetReached || got.DepthLimitReached {
+		t.Fatalf("SizeDirWithin = %+v, %v; want 123 with only the unreadable flag", got, err)
+	}
+}

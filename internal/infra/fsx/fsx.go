@@ -90,6 +90,18 @@ func checkLeafName(name string) error {
 	return nil
 }
 
+// checkNativeName is checkLeafName under the host's own separator rule: a backslash
+// is an ordinary character in a Unix name and a separator only where the platform
+// says so. It is for names a walk read from a directory listing, which the platform
+// already guarantees are single components, so the only names it refuses are ones
+// that could not name a child at all.
+func checkNativeName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '/') || strings.ContainsRune(name, os.PathSeparator) {
+		return ErrUnsafeName
+	}
+	return nil
+}
+
 // RelUnder converts abs into a slash-separated path relative to root, suitable for
 // OpenNoFollowAt. It errors if abs is not within root, so a caller anchoring a
 // no-follow open at a trusted root cannot accidentally point it outside. Anchoring
@@ -268,6 +280,27 @@ func SizeTreeWithin(ctx context.Context, dir *os.File, name string, lim TreeLimi
 	return sizeTree(ctx, dir, name, lim)
 }
 
+// SizeDirWithin is SizeTreeWithin for the contents of a directory the caller already
+// opened under rules of its own (EachDirEntryAt's reason for taking a descriptor).
+// The open directory is the walk's first level and is not itself counted as an
+// examined entry. Descendants are addressed by the native names their listings
+// return, so a Unix name containing a backslash is measured rather than refused —
+// the walk serves worktree directories, whose names follow the platform, not store
+// path grammar. An entry whose name is in skip is left out at any depth, neither
+// examined nor entered, so a caller can keep protected subtrees outside the figure.
+// Limits, gaps, and errors are exactly SizeTreeWithin's; only cancellation is
+// returned as an error, since the directory itself is already open.
+func SizeDirWithin(ctx context.Context, d *os.File, lim TreeLimits, skip map[string]bool) (BoundedTreeSize, error) {
+	if err := ctx.Err(); err != nil {
+		return BoundedTreeSize{}, err
+	}
+	w := sizeWalk{ctx: ctx, lim: lim, native: true, skip: skip}
+	if err := w.dir(d, 1); err != nil && !errors.Is(err, errEntryBudget) {
+		return BoundedTreeSize{}, err
+	}
+	return w.out, nil
+}
+
 // errEntryBudget unwinds a sizing walk whose entry budget is spent.
 var errEntryBudget = errors.New("fsx: sizing entry budget reached")
 
@@ -307,11 +340,22 @@ func sizeTree(ctx context.Context, dir *os.File, name string, lim TreeLimits) (B
 	return w.out, nil
 }
 
-// sizeWalk is one sizing walk's scalar state.
+// sizeWalk is one sizing walk's scalar state. native selects checkNativeName over
+// checkLeafName for the names the walk lists; skip names entries left out entirely.
 type sizeWalk struct {
-	ctx context.Context
-	lim TreeLimits
-	out BoundedTreeSize
+	ctx    context.Context
+	lim    TreeLimits
+	native bool
+	skip   map[string]bool
+	out    BoundedTreeSize
+}
+
+// checkName applies the walk's name rule to one listed child.
+func (w *sizeWalk) checkName(name string) error {
+	if w.native {
+		return checkNativeName(name)
+	}
+	return checkLeafName(name)
 }
 
 // dir adds the regular-file lengths beneath the open directory d, which sits depth
@@ -322,17 +366,20 @@ func (w *sizeWalk) dir(d *os.File, depth int) error {
 		if err := w.ctx.Err(); err != nil {
 			return err
 		}
+		if w.skip[e.Name()] {
+			return nil
+		}
 		if w.lim.MaxEntries > 0 && w.out.Entries >= w.lim.MaxEntries {
 			w.out.EntryBudgetReached = true
 			return errEntryBudget
 		}
 		w.out.Entries++
 		name := e.Name()
-		if checkLeafName(name) != nil {
+		if w.checkName(name) != nil {
 			w.out.Unreadable = true
 			return nil
 		}
-		mode, size, err := LstatAt(d, name)
+		mode, size, err := lstatAt(d, name)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			return nil

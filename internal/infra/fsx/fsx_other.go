@@ -234,6 +234,11 @@ func LstatAt(dir *os.File, name string) (os.FileMode, int64, error) {
 	if err := checkLeafName(name); err != nil {
 		return 0, 0, err
 	}
+	return lstatAt(dir, name)
+}
+
+// lstatAt is LstatAt without the name check, for a caller that has applied its own.
+func lstatAt(dir *os.File, name string) (os.FileMode, int64, error) {
 	fi, err := os.Lstat(filepath.Join(dir.Name(), name))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

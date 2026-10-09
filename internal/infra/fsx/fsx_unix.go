@@ -350,6 +350,11 @@ func LstatAt(dir *os.File, name string) (os.FileMode, int64, error) {
 	if err := checkLeafName(name); err != nil {
 		return 0, 0, err
 	}
+	return lstatAt(dir, name)
+}
+
+// lstatAt is LstatAt without the name check, for a caller that has applied its own.
+func lstatAt(dir *os.File, name string) (os.FileMode, int64, error) {
 	var st unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		if errors.Is(err, unix.ENOENT) {
