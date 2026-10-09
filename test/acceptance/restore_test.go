@@ -345,6 +345,11 @@ func TestScenario24RecoveryObservationUndoesTheRestore(t *testing.T) {
 		t.Errorf("retention policy key = %q", doc.Data.Recovery.RetentionPolicyKey)
 	}
 
+	recordedBasis := comparisonBasis(t, env.root, ref+"..now")
+	if recordedBasis.Agreement != "match" {
+		t.Errorf("recovery basis under the unchanged config = %+v, want match", recordedBasis)
+	}
+
 	// The reference restores the pre-restore state: the overwritten bytes come back
 	// AND the file the restore deleted is recreated.
 	ucode, ustdout, ustderr := awa(t, env.root, "restore", "--apply", ref, "--", "generated/client")
@@ -359,6 +364,12 @@ func TestScenario24RecoveryObservationUndoesTheRestore(t *testing.T) {
 	}
 	if got := readAt(t, env.root, "generated/client/extra.go"); got != deleted {
 		t.Errorf("undo restored %q, want %q", got, deleted)
+	}
+
+	writeAt(t, env.root, ".awa/config.toml", "[scope]\nextra_excludes = [\"src/\"]\n")
+	later := comparisonBasis(t, env.root, ref+"..now")
+	if later.Left != recordedBasis.Left || later.Right == recordedBasis.Right || later.Agreement != "mismatch" {
+		t.Errorf("recovery basis after a config change = %+v, want left %s kept and a mismatch", later, recordedBasis.Left)
 	}
 }
 

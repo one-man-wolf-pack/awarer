@@ -269,3 +269,32 @@ func writeProjectConfig(t *testing.T, root, body string) {
 		t.Fatalf("write config: %v", err)
 	}
 }
+
+type basisFacts struct {
+	Left      string `json:"left"`
+	Right     string `json:"right"`
+	Agreement string `json:"agreement"`
+}
+
+func comparisonBasis(t *testing.T, root, rng string) basisFacts {
+	t.Helper()
+	code, out, stderr := awa(t, root, "--json", "changes", rng)
+	if code != 0 {
+		t.Fatalf("changes %s --json exit = %d, stderr = %q", rng, code, stderr)
+	}
+	var env struct {
+		Data struct {
+			Basis struct {
+				ScanConfig basisFacts `json:"scan_config"`
+			} `json:"basis"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("decode changes --json: %v\n%s", err, out)
+	}
+	b := env.Data.Basis.ScanConfig
+	if !strings.HasPrefix(b.Left, "blake3:") || !strings.HasPrefix(b.Right, "blake3:") {
+		t.Fatalf("basis identities missing: %+v", b)
+	}
+	return b
+}

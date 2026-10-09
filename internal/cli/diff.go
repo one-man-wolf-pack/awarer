@@ -306,11 +306,14 @@ type fileDiffView struct {
 // as partial output with the classified exit code.
 func streamDiffJSON(w *output.Writer, sr appdiff.StreamResult, filters []worktree.RelPath, cfg domainconfig.Config, bg baselineGitContext) error {
 	cur := sr.Files
+	sum := state.NewStateRangeSummary(sr.Left, sr.Right, filters)
+	emitScanConfigMismatch(w, sum)
 	var summary compare.Summary
 	err := w.StreamJSON("diff", func(o *output.JSONObjectWriter) error {
 		o.Field("left", stateView(sr.Left))
 		o.Field("right", stateView(sr.Right))
 		o.Field("path_filters", filterStrings(filters))
+		o.Field("basis", basisViewOf(sum))
 		o.Field("rename_detection", toRenameDetectionView(sr.RenameDetection))
 		if bg.view != nil {
 			o.Field("freshness", bg.view)

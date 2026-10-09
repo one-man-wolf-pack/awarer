@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"awarer/internal/domain/checkpoint"
+	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/worktree"
 )
 
@@ -16,6 +17,10 @@ type StateEndpoint struct {
 	Kind         Kind
 	RequestedRef string
 	CanonicalRef string
+
+	// Must stay the recorded ScanIdentity: today's config or the checkpoint retention
+	// hash would relabel historical evidence and hide a real scope change.
+	ScanConfig hashing.ConfigHash
 
 	// Checkpoint facts (set when Kind == KindCheckpoint).
 	CheckpointID  checkpoint.CheckpointID
@@ -44,7 +49,7 @@ func endpointFrom(s *ResolvedState) StateEndpoint {
 	if s == nil {
 		return StateEndpoint{}
 	}
-	e := StateEndpoint{Kind: s.Kind, RequestedRef: s.RequestedRef, CanonicalRef: s.CanonicalRef}
+	e := StateEndpoint{Kind: s.Kind, RequestedRef: s.RequestedRef, CanonicalRef: s.CanonicalRef, ScanConfig: s.ScanIdentity()}
 	switch s.Kind {
 	case KindCheckpoint:
 		if id, ok := s.CheckpointID(); ok {
@@ -79,6 +84,12 @@ type StateRangeSummary struct {
 	Left        StateEndpoint
 	Right       StateEndpoint
 	PathFilters []string
+}
+
+// ScanConfigsMatch ignores ignore-file contents, so a match must not gate the comparison
+// or stand in for unchanged rules or absence evidence.
+func (s StateRangeSummary) ScanConfigsMatch() bool {
+	return s.Left.ScanConfig == s.Right.ScanConfig
 }
 
 // NewStateRangeSummary builds the summary from the resolved left/right states and the

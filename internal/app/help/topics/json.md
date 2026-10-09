@@ -50,6 +50,10 @@ Streaming surfaces such as `awa changes --json` and `awa diff --json` emit their
 entries incrementally, so a mid-stream failure leaves the document deliberately
 unterminated — it cannot parse as complete, which is the intended signal, paired
 with the `partial output:` diagnostic and a non-zero exit.
+Before their array they carry `basis`: `token` (`observation-delta`) and
+`scan_config` with each side's recorded identity and `agreement` (`match` or
+`mismatch`). A mismatch is not a failure, and a match is not proof of equal
+ignore rules or scope — see [awa help diff](diff.md).
 
 ## Exit origin
 

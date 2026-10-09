@@ -12,6 +12,7 @@ import (
 	"awarer/internal/domain/compare"
 	domainconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/gitfresh"
+	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/paths"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/projfs"
@@ -200,12 +201,15 @@ func renderChanges(w *output.Writer, sr changes.StreamResult, filters []worktree
 	// The caller owns the StreamResult's lifecycle and closes it (cursor + states); this
 	// renderer only consumes the cursor.
 	cur := sr.Changes
+	sum := state.NewStateRangeSummary(sr.Left, sr.Right, filters)
 
 	// --name-only is the scripting form (its lines are fed to other tools), so it stays
 	// header-free; every other human view leads with the baseline/range context.
 	headerPrinted := false
-	if !nameOnly {
-		renderRangeHeader(w, state.NewStateRangeSummary(sr.Left, sr.Right, filters), td, bg)
+	if nameOnly {
+		emitScanConfigMismatch(w, sum)
+	} else {
+		renderRangeHeader(w, sum, td, bg)
 		headerPrinted = true
 	}
 
@@ -342,9 +346,35 @@ func renderRangeHeader(w *output.Writer, sum state.StateRangeSummary, td domainc
 			w.Diagnostic("note: " + note)
 		}
 	}
+	w.Line("basis: " + basisLabel(sum))
+	emitScanConfigMismatch(w, sum)
 	if len(sum.PathFilters) > 0 {
 		w.Linef("paths: %s", strings.Join(sum.PathFilters, ", "))
 	}
+}
+
+func basisLabel(sum state.StateRangeSummary) string {
+	label := "observation delta of recorded manifests; scan config "
+	if sum.ScanConfigsMatch() {
+		return label + shortConfigHash(sum.Left.ScanConfig) + " on both sides"
+	}
+	return label + "differs " + shortConfigHash(sum.Left.ScanConfig) + " -> " + shortConfigHash(sum.Right.ScanConfig)
+}
+
+func emitScanConfigMismatch(w *output.Writer, sum state.StateRangeSummary) {
+	if sum.ScanConfigsMatch() {
+		return
+	}
+	w.Diagnostic(fmt.Sprintf("warning: scan config differs between sides (%s -> %s); added/deleted reflect manifest membership and may come from a scope or trust-mode change, not files created or deleted",
+		shortConfigHash(sum.Left.ScanConfig), shortConfigHash(sum.Right.ScanConfig)))
+}
+
+func shortConfigHash(h hashing.ConfigHash) string {
+	s := h.String()
+	if algo, hex, ok := strings.Cut(s, ":"); ok && len(hex) > 12 {
+		return algo + ":" + hex[:12]
+	}
+	return s
 }
 
 // baselineLabel renders a checkpoint as "checkpoint <short> "<message>" (<age>)",
@@ -531,6 +561,34 @@ func stateView(s *state.ResolvedState) stateRefView {
 	return v
 }
 
+const basisObservationDelta = "observation-delta"
+
+type basisView struct {
+	Token      string         `json:"token"`
+	ScanConfig scanConfigView `json:"scan_config"`
+}
+
+type scanConfigView struct {
+	Left      string `json:"left"`
+	Right     string `json:"right"`
+	Agreement string `json:"agreement"`
+}
+
+func basisViewOf(sum state.StateRangeSummary) basisView {
+	agreement := "mismatch"
+	if sum.ScanConfigsMatch() {
+		agreement = "match"
+	}
+	return basisView{
+		Token: basisObservationDelta,
+		ScanConfig: scanConfigView{
+			Left:      sum.Left.ScanConfig.String(),
+			Right:     sum.Right.ScanConfig.String(),
+			Agreement: agreement,
+		},
+	}
+}
+
 // changeKind returns the kind to display for a change: the old kind for a
 // delete, otherwise the new kind.
 func changeKind(c compare.Change) worktree.FileKind {
@@ -577,11 +635,14 @@ func octalMode(mode uint32, set bool) string {
 // document is never mistaken for a clean report.
 func streamChangesJSON(w *output.Writer, sr changes.StreamResult, filters []worktree.RelPath, cfg domainconfig.Config, bg baselineGitContext) error {
 	cur := sr.Changes
+	sum := state.NewStateRangeSummary(sr.Left, sr.Right, filters)
+	emitScanConfigMismatch(w, sum)
 	var summary compare.Summary
 	err := w.StreamJSON("changes", func(o *output.JSONObjectWriter) error {
 		o.Field("left", stateView(sr.Left))
 		o.Field("right", stateView(sr.Right))
 		o.Field("path_filters", filterStrings(filters))
+		o.Field("basis", basisViewOf(sum))
 		o.Field("rename_detection", toRenameDetectionView(sr.RenameDetection))
 		if bg.view != nil {
 			o.Field("freshness", bg.view)

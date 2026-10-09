@@ -1,10 +1,12 @@
 package state
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"awarer/internal/domain/checkpoint"
+	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/worktree"
 )
 
@@ -84,4 +86,31 @@ func TestNewStateRangeSummaryRunObservation(t *testing.T) {
 	if sum.Left.HasCheckpoint {
 		t.Error("a run observation endpoint must not claim a checkpoint")
 	}
+}
+
+func TestStateRangeSummaryScanConfigProvenance(t *testing.T) {
+	scanA := mustConfigHash(t, "a")
+	scanB := mustConfigHash(t, "b")
+	retention := mustConfigHash(t, "c")
+	cp := &ResolvedState{Kind: KindCheckpoint, Header: &checkpoint.CheckpointHeader{ScanConfigHash: scanA, CheckpointPolicyHash: retention}}
+	runSame := &ResolvedState{Kind: KindRunObservation, runScanConfig: scanA}
+	runOther := &ResolvedState{Kind: KindRunObservation, runScanConfig: scanB}
+
+	same := NewStateRangeSummary(cp, runSame, nil)
+	if same.Left.ScanConfig != scanA || same.Right.ScanConfig != scanA || !same.ScanConfigsMatch() {
+		t.Errorf("same identities = %v/%v match=%v, want both %v and a match", same.Left.ScanConfig, same.Right.ScanConfig, same.ScanConfigsMatch(), scanA)
+	}
+	other := NewStateRangeSummary(cp, runOther, nil)
+	if other.Right.ScanConfig != scanB || other.ScanConfigsMatch() {
+		t.Errorf("differing identities = %v/%v match=%v, want a mismatch", other.Left.ScanConfig, other.Right.ScanConfig, other.ScanConfigsMatch())
+	}
+}
+
+func mustConfigHash(t *testing.T, digit string) hashing.ConfigHash {
+	t.Helper()
+	h, err := hashing.ParseConfigHash("blake3:" + strings.Repeat(digit, 64))
+	if err != nil {
+		t.Fatalf("ParseConfigHash: %v", err)
+	}
+	return h
 }

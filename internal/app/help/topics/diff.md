@@ -24,6 +24,29 @@ An empty changes/diff delta means only "no changes since that baseline" — neve
 that the whole worktree is reviewed. Use the delta to verify a focused fix, then
 inspect the full current uncommitted worktree before final acceptance.
 
+## Observation delta basis
+
+Both commands compare two recorded observation manifests. `added`/`deleted`
+mean an entry is in only one manifest, not that a file was created or removed;
+`modified`, type and rename facts describe the recorded entries. Counts cover
+the selected paths only.
+
+The `basis:` header line (JSON `basis`) names this and each side's recorded
+scan configuration identity — include/exclude config, ignore-file switches,
+symlink and hashing policy, trust mode. When they differ, one `warning:` goes to
+stderr (stdout, including `--name-only`, is unchanged) and the comparison still
+completes:
+
+- Add `gen/` to `[scope].extra_excludes` after a checkpoint: `gen/` files show as
+  deleted while still on disk, and the identities differ.
+- Add `gen/` to `.gitignore` or `.awaignore` instead: the same files show as
+  deleted, yet the identities match — the identity records the config, not
+  ignore-file contents.
+
+So matching identities do not prove unchanged ignore rules, equal scope, or
+that a path is absent. Byte-retention settings are not part of the identity:
+they only decide whether a side can show a text diff.
+
 ## Git context
 
 When the project is a git repo, `changes`/`diff` name the current git HEAD and

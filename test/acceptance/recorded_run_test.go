@@ -52,6 +52,22 @@ func TestAcceptanceRecordedRunLifecycle(t *testing.T) {
 	if !strings.Contains(chJSON, `"kind": "run-observation"`) || !strings.Contains(chJSON, `"run_reuse": "record-only"`) {
 		t.Errorf("changes JSON must report run-observation kind and reuse:\n%s", chJSON)
 	}
+	if !strings.Contains(chJSON, `"token": "observation-delta"`) {
+		t.Errorf("changes JSON must name its observation-delta basis:\n%s", chJSON)
+	}
+	runRange := "run:" + short + ":before..run:" + short + ":after"
+	runBasis := comparisonBasis(t, root, runRange)
+	if runBasis.Left != runBasis.Right || runBasis.Agreement != "match" {
+		t.Errorf("run observation basis = %+v, want one recorded identity on both sides", runBasis)
+	}
+	writeProjectConfig(t, root, "[scope]\nextra_excludes = [\"nothing-matches/\"]\n")
+	if later := comparisonBasis(t, root, runRange); later != runBasis {
+		t.Errorf("run basis after a config change = %+v, want the recorded %+v", later, runBasis)
+	}
+	if now := comparisonBasis(t, root, "run:"+short+":after..now"); now.Left != runBasis.Right || now.Agreement != "mismatch" {
+		t.Errorf("run:after..now basis = %+v, want the recorded left and a mismatch", now)
+	}
+	writeProjectConfig(t, root, "")
 
 	// Make an explicit checkpoint so the timeline has both kinds.
 	if code, _, _ := awa(t, root, "checkpoint", "-m", "checkpoint"); code != 0 {
