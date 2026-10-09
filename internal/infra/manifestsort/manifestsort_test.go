@@ -1,7 +1,13 @@
 package manifestsort
 
 import (
+	"bufio"
+	"bytes"
+	"container/heap"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +17,7 @@ import (
 	"awarer/internal/domain/paths"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
+	"awarer/internal/infra/manifestjsonl"
 )
 
 func testHasher(t *testing.T) hashing.Hasher {
@@ -266,5 +273,70 @@ func TestSorterEmpty(t *testing.T) {
 	}
 	if sorted.Reduction().Count != 0 {
 		t.Errorf("empty count = %d, want 0", sorted.Reduction().Count)
+	}
+}
+
+var errInjectedRead = errors.New("injected read failure")
+
+type dataThenErr struct {
+	data []byte
+	err  error
+	sent bool
+}
+
+func (r *dataThenErr) Read(p []byte) (int, error) {
+	if r.sent {
+		return 0, io.EOF
+	}
+	r.sent = true
+	return copy(p, r.data), r.err
+}
+
+func TestMergeTerminalReadError(t *testing.T) {
+	h := testHasher(t)
+	var full bytes.Buffer
+	for _, p := range []string{"a", "b"} {
+		if err := json.NewEncoder(&full).Encode(lineOf(dirEntry(t, p))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unterminated := bytes.TrimSuffix(full.Bytes(), []byte("\n"))
+	cases := []struct {
+		name    string
+		data    []byte
+		readErr error
+		wantErr error
+	}{
+		{name: "error with final row", data: unterminated, readErr: errInjectedRead, wantErr: errInjectedRead},
+		{name: "error before any row", readErr: errInjectedRead, wantErr: errInjectedRead},
+		{name: "clean eof with trailing newline", data: full.Bytes(), readErr: io.EOF},
+		{name: "clean eof without trailing newline", data: unterminated, readErr: io.EOF},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := &runReader{br: bufio.NewReader(&dataThenErr{data: tc.data, err: tc.readErr}), path: "run"}
+			m := &mergeCursor{h: &runHeap{}}
+			ok, err := rr.advance()
+			if err == nil && ok {
+				heap.Push(m.h, rr)
+			}
+			if err == nil {
+				reducer, rerr := worktree.NewTreeReducer(h)
+				if rerr != nil {
+					t.Fatal(rerr)
+				}
+				err = manifestjsonl.Tee(io.Discard, worktree.Ordered(m), reducer)
+				if got := reducer.Finish().Count; err == nil && got != 2 {
+					t.Fatalf("reduced count = %d, want 2", got)
+				}
+			}
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("merge: %v", err)
+			}
+		})
 	}
 }

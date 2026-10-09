@@ -305,6 +305,7 @@ type runReader struct {
 	br   *bufio.Reader
 	cur  worktree.ManifestRecord
 	path string
+	err  error
 }
 
 func openRun(path string) (*runReader, error) {
@@ -315,10 +316,10 @@ func openRun(path string) (*runReader, error) {
 	return &runReader{f: f, br: bufio.NewReader(f), path: path}, nil
 }
 
-// advance decodes the next record into cur. It returns false at a clean end of
-// file, and a non-nil error on a malformed line — these are our own temp files, so a
-// decode failure is corruption of internal state, surfaced loudly rather than hidden.
 func (r *runReader) advance() (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
 	line, err := r.br.ReadBytes('\n')
 	trimmed := line
 	if n := len(trimmed); n > 0 && trimmed[n-1] == '\n' {
@@ -338,6 +339,12 @@ func (r *runReader) advance() (bool, error) {
 		return false, fmt.Errorf("manifestsort: decoding run file %s: %w", r.path, derr)
 	}
 	r.cur = rec
+	// bufio.Reader reports a read error together with the final unterminated line
+	// only once; the next read can return a clean io.EOF. Retain it so the next
+	// advance fails instead of ending the run as if it were complete.
+	if err != nil && err != io.EOF {
+		r.err = err
+	}
 	return true, nil
 }
 
