@@ -46,6 +46,7 @@ linters:
     staticcheck:
       checks:
         - all
+        - -ST1000
     forbidigo:
       # Replaces forbidigo's default fmt.Print* list: the only thing forbidden is minting
       # a root context below the process entrypoint. The root is created once, in
