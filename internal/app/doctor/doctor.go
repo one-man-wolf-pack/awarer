@@ -19,6 +19,7 @@ import (
 
 	domconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/doctor"
+	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/gitmeta"
 	"awarer/internal/infra/lockfile"
 	"awarer/internal/infra/projfs"
@@ -49,6 +50,9 @@ type Deps struct {
 	// collector. It is optional: a nil acquirer skips locking, and read-only diagnosis
 	// never locks.
 	Locks LockAcquirer
+	// Sizing bounds the store capacity advisory's walk; a zero field takes the
+	// production default (defaultSizingMaxEntries, defaultSizingMaxDepth).
+	Sizing fsx.TreeLimits
 }
 
 // LockAcquirer takes the exclusive collector lock for doctor's repair pass and waits
@@ -81,6 +85,8 @@ type Service struct {
 	staleAfter   time.Duration
 	git          GitTracker
 	locks        LockAcquirer
+	sizing       fsx.TreeLimits
+	sizeTree     sizeTreeFunc
 }
 
 // New builds a Service, filling in real-environment defaults for any zero-valued
@@ -94,6 +100,14 @@ func New(d Deps) *Service {
 		staleAfter:   d.StaleAfter,
 		git:          d.Git,
 		locks:        d.Locks,
+		sizing:       d.Sizing,
+		sizeTree:     fsx.SizeTreeWithin,
+	}
+	if s.sizing.MaxEntries <= 0 {
+		s.sizing.MaxEntries = defaultSizingMaxEntries
+	}
+	if s.sizing.MaxDepth <= 0 {
+		s.sizing.MaxDepth = defaultSizingMaxDepth
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -144,8 +158,14 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 	s.checkConfig(ctx, layout, req.Resolved, rep)
 	s.checkPermissions(layout, rep)
 	s.checkMarkers(layout, rep)
-	// The capture-eligibility check classifies candidates under ctx; a cancellation
-	// there is an interruption, never an incomplete-check finding.
+	// The store capacity advisory runs last and on its own budget, so sizing that is
+	// disabled, fails, or stops early cannot curtail the integrity checks above.
+	capacity, err := s.measureStore(ctx, layout, req.Resolved.Config().Doctor.StoreWarningSize, rep)
+	if err != nil {
+		return doctor.DoctorResult{}, err
+	}
+	// The capture-eligibility check and the sizing walk run under ctx; a cancellation
+	// there is an interruption, never an incomplete-check finding or a partial size.
 	if err := ctx.Err(); err != nil {
 		return doctor.DoctorResult{}, err
 	}
@@ -167,7 +187,7 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 		s.repair(layout, rep)
 	}
 
-	return doctor.NewResult(rep.passed, rep.findings), nil
+	return doctor.NewResult(rep.passed, rep.findings).WithStoreCapacity(capacity), nil
 }
 
 // report accumulates the outcome of the subsystem checks: a count of checks that

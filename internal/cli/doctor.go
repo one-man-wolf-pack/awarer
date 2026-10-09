@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 
 	"awarer/internal/app/configcmd"
@@ -111,9 +112,23 @@ func runDoctor(w *output.Writer, inv invocation) error {
 // severity, so a single list serves machine consumers that filter by severity or
 // repairability; the summary mirrors the derived counts.
 type doctorView struct {
-	Health   string              `json:"health"`
-	Summary  doctorSummaryView   `json:"summary"`
-	Findings []doctorFindingView `json:"findings"`
+	Health        string              `json:"health"`
+	Summary       doctorSummaryView   `json:"summary"`
+	Findings      []doctorFindingView `json:"findings"`
+	StoreCapacity storeCapacityView   `json:"store_capacity"`
+}
+
+// storeCapacityView projects the store capacity advisory's measurement as facts, not
+// prose. ObservedBytes is null unless the measurement is exact or partial (then a
+// lower bound over the inspected files); ThresholdBytes is null when the advisory is
+// disabled; IncompleteReasons is empty exactly when the figure is exact or disabled.
+type storeCapacityView struct {
+	Scope             string   `json:"scope"`
+	Metric            string   `json:"metric"`
+	Measurement       string   `json:"measurement"`
+	ObservedBytes     *int64   `json:"observed_bytes"`
+	ThresholdBytes    *int64   `json:"threshold_bytes"`
+	IncompleteReasons []string `json:"incomplete_reasons"`
 }
 
 type doctorSummaryView struct {
@@ -146,7 +161,8 @@ func doctorViewOf(res domdoctor.DoctorResult) doctorView {
 			Repairable: s.Repairable,
 			Repaired:   s.Repaired,
 		},
-		Findings: []doctorFindingView{},
+		Findings:      []doctorFindingView{},
+		StoreCapacity: storeCapacityViewOf(res.StoreCapacity()),
 	}
 	for _, f := range res.Findings() {
 		v.Findings = append(v.Findings, doctorFindingView{
@@ -161,6 +177,47 @@ func doctorViewOf(res domdoctor.DoctorResult) doctorView {
 		})
 	}
 	return v
+}
+
+func storeCapacityViewOf(c domdoctor.StoreCapacity) storeCapacityView {
+	v := storeCapacityView{
+		Scope:             domdoctor.StoreCapacityScope,
+		Metric:            domdoctor.StoreCapacityMetric,
+		Measurement:       c.Measurement().String(),
+		IncompleteReasons: []string{},
+	}
+	if b, ok := c.ObservedBytes(); ok {
+		v.ObservedBytes = &b
+	}
+	if th, ok := c.Threshold(); ok {
+		v.ThresholdBytes = &th
+	}
+	for _, g := range c.Gaps() {
+		v.IncompleteReasons = append(v.IncompleteReasons, string(g))
+	}
+	return v
+}
+
+// storeCapacityLine words the store measurement for the human report: the figure
+// with its completeness, the threshold it is compared with, or why there is none.
+func storeCapacityLine(c domdoctor.StoreCapacity) string {
+	threshold, _ := c.Threshold()
+	gaps := make([]string, 0, len(c.Gaps()))
+	for _, g := range c.Gaps() {
+		gaps = append(gaps, string(g))
+	}
+	switch c.Measurement() {
+	case domdoctor.CapacityDisabled:
+		return "store: .awa/ size advisory off (doctor.store_warning_size)"
+	case domdoctor.CapacityUnmeasured:
+		return fmt.Sprintf("store: .awa/ size unmeasured (%s); warning at %s", strings.Join(gaps, ", "), humanizeBytes(threshold))
+	}
+	observed, _ := c.ObservedBytes()
+	line := fmt.Sprintf("store: %s in .awa/", logicalBytes(observed, c.Measurement() == domdoctor.CapacityExact))
+	if len(gaps) > 0 {
+		line += " (partial: " + strings.Join(gaps, ", ") + ")"
+	}
+	return line + "; warning at " + humanizeBytes(threshold)
 }
 
 // renderDoctor prints the human report: a one-line verdict for a healthy project,
@@ -179,6 +236,7 @@ func renderDoctor(w *output.Writer, res domdoctor.DoctorResult) {
 		}
 		w.Line("")
 	}
+	w.Line(storeCapacityLine(res.StoreCapacity()))
 	w.Linef("checks: %d passed, %d warnings, %d errors", s.Passed, s.Warnings, s.Errors)
 	// Summary.Repairable counts every repairable finding including those already
 	// fixed, so the still-fixable tally subtracts the repaired ones.

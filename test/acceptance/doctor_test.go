@@ -33,6 +33,14 @@ type doctorEnvelope struct {
 			Repairable bool   `json:"repairable"`
 			Repaired   bool   `json:"repaired"`
 		} `json:"findings"`
+		StoreCapacity struct {
+			Scope             string   `json:"scope"`
+			Metric            string   `json:"metric"`
+			Measurement       string   `json:"measurement"`
+			ObservedBytes     *int64   `json:"observed_bytes"`
+			ThresholdBytes    *int64   `json:"threshold_bytes"`
+			IncompleteReasons []string `json:"incomplete_reasons"`
+		} `json:"store_capacity"`
 	} `json:"data"`
 }
 
@@ -67,6 +75,64 @@ func TestDoctorJSONEnvelope(t *testing.T) {
 	}
 	if env.Data.Health != "ok" {
 		t.Fatalf("health = %q, want ok", env.Data.Health)
+	}
+	sc := env.Data.StoreCapacity
+	if sc.Scope != ".awa" || sc.Metric != "logical-bytes" || sc.Measurement != "exact" ||
+		sc.ObservedBytes == nil || *sc.ObservedBytes <= 0 || sc.ThresholdBytes == nil || *sc.ThresholdBytes != 1<<30 ||
+		sc.IncompleteReasons == nil || len(sc.IncompleteReasons) != 0 {
+		t.Fatalf("store_capacity = %+v, want an exact positive size against the 1GiB default", sc)
+	}
+}
+
+// TestDoctorStoreCapacityAdvisory drives the advisory through real config layers: a
+// shared threshold the store exceeds warns with exit 0 and no repair, a local "off"
+// overrides it and walks nothing, and zero is rejected as invalid config.
+func TestDoctorStoreCapacityAdvisory(t *testing.T) {
+	root := initProject(t)
+	write(t, root, "awa.toml", "[doctor]\nstore_warning_size = \"16B\"\n")
+
+	code, stdout, _ := awa(t, root, "doctor", "--json")
+	if code != 0 {
+		t.Fatalf("over-threshold doctor exit = %d, want 0\n%s", code, stdout)
+	}
+	var env doctorEnvelope
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("invalid doctor JSON: %v\n%s", err, stdout)
+	}
+	if env.Data.Health != "warning" || len(env.Data.Findings) != 1 {
+		t.Fatalf("health %q findings %+v, want one warning", env.Data.Health, env.Data.Findings)
+	}
+	f := env.Data.Findings[0]
+	if f.Code != "store-capacity-threshold" || f.Severity != "warning" || f.Repairable || f.Subsystem != "capacity" {
+		t.Fatalf("finding = %+v, want a non-repairable capacity warning", f)
+	}
+	if th := env.Data.StoreCapacity.ThresholdBytes; th == nil || *th != 16 {
+		t.Fatalf("threshold_bytes = %v, want 16", th)
+	}
+	if code, stdout, _ := awa(t, root, "doctor", "--repair"); code != 0 || !strings.Contains(stdout, "store-capacity-threshold") {
+		t.Fatalf("doctor --repair exit = %d, want 0 with the warning still reported\n%s", code, stdout)
+	}
+
+	write(t, root, ".awa/config.toml", "[doctor]\nstore_warning_size = \"off\"\n")
+	code, stdout, _ = awa(t, root, "doctor", "--json")
+	if code != 0 {
+		t.Fatalf("disabled doctor exit = %d", code)
+	}
+	env = doctorEnvelope{}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatal(err)
+	}
+	sc := env.Data.StoreCapacity
+	if sc.Measurement != "disabled" || sc.ObservedBytes != nil || sc.ThresholdBytes != nil || strings.Contains(stdout, "store-capacity-threshold") {
+		t.Fatalf("disabled store_capacity = %+v findings %+v, want disabled with null figures", sc, env.Data.Findings)
+	}
+	if code, stdout, _ := awa(t, root, "doctor"); code != 0 || !strings.Contains(stdout, "store: .awa/ size advisory off") {
+		t.Fatalf("disabled human output (exit %d):\n%s", code, stdout)
+	}
+
+	write(t, root, ".awa/config.toml", "[doctor]\nstore_warning_size = \"0\"\n")
+	if code, _, stderr := awa(t, root, "doctor"); code != 4 || !strings.Contains(stderr, "doctor.store_warning_size") {
+		t.Fatalf("zero threshold: exit %d stderr %q, want config error 4 naming the key", code, stderr)
 	}
 }
 

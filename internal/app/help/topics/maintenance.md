@@ -10,7 +10,7 @@ is a separate decision you make and justify afterwards.
 
 ```text
 awa help config                # config schema, precedence, and when to change it
-awa doctor                     # integrity and privacy findings for .awa/
+awa doctor                     # integrity and privacy findings, store size
 awa config validate            # every config layer parses and is accepted
 awa config effective           # the values actually in force, and their origin
 awa status                     # baseline, drift, and reuse at a glance
@@ -34,10 +34,12 @@ metadata-preserving edits or a crash, not a routine step. Neither
 
 `awa doctor` reports on the checks it runs: store integrity, locks, the `.awa/`
 git guard, permissions, and a bounded set of privacy hints. A clean result says
-those checks found nothing. It does not say the input scope is complete, that
-every environment variable a command reads is allowlisted, that the cache
-strategy suits the project, or that stored logs and older checkpoints are free of
-secrets. Treat it as one input to the review, never as its conclusion.
+those checks found nothing. Its `store:` line is the logical size of `.awa/` under
+a bounded walk; a `store-capacity-threshold` warning says that size reached
+`doctor.store_warning_size`, not that anything is damaged or safe to delete. It
+does not say the input scope is complete, that every environment variable a
+command reads is allowlisted, that the cache strategy suits the project, or that
+stored logs and older checkpoints are free of secrets. Treat it as one input to the review, never as its conclusion.
 
 ## Inputs, history, retention, and effects are different choices
 
@@ -128,9 +130,9 @@ or `awa run rm`.
 
 `awa gc --dry-run` is a proposal for that explicit deletion: the candidates it
 selected, what it retains, and what blocks it. It is not a report of the whole
-store's size, and it is not a secret sanitizer — it removes only what retention
-allows. Its byte figures are logical file lengths for the selected candidates,
-can be a lower bound, and need not match disk usage. The workflow and every
+store's size (that is doctor's `store:` line), and it is not a secret sanitizer —
+it removes only what retention allows. Its byte figures are logical file lengths
+for the selected candidates, can be a lower bound, and need not match disk usage. The workflow and every
 reason token are in [awa help gc](gc.md).
 
 ## What a config change does not undo

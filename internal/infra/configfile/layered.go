@@ -33,6 +33,7 @@ type overlayWire struct {
 	GC         *overlayGC         `toml:"gc"`
 	Diff       *overlayDiff       `toml:"diff"`
 	Locks      *overlayLocks      `toml:"locks"`
+	Doctor     *overlayDoctor     `toml:"doctor"`
 	UI         *overlayUI         `toml:"ui"`
 }
 
@@ -89,6 +90,10 @@ type overlayDiff struct {
 
 type overlayLocks struct {
 	Timeout *string `toml:"timeout"`
+}
+
+type overlayDoctor struct {
+	StoreWarningSize *string `toml:"store_warning_size"`
 }
 
 type overlayUI struct {
@@ -455,6 +460,17 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 			}
 			cfg.Locks.Timeout = v
 			origins["locks.timeout"] = layer
+		}
+	}
+
+	if d := w.Doctor; d != nil {
+		if d.StoreWarningSize != nil {
+			v, err := config.ParseByteThreshold(*d.StoreWarningSize)
+			if err != nil {
+				return layerErr(layer, path, "doctor.store_warning_size", err)
+			}
+			cfg.Doctor.StoreWarningSize = v
+			origins["doctor.store_warning_size"] = layer
 		}
 	}
 

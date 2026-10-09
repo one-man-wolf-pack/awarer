@@ -84,3 +84,18 @@ func TestConfigHashSensitiveToTrustMode(t *testing.T) {
 		t.Errorf("config hash must differ across trust modes: strict=%q normal=%q fast=%q", hs, hn, hf)
 	}
 }
+
+// TestConfigHashIgnoresDoctorAdvisory pins that doctor's store-size threshold —
+// diagnostic only — never moves the scan config identity.
+func TestConfigHashIgnoresDoctorAdvisory(t *testing.T) {
+	h := blake3hash.New()
+	base := config.Defaults()
+	want := configHash(base, base.HistoryScanScope(), h)
+	for _, th := range []config.ByteThreshold{config.ThresholdOff(), config.ThresholdAt(1)} {
+		cfg := config.Defaults()
+		cfg.Doctor.StoreWarningSize = th
+		if configHash(cfg, cfg.HistoryScanScope(), h) != want {
+			t.Errorf("doctor.store_warning_size = %s changed the scan config hash", th)
+		}
+	}
+}

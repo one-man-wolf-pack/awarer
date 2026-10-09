@@ -99,13 +99,17 @@ const (
 	SubsystemTemp        Subsystem = "temp"
 	SubsystemLocks       Subsystem = "locks"
 	SubsystemGit         Subsystem = "git"
+	// SubsystemCapacity groups advisories about how much local evidence is kept,
+	// as distinct from whether that evidence is intact.
+	SubsystemCapacity Subsystem = "capacity"
 )
 
 // Valid reports whether s is a known subsystem.
 func (s Subsystem) Valid() bool {
 	switch s {
 	case SubsystemConfig, SubsystemLayout, SubsystemCheckpoints, SubsystemRuns,
-		SubsystemRestores, SubsystemIndex, SubsystemTemp, SubsystemLocks, SubsystemGit:
+		SubsystemRestores, SubsystemIndex, SubsystemTemp, SubsystemLocks, SubsystemGit,
+		SubsystemCapacity:
 		return true
 	default:
 		return false
@@ -165,6 +169,10 @@ const (
 	CodeNestedProjectMarker           FindingCode = "nested-project-marker"
 	CodeNestedMarkerScanIncomplete    FindingCode = "nested-marker-scan-incomplete"
 	CodeAncestorProjectMarker         FindingCode = "ancestor-project-marker"
+	// CodeStoreCapacityThreshold is the store capacity advisory: the observed logical
+	// bytes of .awa/ reached the configured threshold. It is a non-repairable warning,
+	// never an integrity verdict and never a reason for doctor to delete anything.
+	CodeStoreCapacityThreshold FindingCode = "store-capacity-threshold"
 )
 
 // findingCodes is the canonical enumeration of the closed vocabulary. It is the one
@@ -176,9 +184,9 @@ const (
 //
 // The order is semantic and deliberate, not alphabetical: configuration, then the
 // store's own shape, then the records inside it, then the worktree index, then locks
-// and temp debris, then what the evidence's exposure looks like from outside, and
-// finally the meta-finding that a repair itself failed. Consumers may rely on it
-// being stable.
+// and temp debris, then what the evidence's exposure looks like from outside, then how
+// much evidence is kept, and finally the meta-finding that a repair itself failed.
+// Consumers may rely on it being stable.
 var findingCodes = []FindingCode{
 	// configuration
 	CodeConfigInvalid,
@@ -222,6 +230,8 @@ var findingCodes = []FindingCode{
 	CodeNestedProjectMarker,
 	CodeNestedMarkerScanIncomplete,
 	CodeAncestorProjectMarker,
+	// how much local evidence is kept
+	CodeStoreCapacityThreshold,
 	// the diagnosis of a failed repair
 	CodeRepairFailed,
 }

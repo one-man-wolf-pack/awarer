@@ -276,6 +276,55 @@ func (b ByteSize) String() string {
 // Bytes returns the size as a count of bytes.
 func (b ByteSize) Bytes() int64 { return int64(b) }
 
+// ByteThreshold is an optional positive byte size: either a limit or the explicit
+// "off" that disables whatever it gates. Off and a size are distinct states, so a
+// disabled threshold never masquerades as a zero-byte one.
+type ByteThreshold struct {
+	size ByteSize
+	off  bool
+}
+
+// thresholdOffWord is the configuration spelling of a disabled threshold.
+const thresholdOffWord = "off"
+
+// ThresholdOff returns the disabled threshold.
+func ThresholdOff() ByteThreshold { return ByteThreshold{off: true} }
+
+// ThresholdAt returns an enabled threshold of size; Validate rejects one that is
+// not positive.
+func ThresholdAt(size ByteSize) ByteThreshold { return ByteThreshold{size: size} }
+
+// ParseByteThreshold parses "off" or a positive byte size such as "1GiB". Zero is
+// rejected rather than read as "off" or as "always": the disabled state has its own
+// spelling.
+func ParseByteThreshold(s string) (ByteThreshold, error) {
+	if strings.TrimSpace(s) == thresholdOffWord {
+		return ThresholdOff(), nil
+	}
+	size, err := ParseByteSize(s)
+	if err != nil {
+		return ByteThreshold{}, fmt.Errorf("%w (or %q to disable)", err, thresholdOffWord)
+	}
+	if size == 0 {
+		return ByteThreshold{}, fmt.Errorf("invalid byte threshold %q: must be positive (or %q to disable)", s, thresholdOffWord)
+	}
+	return ThresholdAt(size), nil
+}
+
+// Enabled reports whether the threshold is a limit rather than "off".
+func (t ByteThreshold) Enabled() bool { return !t.off }
+
+// Size returns the limit; it is meaningful only when Enabled.
+func (t ByteThreshold) Size() ByteSize { return t.size }
+
+// String renders "off" or the size in its coarsest exact unit.
+func (t ByteThreshold) String() string {
+	if t.off {
+		return thresholdOffWord
+	}
+	return t.size.String()
+}
+
 // Duration is a time span parsed from human strings such as "7d" or "14d".
 type Duration time.Duration
 

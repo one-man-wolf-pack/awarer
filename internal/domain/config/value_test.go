@@ -76,6 +76,40 @@ func TestByteSizeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseByteThreshold(t *testing.T) {
+	tests := []struct {
+		in   string
+		want ByteThreshold
+	}{
+		{"off", ThresholdOff()},
+		{" off ", ThresholdOff()},
+		{"1GiB", ThresholdAt(giB)},
+		{"512MiB", ThresholdAt(512 * miB)},
+		{"1", ThresholdAt(1)},
+	}
+	for _, tt := range tests {
+		got, err := ParseByteThreshold(tt.in)
+		if err != nil {
+			t.Fatalf("ParseByteThreshold(%q): %v", tt.in, err)
+		}
+		if got != tt.want {
+			t.Errorf("ParseByteThreshold(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+		if again, err := ParseByteThreshold(got.String()); err != nil || again != got {
+			t.Errorf("round trip %q -> %q -> %v, %v", tt.in, got.String(), again, err)
+		}
+	}
+	// Zero is neither "off" nor "always": the disabled state has its own spelling.
+	for _, bad := range []string{"0", "0B", "-1GiB", "", "Off", "none", "1GB"} {
+		if _, err := ParseByteThreshold(bad); err == nil {
+			t.Errorf("ParseByteThreshold(%q) should fail", bad)
+		}
+	}
+	if ThresholdOff().Enabled() || ThresholdOff() == ThresholdAt(0) {
+		t.Error("off must be a distinct, disabled state")
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	tests := []struct {
 		in      string

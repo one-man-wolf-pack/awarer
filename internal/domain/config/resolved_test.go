@@ -280,6 +280,7 @@ func TestChangedKeysMapsEachFieldToItsKey(t *testing.T) {
 		{"gc.keep_restores_for", func(c *Config) { c.GC.KeepRestoresFor = d.GC.KeepRestoresFor + 1 }},
 		{"diff.algorithm", func(c *Config) { c.Diff.Algorithm = DiffAlgorithm(99) }},
 		{"locks.timeout", func(c *Config) { c.Locks.Timeout = d.Locks.Timeout + 1 }},
+		{"doctor.store_warning_size", func(c *Config) { c.Doctor.StoreWarningSize = ThresholdOff() }},
 		{"ui.time", func(c *Config) { c.UI.Time = TimeDisplay(99) }},
 	}
 

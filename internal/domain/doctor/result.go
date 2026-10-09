@@ -19,6 +19,7 @@ type Summary struct {
 type DoctorResult struct {
 	passed   int
 	findings []Finding
+	capacity StoreCapacity
 }
 
 // NewResult builds a result from a pass count and the findings recorded. The
@@ -29,6 +30,18 @@ func NewResult(passed int, findings []Finding) DoctorResult {
 	copy(fs, findings)
 	return DoctorResult{passed: passed, findings: fs}
 }
+
+// WithStoreCapacity returns the result carrying the store capacity advisory's
+// measurement. Capacity is reported beside the findings, not derived from them: a
+// threshold crossing also appears as a finding, but every measurement state —
+// disabled, unmeasured, exact, partial — is reported on its own.
+func (r DoctorResult) WithStoreCapacity(c StoreCapacity) DoctorResult {
+	r.capacity = c
+	return r
+}
+
+// StoreCapacity returns the store capacity advisory's measurement.
+func (r DoctorResult) StoreCapacity() StoreCapacity { return r.capacity }
 
 // Findings returns the recorded findings. The returned slice is a copy.
 func (r DoctorResult) Findings() []Finding {

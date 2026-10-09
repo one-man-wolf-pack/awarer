@@ -20,6 +20,7 @@ type View struct {
 	GC         GCView         `json:"gc"`
 	Diff       DiffView       `json:"diff"`
 	Locks      LocksView      `json:"locks"`
+	Doctor     DoctorView     `json:"doctor"`
 	UI         UIView         `json:"ui"`
 }
 
@@ -113,6 +114,12 @@ type LocksView struct {
 	Timeout string `json:"timeout"`
 }
 
+// DoctorView shows doctor's advisory settings. StoreWarningSize is a byte size or
+// "off".
+type DoctorView struct {
+	StoreWarningSize string `json:"store_warning_size"`
+}
+
 // NewView projects a domain config into its string-rendered view. Slice fields
 // are cloned so the view is a fully independent DTO: mutating it can never
 // reach back into the source config's backing arrays.
@@ -169,6 +176,9 @@ func NewView(c config.Config) View {
 		},
 		Locks: LocksView{
 			Timeout: c.Locks.Timeout.String(),
+		},
+		Doctor: DoctorView{
+			StoreWarningSize: c.Doctor.StoreWarningSize.String(),
 		},
 		UI: UIView{
 			Time: c.UI.Time.String(),

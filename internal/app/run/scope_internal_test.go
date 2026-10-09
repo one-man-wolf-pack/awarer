@@ -135,4 +135,13 @@ func TestRunConfigHashSensitivity(t *testing.T) {
 	if runConfigHash(ttlChanged, h).String() != baseHash {
 		t.Error("changing run.ttl must not change the run config hash")
 	}
+
+	// Doctor's store-size advisory is diagnostic only and never part of reuse identity.
+	for _, th := range []config.ByteThreshold{config.ThresholdOff(), config.ThresholdAt(1)} {
+		advisory := config.Defaults()
+		advisory.Doctor.StoreWarningSize = th
+		if runConfigHash(advisory, h).String() != baseHash {
+			t.Errorf("doctor.store_warning_size = %s changed the run config hash", th)
+		}
+	}
 }

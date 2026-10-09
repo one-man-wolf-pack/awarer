@@ -10,7 +10,9 @@ prints a one-line health verdict plus one line per finding. It also
 raises local evidence/privacy findings: secret-looking env allowlist names,
 a secret-looking top-level file a checkpoint would store bytes for, overly broad
 `.awa/` permissions, and nested or ancestor `.awa` markers (see
-[awa help privacy](privacy.md)).
+[awa help privacy](privacy.md)). Separately from those integrity and privacy
+checks, it reports how much the `.awa/` store holds and warns when that reaches a
+configurable size (see "Store size advisory" below).
 
 ```text
 awa doctor              # report health and any findings
@@ -67,8 +69,53 @@ content-capture-check-incomplete
                               an ignore file; the answer is unknown, not clean
 nested-*, ancestor-*          another .awa marker below or above this root, or a
                               nested-marker scan that could not complete
+store-capacity-threshold      the .awa/ store's logical bytes reached
+                              doctor.store_warning_size (a warning; exit 0)
 repair-failed                 a repair was attempted and did not succeed
 ```
+
+## Store size advisory
+
+Every plain `awa doctor` run also sizes the `.awa/` store and prints one `store:`
+line (JSON: `store_capacity`). The figure is the sum of the logical lengths of the
+regular files under `.awa/` — records, manifests, blobs, captured output, temp,
+config, and the derived index — as listed during the walk. Each path counts once,
+so a hard-linked file counts once per path; directories, symlinks (never followed),
+and special files count nothing, and no file is opened or read. It is not disk
+usage (allocated blocks, compression, or snapshots are not seen), not what
+`awa gc` would reclaim, and says nothing about the worktree or generated output.
+
+When that figure reaches `doctor.store_warning_size` (default `1GiB`; see
+[awa help config](../reference/configuration.md)) doctor reports a
+`store-capacity-threshold` warning. It is not repairable and on its own leaves
+health at `warning` and the exit status at 0; `--repair` never deletes or changes evidence because of its
+size. The next step is a look at retention, not automatic cleanup:
+
+```text
+awa gc --dry-run     # what the configured retention would remove, and why
+```
+
+`gc` only manages awa's own records; it does not shrink generated project
+output. Set `store_warning_size = "off"` under `[doctor]` to disable the advisory
+and its walk, or a larger size if this project is expected to keep more evidence.
+
+The walk is bounded: it examines at most 1,000,000 entries and descends at most
+32 directory levels. The measurement is one of:
+
+```text
+exact        every entry was measured; 0 really means an empty store
+partial      a lower bound: the walk stopped at its entry budget
+             (work-budget), skipped levels past its depth limit (depth-limit),
+             or could not stat or list some entries (unreadable-entries)
+unmeasured   .awa/ could not be opened for sizing (unavailable); no figure
+disabled     the advisory is off; no walk ran
+```
+
+A partial figure that already reaches the threshold still warns — the store holds
+at least that much. A partial figure below it does not show the store is small.
+Files that change during the walk are counted as seen, not as an atomic snapshot.
+Sizing has its own budget and never shortens the integrity checks; an interrupted
+doctor exits as interrupted rather than reporting a partial size.
 
 ## What --repair will and will not do
 

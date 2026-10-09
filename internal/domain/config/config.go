@@ -20,6 +20,7 @@ type Config struct {
 	GC         GC
 	Diff       Diff
 	Locks      Locks
+	Doctor     Doctor
 	UI         UI
 }
 
@@ -256,6 +257,14 @@ type GC struct {
 // error.
 type Locks struct {
 	Timeout Duration
+}
+
+// Doctor controls doctor's diagnostics that are advisory rather than integrity
+// checks. StoreWarningSize is the logical-byte size of .awa/ at which doctor warns;
+// "off" disables the advisory and its sizing walk. It is diagnostic only: it feeds no
+// observation, reuse, retention, or evidence identity.
+type Doctor struct {
+	StoreWarningSize ByteThreshold
 }
 
 // The product default excludes are layered (baseline and history excludes).
@@ -534,6 +543,9 @@ func Defaults() Config {
 		Locks: Locks{
 			Timeout: Duration(5 * 1e9), // 5s
 		},
+		Doctor: Doctor{
+			StoreWarningSize: ThresholdAt(1 * giB),
+		},
 		UI: UI{
 			Time: DefaultTimeDisplay(),
 		},
@@ -628,6 +640,9 @@ func (c Config) Validate() error {
 	}
 	if c.Locks.Timeout < 0 {
 		p = append(p, "locks.timeout must not be negative")
+	}
+	if t := c.Doctor.StoreWarningSize; t.Enabled() && t.Size() <= 0 {
+		p = append(p, "doctor.store_warning_size must be positive or \"off\"")
 	}
 	if len(p) > 0 {
 		return &ValidationError{Problems: p}

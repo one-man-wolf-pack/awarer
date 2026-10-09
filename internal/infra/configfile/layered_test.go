@@ -161,6 +161,54 @@ func TestComposeInvalidLayerNamesLayerAndKey(t *testing.T) {
 	}
 }
 
+// TestComposeStoreWarningSize pins the doctor advisory threshold: a missing key keeps
+// the 1GiB default, a higher layer's size or "off" wins with its origin recorded, and
+// zero or an unknown word is rejected naming the layer and key rather than silently
+// disabling or always firing the advisory.
+func TestComposeStoreWarningSize(t *testing.T) {
+	cfg, origins, err := Compose([]NamedOverlay{{Layer: config.LayerShared, Overlay: overlay(t, "[run]\nttl = \"3d\"\n")}})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got := cfg.Doctor.StoreWarningSize.String(); got != "1GiB" || origins["doctor.store_warning_size"] != config.LayerDefault {
+		t.Errorf("absent key = %s from %q, want default 1GiB", got, origins["doctor.store_warning_size"])
+	}
+
+	shared := overlay(t, "[doctor]\nstore_warning_size = \"2GiB\"\n")
+	local := overlay(t, "[doctor]\nstore_warning_size = \"off\"\n")
+	cfg, origins, err = Compose([]NamedOverlay{
+		{Layer: config.LayerShared, Overlay: shared},
+		{Layer: config.LayerLocal, Overlay: local},
+	})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if cfg.Doctor.StoreWarningSize.Enabled() || origins["doctor.store_warning_size"] != config.LayerLocal {
+		t.Errorf("local off = %s from %q, want off from local", cfg.Doctor.StoreWarningSize, origins["doctor.store_warning_size"])
+	}
+	cfg, _, err = Compose([]NamedOverlay{
+		{Layer: config.LayerLocal, Overlay: local},
+		{Layer: config.LayerConfig, Overlay: overlay(t, "[doctor]\nstore_warning_size = \"512MiB\"\n")},
+	})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got := cfg.Doctor.StoreWarningSize.String(); got != "512MiB" {
+		t.Errorf("--config size = %s, want 512MiB over local off", got)
+	}
+
+	for _, bad := range []string{`"0"`, `"0B"`, `"-1GiB"`, `"none"`, `"1GB"`} {
+		_, _, err := Compose([]NamedOverlay{{Layer: config.LayerShared, Overlay: overlay(t, "[doctor]\nstore_warning_size = "+bad+"\n")}})
+		if err == nil {
+			t.Errorf("store_warning_size = %s should be rejected", bad)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, config.LayerShared.String()) || !strings.Contains(msg, "doctor.store_warning_size") {
+			t.Errorf("error %q should name the layer and key", msg)
+		}
+	}
+}
+
 func TestDecodeOverlayRejectsUnknownField(t *testing.T) {
 	if _, err := DecodeOverlay([]byte("[hashing]\nnope = true\n")); err == nil {
 		t.Error("DecodeOverlay should reject an unknown field")

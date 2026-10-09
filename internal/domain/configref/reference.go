@@ -132,6 +132,14 @@ func Sections() []Section {
 			},
 		},
 		{
+			Name:  "doctor",
+			Title: "Doctor advisories",
+			Intro: "Diagnostic only: these settings change what doctor reports, never observation, reuse, retention, or evidence identity.",
+			Fields: []Field{
+				{"store_warning_size", d.Doctor.StoreWarningSize.String(), "byte size (B/KiB/MiB/GiB/TiB) or \"off\"", "Logical bytes of the regular files under .awa/ at which plain doctor reports a non-repairable store-capacity-threshold warning (exit 0). It is not disk usage or bytes gc would reclaim. \"off\" disables the advisory and its sizing walk; zero is rejected.", "Raise or lower to match how much local evidence this project expects to keep, or set \"off\" to skip sizing."},
+			},
+		},
+		{
 			Name:  "ui",
 			Title: "Human presentation",
 			Intro: "Human output only; JSON always uses machine timestamps and never carries relative prose.",

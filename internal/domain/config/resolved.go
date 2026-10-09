@@ -132,6 +132,7 @@ var keySpecs = []keySpec{
 	{"gc.keep_restores_for", func(a, b Config) bool { return a.GC.KeepRestoresFor != b.GC.KeepRestoresFor }},
 	{"diff.algorithm", func(a, b Config) bool { return a.Diff.Algorithm != b.Diff.Algorithm }},
 	{"locks.timeout", func(a, b Config) bool { return a.Locks.Timeout != b.Locks.Timeout }},
+	{"doctor.store_warning_size", func(a, b Config) bool { return a.Doctor.StoreWarningSize != b.Doctor.StoreWarningSize }},
 	{"ui.time", func(a, b Config) bool { return a.UI.Time != b.UI.Time }},
 }
 

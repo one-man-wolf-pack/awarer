@@ -110,6 +110,7 @@ var docCoverage = map[string]coverageOwner{
 	"config:gc":         {topic: "gc"},
 	"config:diff":       {topic: "diff"},
 	"config:locks":      {topic: "gc"},
+	"config:doctor":     {topic: "doctor"},
 	"config:ui":         {topic: "inspect"},
 
 	// --- cache-miss reason vocabulary -------------------------------------------
@@ -681,5 +682,27 @@ func TestPrivacyTopicListsEveryInheritedBaselineName(t *testing.T) {
 	// The reserved marker is documented as what it is, and never as an inherited name.
 	if !strings.Contains(text, searchable(domainconfig.WrapperMarkerName+"="+domainconfig.WrapperMarkerValue)) {
 		t.Errorf("awa help privacy does not state the injected %s=%s", domainconfig.WrapperMarkerName, domainconfig.WrapperMarkerValue)
+	}
+}
+
+// TestEveryStoreCapacityTokenIsDocumented holds the store capacity vocabulary to the
+// finding-code standard: every measurement state and incompleteness reason a script
+// may branch on in doctor's store_capacity is named on the page that owns it.
+func TestEveryStoreCapacityTokenIsDocumented(t *testing.T) {
+	body, ok := authoredTopicBodies(t)["doctor"]
+	if !ok {
+		t.Fatal("the doctor topic is not in the help catalog")
+	}
+	var tokens []string
+	for _, m := range doctor.CapacityMeasurements() {
+		tokens = append(tokens, m.String())
+	}
+	for _, g := range doctor.CapacityGaps() {
+		tokens = append(tokens, string(g))
+	}
+	for _, tok := range tokens {
+		if !strings.Contains(body, tok) {
+			t.Errorf("store capacity token %q is not documented in doctor.md", tok)
+		}
 	}
 }

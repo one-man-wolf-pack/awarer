@@ -224,50 +224,112 @@ type TreeSize struct {
 // returned as an error, as is cancellation of ctx — a cancelled walk is never a
 // partial measurement.
 func SizeTreeAt(ctx context.Context, dir *os.File, name string) (TreeSize, error) {
-	if err := ctx.Err(); err != nil {
+	s, err := sizeTree(ctx, dir, name, TreeLimits{})
+	if err != nil {
 		return TreeSize{}, err
 	}
+	return TreeSize{Bytes: s.Bytes, Complete: !s.Unreadable}, nil
+}
+
+// TreeLimits bounds one SizeTreeWithin walk. MaxEntries caps the directory entries
+// examined (each costs one no-follow stat); MaxDepth caps how many nested directories
+// are open at once along one path, name itself being the first, and with them the
+// descriptors and listing batches held. A zero field is unlimited.
+type TreeLimits struct {
+	MaxEntries int64
+	MaxDepth   int
+}
+
+// BoundedTreeSize is a TreeSize whose incompleteness is typed. Bytes is the sum of
+// the regular-file lengths established before the walk ended, Entries how many
+// entries were examined. Each flag names one reason Bytes is only a lower bound over
+// the inspected files: the entry budget ran out (the walk stopped), a directory lay
+// beyond MaxDepth (its contents were skipped), or a descendant could not be stat'ed,
+// opened, or listed.
+type BoundedTreeSize struct {
+	Bytes              int64
+	Entries            int64
+	EntryBudgetReached bool
+	DepthLimitReached  bool
+	Unreadable         bool
+}
+
+// Complete reports whether every entry beneath the tree was measured.
+func (s BoundedTreeSize) Complete() bool {
+	return !s.EntryBudgetReached && !s.DepthLimitReached && !s.Unreadable
+}
+
+// SizeTreeWithin is SizeTreeAt under explicit work bounds: it holds scalar totals,
+// at most MaxDepth open directories and their listing batches, and never the file
+// list. Reaching a limit ends or narrows the walk and is reported in the result, never
+// as an error; failures on name itself and cancellation are errors exactly as in
+// SizeTreeAt.
+func SizeTreeWithin(ctx context.Context, dir *os.File, name string, lim TreeLimits) (BoundedTreeSize, error) {
+	return sizeTree(ctx, dir, name, lim)
+}
+
+// errEntryBudget unwinds a sizing walk whose entry budget is spent.
+var errEntryBudget = errors.New("fsx: sizing entry budget reached")
+
+func sizeTree(ctx context.Context, dir *os.File, name string, lim TreeLimits) (BoundedTreeSize, error) {
+	if err := ctx.Err(); err != nil {
+		return BoundedTreeSize{}, err
+	}
 	if err := checkLeafName(name); err != nil {
-		return TreeSize{}, err
+		return BoundedTreeSize{}, err
 	}
 	mode, size, err := LstatAt(dir, name)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return TreeSize{Complete: true}, nil
+			return BoundedTreeSize{}, nil
 		}
-		return TreeSize{}, err
+		return BoundedTreeSize{}, err
 	}
-	s := TreeSize{Complete: true}
+	w := sizeWalk{ctx: ctx, lim: lim}
+	w.out.Entries = 1
 	switch {
 	case mode.IsRegular():
-		s.Bytes = size
+		w.out.Bytes = size
 	case mode.IsDir():
 		sub, err := openDirAt(dir, name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return s, nil
+				return w.out, nil
 			}
-			return TreeSize{}, err
+			return BoundedTreeSize{}, err
 		}
-		err = sizeDirAt(ctx, sub, &s)
+		err = w.dir(sub, 1)
 		_ = sub.Close()
-		if err != nil {
-			return TreeSize{}, err
+		if err != nil && !errors.Is(err, errEntryBudget) {
+			return BoundedTreeSize{}, err
 		}
 	}
-	return s, nil
+	return w.out, nil
 }
 
-// sizeDirAt adds the regular-file lengths beneath the open directory d to s. Only
-// cancellation is returned; every other failure is folded into s.Complete.
-func sizeDirAt(ctx context.Context, d *os.File, s *TreeSize) error {
+// sizeWalk is one sizing walk's scalar state.
+type sizeWalk struct {
+	ctx context.Context
+	lim TreeLimits
+	out BoundedTreeSize
+}
+
+// dir adds the regular-file lengths beneath the open directory d, which sits depth
+// levels below the walk's root. Only cancellation and errEntryBudget are returned;
+// every other failure is folded into out.Unreadable.
+func (w *sizeWalk) dir(d *os.File, depth int) error {
 	err := EachDirEntryAt(d, func(e os.DirEntry) error {
-		if err := ctx.Err(); err != nil {
+		if err := w.ctx.Err(); err != nil {
 			return err
 		}
+		if w.lim.MaxEntries > 0 && w.out.Entries >= w.lim.MaxEntries {
+			w.out.EntryBudgetReached = true
+			return errEntryBudget
+		}
+		w.out.Entries++
 		name := e.Name()
 		if checkLeafName(name) != nil {
-			s.Complete = false
+			w.out.Unreadable = true
 			return nil
 		}
 		mode, size, err := LstatAt(d, name)
@@ -275,30 +337,37 @@ func sizeDirAt(ctx context.Context, d *os.File, s *TreeSize) error {
 		case errors.Is(err, os.ErrNotExist):
 			return nil
 		case err != nil:
-			s.Complete = false
+			w.out.Unreadable = true
 			return nil
 		case mode.IsRegular():
-			s.Bytes += size
+			w.out.Bytes += size
 			return nil
 		case !mode.IsDir():
+			return nil
+		}
+		if w.lim.MaxDepth > 0 && depth >= w.lim.MaxDepth {
+			w.out.DepthLimitReached = true
 			return nil
 		}
 		sub, err := openDirAt(d, name)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				s.Complete = false
+				w.out.Unreadable = true
 			}
 			return nil
 		}
 		defer func() { _ = sub.Close() }()
-		return sizeDirAt(ctx, sub, s)
+		return w.dir(sub, depth+1)
 	})
 	if err != nil {
-		if cerr := ctx.Err(); cerr != nil {
+		if cerr := w.ctx.Err(); cerr != nil {
 			return cerr
 		}
+		if errors.Is(err, errEntryBudget) {
+			return err
+		}
 		// A listing that failed part-way established only the lengths already added.
-		s.Complete = false
+		w.out.Unreadable = true
 	}
 	return nil
 }

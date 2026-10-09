@@ -82,8 +82,13 @@ whether those byte totals are exact or lower bounds, independently of
 `candidates_bounded` and `store_footprint.complete`. A failed deletion is credited
 0 bytes, so it makes `bytes_deleted_complete` false; it is still reported in
 `failures` on its own. Each candidate's `bytes_measurement` is `exact`, `partial`,
-or `unmeasured`. Similar fields elsewhere state whether a set of paths is
-complete, truncated, or unavailable.
+or `unmeasured`. `awa doctor --json` reports the size of `.awa/` in
+`store_capacity`: `measurement` is `exact`, `partial`, `unmeasured`, or
+`disabled`; `observed_bytes` is a number only for `exact` or `partial` (then a
+lower bound) and `threshold_bytes` only while the advisory is enabled, otherwise
+both are `null`; `incomplete_reasons` lists closed tokens such as `work-budget`.
+Similar fields elsewhere state whether a set of paths is complete, truncated, or
+unavailable.
 
 Degraded evidence is reported as a complete assessment rather than as an error:
 `awa state resolve`, `awa state compare`, and `awa run show --json` exit 0 and

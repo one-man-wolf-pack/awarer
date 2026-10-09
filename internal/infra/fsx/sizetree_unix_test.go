@@ -84,3 +84,32 @@ func TestSizeTreeAtSpecialNodesContributeNothing(t *testing.T) {
 		t.Fatalf("SizeTreeAt = %+v, %v; want 9 complete", got, err)
 	}
 }
+
+// TestSizeTreeWithinUnixBoundaries: the bounded walk keeps the unbounded walk's
+// metadata-only and special-node rules, and an unreadable directory is a typed
+// incompleteness distinct from the work limits.
+func TestSizeTreeWithinUnixBoundaries(t *testing.T) {
+	skipIfRoot(t)
+	parent := t.TempDir()
+	writeSized(t, filepath.Join(parent, "awa", "sealed"), 123)
+	if err := os.Chmod(filepath.Join(parent, "awa", "sealed"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(parent, "awa", "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeSized(t, filepath.Join(parent, "awa", "locked", "hidden"), 1000)
+	locked := filepath.Join(parent, "awa", "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	got, err := SizeTreeWithin(context.Background(), openParent(t, parent), "awa", TreeLimits{MaxEntries: 100, MaxDepth: 8})
+	if err != nil {
+		t.Fatalf("SizeTreeWithin: %v", err)
+	}
+	if got.Bytes != 123 || !got.Unreadable || got.EntryBudgetReached || got.DepthLimitReached {
+		t.Fatalf("SizeTreeWithin = %+v, want 123 bytes with only the unreadable flag", got)
+	}
+}
