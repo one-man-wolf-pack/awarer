@@ -213,7 +213,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	// regular entry passes by. The repository consumes it and derives the durable
 	// fields — the use case never holds the whole manifest as a slice.
 	source := &manifestSource{svc: s, retention: NewRetention(req.Config.Checkpoint, s.deps.Patterns), scan: scanResult}
-	header, err := s.persist(ctx, buildMeta, source)
+	frontier, _, ok := scanResult.Coverage().Frontier()
+	if !ok {
+		return Result{}, fmt.Errorf("checkpoint: the completed scan carries no exclusion frontier")
+	}
+	header, err := s.persist(ctx, buildMeta, source, frontier)
 	if err != nil {
 		return Result{}, err
 	}
@@ -401,14 +405,14 @@ func (c *materializingCursor) Close() error                    { return c.inner.
 // persist generates an id and streams the manifest to the repository, regenerating
 // on the unlikely event of an id collision rather than overwriting an existing
 // record.
-func (s *Service) persist(ctx context.Context, buildMeta func(checkpoint.CheckpointID) checkpoint.CheckpointBuild, manifest worktree.ManifestStream) (checkpoint.CheckpointHeader, error) {
+func (s *Service) persist(ctx context.Context, buildMeta func(checkpoint.CheckpointID) checkpoint.CheckpointBuild, manifest worktree.ManifestStream, frontier worktree.FrontierStream) (checkpoint.CheckpointHeader, error) {
 	var lastErr error
 	for i := 0; i < idAttempts; i++ {
 		id, err := checkpoint.NewCheckpointID(s.deps.Rand)
 		if err != nil {
 			return checkpoint.CheckpointHeader{}, err
 		}
-		header, err := s.deps.Checkpoints.PutManifest(ctx, buildMeta(id), manifest)
+		header, err := s.deps.Checkpoints.PutManifest(ctx, buildMeta(id), manifest, frontier)
 		if err != nil {
 			if errors.Is(err, checkpoint.ErrIDCollision) {
 				lastErr = err

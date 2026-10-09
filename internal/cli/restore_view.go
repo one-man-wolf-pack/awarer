@@ -127,6 +127,9 @@ func renderRestoreBoundary(w *output.Writer, r domrestore.ApplyResult) {
 	if b.ScopeBounded {
 		w.Diagnostic("note: this source is a recovery observation; it proves only the paths the restore that created it was going to change")
 	}
+	if !b.SourceCoverage.Known() {
+		w.Diagnostic("note: this source was recorded without path coverage; it cannot prove a path absent, so operations that depend on that are blocked")
+	}
 	if b.SourceSkipped > 0 || b.CurrentSkipped > 0 {
 		w.Diagnostic(fmt.Sprintf("note: %d source and %d current input(s) were skipped; operations that depend on them are blocked", b.SourceSkipped, b.CurrentSkipped))
 	}
@@ -224,11 +227,12 @@ type restoreCountsDoc struct {
 }
 
 type restoreBoundaryDoc struct {
-	SourceSkippedInputs         int  `json:"source_skipped_inputs"`
-	CurrentSkippedInputs        int  `json:"current_skipped_inputs"`
-	PolicyCompatible            bool `json:"policy_compatible"`
-	ScopeBounded                bool `json:"scope_bounded"`
-	IgnoredPathsOutsideEvidence bool `json:"ignored_paths_outside_evidence"`
+	SourceSkippedInputs         int    `json:"source_skipped_inputs"`
+	CurrentSkippedInputs        int    `json:"current_skipped_inputs"`
+	PolicyCompatible            bool   `json:"policy_compatible"`
+	ScopeBounded                bool   `json:"scope_bounded"`
+	IgnoredPathsOutsideEvidence bool   `json:"ignored_paths_outside_evidence"`
+	SourcePathCoverage          string `json:"source_path_coverage"`
 }
 
 type restorePathFactDoc struct {
@@ -298,6 +302,7 @@ func emitRestoreJSON(w *output.Writer, res apprestore.Result) error {
 			CurrentSkippedInputs:        r.Boundary().CurrentSkipped,
 			PolicyCompatible:            r.Boundary().PolicyCompatible,
 			ScopeBounded:                r.Boundary().ScopeBounded,
+			SourcePathCoverage:          r.Boundary().SourceCoverage.String(),
 			IgnoredPathsOutsideEvidence: r.Boundary().IgnoredOutsideEvidence(),
 		},
 		Complete:  c.Unavailable() == 0,

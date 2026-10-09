@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "p0a2fnfzwctx591963qf76m7y07sew1w",
+  "created_at": "2026-10-09T16:19:15.048354Z",
+  "root": "/tmp/awa-i001-fixture.1rtI",
+  "command_cwd": ".",
+  "awa_version": "v0.3.2",
+  "message": "predecessor repeat",
+  "scan_config_hash": "blake3:53341a057cfb0cc9c91d13fff4de3aeeac74286922dbc9cbe493a6044ae5812d",
+  "checkpoint_policy_hash": "blake3:2022ec9d571ba774cf9e83d0194962f5d1e3aa1a48d486a67e2762a6c7959015",
+  "tree_hash": "blake3:685bda111201d17751cfdc9931e52313afd6eb68701261cbb01815b3807cfd9a",
+  "trust_mode": "normal",
+  "fast_mode_weak_signature": false,
+  "omitted_stat_fields": [],
+  "git": null,
+  "stats": {
+    "files": 5,
+    "dirs": 0,
+    "symlinks": 0,
+    "blobs": 5,
+    "hash_only": 0,
+    "skipped": 0,
+    "total_bytes": 32
+  },
+  "record_count": 5
+}

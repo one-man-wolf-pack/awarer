@@ -89,13 +89,19 @@ func (f checkpointFixture) derivedHeader(t *testing.T) checkpoint.CheckpointHead
 	if err != nil {
 		t.Fatalf("reducing fixture manifest: %v", err)
 	}
-	return f.build.Header(red.Hash, checkpoint.StatsFromReduced(red.Stats), red.Count)
+	h := f.build.Header(red.Hash, checkpoint.StatsFromReduced(red.Stats), red.Count)
+	empty, err := worktree.ReduceFrontier(blake3hash.New(), worktree.NewFrontierSliceCursor(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Frontier = &empty
+	return h
 }
 
 // put publishes the fixture through the production streaming write contract.
 func (f checkpointFixture) put(t *testing.T, repo *Repo) checkpoint.CheckpointHeader {
 	t.Helper()
-	h, err := repo.PutManifest(context.Background(), f.build, f.stream())
+	h, err := repo.PutManifest(context.Background(), f.build, f.stream(), scantest.FrontierStream())
 	if err != nil {
 		t.Fatalf("PutManifest(%s): %v", f.id().Short(), err)
 	}
@@ -104,7 +110,7 @@ func (f checkpointFixture) put(t *testing.T, repo *Repo) checkpoint.CheckpointHe
 
 // putErr publishes the fixture and returns the write's error for inspection.
 func (f checkpointFixture) putErr(repo *Repo) error {
-	_, err := repo.PutManifest(context.Background(), f.build, f.stream())
+	_, err := repo.PutManifest(context.Background(), f.build, f.stream(), scantest.FrontierStream())
 	return err
 }
 

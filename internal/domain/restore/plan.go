@@ -81,9 +81,10 @@ type Boundary struct {
 	SourceSkipped  int `json:"source_skipped"`
 	CurrentSkipped int `json:"current_skipped"`
 	// PolicyCompatible reports whether the source's persisted scan identity and the
-	// current effective scan identity agree. When they do not, absence in the source
-	// is not proof of absence in awa scope, so no deletion can be justified.
-	PolicyCompatible bool `json:"policy_compatible"`
+	// current effective scan identity agree. It is necessary for a deletion but never
+	// proves absence; only SourceCoverage can.
+	PolicyCompatible bool                  `json:"policy_compatible"`
+	SourceCoverage   worktree.CoverageKind `json:"-"`
 	// ScopeBounded reports that the source proves only a recorded subset of the
 	// project — true for a recovery-observation source, whose selection at capture
 	// time is exactly what it can restore.

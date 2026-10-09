@@ -18,6 +18,7 @@ import (
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/worktree"
+	"awarer/internal/infra/frontierjsonl"
 	"awarer/internal/infra/manifestsort"
 	"awarer/internal/infra/projfs"
 )
@@ -79,15 +80,34 @@ func newService(walker worktree.Walker, hasher hashing.Hasher) *Service {
 // none — so an identity-only scan (run, status, changes) and a checkpoint of a
 // followed-symlink-free worktree both retain no opener at all.
 type Result struct {
-	sorted  manifestsort.Sorted
-	meta    worktree.ScanMetadata
-	samples []worktree.SkippedSample
-	sources map[string]func() (io.ReadCloser, error)
+	sorted   manifestsort.Sorted
+	frontier frontierjsonl.Sorted
+	meta     worktree.ScanMetadata
+	samples  []worktree.SkippedSample
+	sources  map[string]func() (io.ReadCloser, error)
 }
 
-// Close releases any temporary files backing the scan's manifest. It is a no-op for
-// a scan that fit in memory and is safe to call more than once.
-func (r Result) Close() error { return r.sorted.Close() }
+// Close releases any temporary files backing the scan's manifest and exclusion
+// frontier. It is a no-op for a scan that fit in memory and is safe to call more
+// than once.
+func (r Result) Close() error {
+	err := r.sorted.Close()
+	if ferr := r.frontier.Close(); err == nil {
+		err = ferr
+	}
+	return err
+}
+
+func (r Result) Coverage() worktree.Coverage {
+	if r.frontier.Stream() == nil {
+		return worktree.UnknownCoverage()
+	}
+	c, err := worktree.RecordedCoverage(r.frontier.Stream(), r.frontier.Digest())
+	if err != nil {
+		return worktree.UnknownCoverage()
+	}
+	return c
+}
 
 // Source returns the verified content opener the walk built for a regular entry, or
 // false if the scan's SourceRetention mode kept none for that path. False is an
@@ -267,19 +287,21 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	}
 
 	proc := &processor{
-		ctx:    ctx,
-		hasher: s.hasher,
-		index:  s.reader,
-		cfg:    cfg,
-		opts:   opts,
-		sorter: manifestsort.New(opts.BufferRecords, layout.TmpDir()),
+		ctx:      ctx,
+		hasher:   s.hasher,
+		index:    s.reader,
+		cfg:      cfg,
+		opts:     opts,
+		sorter:   manifestsort.New(opts.BufferRecords, layout.TmpDir()),
+		frontier: frontierjsonl.NewSorter(opts.BufferRecords, layout.TmpDir()),
 	}
 
 	// Pass 1: walk, feeding each record into the bounded external sorter (which
 	// spills past its buffer), consulting the index for reuse against prior committed
 	// state (outside any write transaction). A walk failure abandons any spilled runs.
-	if err := s.walker.Walk(ctx, layout, scope, proc.visit); err != nil {
+	if err := s.walker.Walk(ctx, layout, scope, proc.visit, proc.frontier.Add); err != nil {
 		_ = proc.sorter.Close()
+		_ = proc.frontier.Close()
 		return Result{}, err
 	}
 
@@ -287,13 +309,23 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	// folds the tree hash, stats, taint, and count from the same ordered sequence.
 	sorted, err := proc.sorter.Finish(s.hasher)
 	if err != nil {
+		_ = proc.frontier.Close()
 		return Result{}, err
+	}
+	frontier, err := proc.frontier.Finish(s.hasher)
+	if err != nil {
+		_ = sorted.Close()
+		return Result{}, err
+	}
+	discard := func() {
+		_ = sorted.Close()
+		_ = frontier.Close()
 	}
 	// A finished scan must carry a real tree hash: the reduction is the only thing
 	// that produces one, so a zero here means the fold never ran and the Result would
 	// claim an identity it does not have.
 	if sorted.Reduction().Hash.IsZero() {
-		_ = sorted.Close()
+		discard()
 		return Result{}, fmt.Errorf("scan result has no tree hash")
 	}
 
@@ -310,7 +342,7 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 		FastModeWeakSignature: cfg.Hashing.TrustMode == config.TrustFast,
 	}
 	if err := meta.ValidateCompleted(); err != nil {
-		_ = sorted.Close()
+		discard()
 		return Result{}, err
 	}
 
@@ -320,7 +352,7 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	// index rows are driven from the ordered manifest stream, not a retained slice.
 	if s.writer != nil && !opts.ReadOnly {
 		if err := s.persist(ctx, meta, sorted); err != nil {
-			_ = sorted.Close()
+			discard()
 			return Result{}, err
 		}
 	}
@@ -328,7 +360,7 @@ func (s *Service) Scan(ctx context.Context, project projfs.Project, cfg config.C
 	// proc.samples is already the canonically-smallest skipped inputs in sorted order
 	// (kept bounded during the walk), so SkippedSummary presents a deterministic
 	// canonical head.
-	return Result{sorted: sorted, meta: meta, samples: proc.samples, sources: proc.sources}, nil
+	return Result{sorted: sorted, frontier: frontier, meta: meta, samples: proc.samples, sources: proc.sources}, nil
 }
 
 // persist records the scan's entries and skipped inputs in a single transaction,

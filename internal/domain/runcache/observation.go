@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/worktree"
 )
 
 // Observation names a recorded run's pre- or post-execution observed state. The
@@ -55,6 +56,20 @@ type Observation struct {
 	// reconstructed from current config: an observation without it is not a
 	// resolvable identity.
 	ScanConfigHash hashing.ConfigHash
+	// Frontier is nil for a predecessor published without coverage evidence.
+	Frontier *FrontierRef
+}
+
+type FrontierRef struct {
+	File   string
+	Digest worktree.FrontierDigest
+}
+
+func (o Observation) Coverage(frontier worktree.FrontierStream) (worktree.Coverage, error) {
+	if o.Frontier == nil {
+		return worktree.UnknownCoverage(), nil
+	}
+	return worktree.RecordedCoverage(frontier, o.Frontier.Digest)
 }
 
 // Validate checks the observation's manifest ref and that its scan-policy identity
@@ -66,6 +81,9 @@ func (o Observation) Validate() error {
 	}
 	if o.ScanConfigHash.IsZero() {
 		return fmt.Errorf("observation has no scan config hash")
+	}
+	if f := o.Frontier; f != nil && (f.File == "" || f.Digest.Hash.IsZero() || f.Digest.Count < 0) {
+		return fmt.Errorf("observation has an invalid exclusion-frontier ref")
 	}
 	return nil
 }

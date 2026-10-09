@@ -162,10 +162,34 @@ func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, r
 		rep.add(finding(code, doctor.SeverityError, doctor.SubsystemCheckpoints, checkpointPath, id.Short(), msg, false))
 		return
 	}
+	if err := drainCoverage(ctx, repo.Coverage, id); err != nil {
+		rep.add(finding(doctor.CodeCheckpointFrontierCorrupt, doctor.SeverityError, doctor.SubsystemCheckpoints,
+			checkpointPath, id.Short(), "checkpoint exclusion frontier is corrupt: "+err.Error(), false))
+		return
+	}
 
 	if len(rep.findings) == before {
 		rep.pass()
 	}
+}
+
+func drainCoverage[ID any](ctx context.Context, open func(ID) (worktree.Coverage, error), id ID) error {
+	coverage, err := open(id)
+	if err != nil {
+		return err
+	}
+	stream, _, ok := coverage.Frontier()
+	if !ok {
+		return nil
+	}
+	cur, err := stream.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cur.Close() }()
+	for cur.Next() {
+	}
+	return cur.Err()
 }
 
 // checkpointBlobVerifier verifies the blobs referenced by one checkpoint walk. It owns
@@ -381,6 +405,11 @@ func (s *Service) checkRestores(ctx context.Context, layout paths.Layout, rep *r
 			subject, path = f.Name, filepath.Join(layout.RestoresDir(), f.Name)
 		}
 		if !f.Readable() {
+			if errors.Is(f.Err, restoredom.ErrIncompatibleRecoveryRecord) {
+				rep.add(finding(doctor.CodeRestoreRecoveryIncompatible, doctor.SeverityWarning, doctor.SubsystemRestores,
+					path, subject, "retained but not readable by this build: "+f.Err.Error(), false))
+				continue
+			}
 			rep.add(finding(doctor.CodeRestoreRecoveryCorrupt, doctor.SeverityError, doctor.SubsystemRestores,
 				path, subject, "restore recovery observation is corrupt or unreadable: "+f.Err.Error(), false))
 			continue
@@ -509,6 +538,23 @@ func (s *Service) verifyRunPayloads(ctx context.Context, repo *runstore.Repo, en
 		if err := drainRunManifest(ctx, repo.OpenAfterManifest, entry.ID); err != nil {
 			rep.add(finding(doctor.CodeRunPayloadCorrupt, doctor.SeverityError, doctor.SubsystemRuns,
 				runPath, entry.ID.Short(), "run after-observation manifest is corrupt: "+err.Error(), false))
+			healthy = false
+		}
+	}
+	for _, obs := range []struct {
+		label string
+		after bool
+	}{{"before", false}, {"after", true}} {
+		if obs.after && entry.After == nil {
+			continue
+		}
+		open := func(id runcache.RunID) (worktree.Coverage, error) {
+			read, err := repo.Observation(id, obs.after)
+			return read.Coverage(), err
+		}
+		if err := drainCoverage(ctx, open, entry.ID); err != nil {
+			rep.add(finding(doctor.CodeRunPayloadCorrupt, doctor.SeverityError, doctor.SubsystemRuns,
+				runPath, entry.ID.Short(), "run "+obs.label+"-observation exclusion frontier is corrupt: "+err.Error(), false))
 			healthy = false
 		}
 	}

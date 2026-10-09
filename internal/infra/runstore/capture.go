@@ -11,6 +11,7 @@ import (
 	"awarer/internal/domain/paths"
 	"awarer/internal/domain/runcache"
 	"awarer/internal/domain/worktree"
+	"awarer/internal/infra/frontierjsonl"
 	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/manifestjsonl"
 )
@@ -39,6 +40,26 @@ func (r *Repo) teeObservation(ctx context.Context, relDir, name string, stream w
 	}
 	red := reducer.Finish()
 	return runcache.ManifestRef{File: name, TreeHash: red.Hash, RecordCount: red.Count}, nil
+}
+
+func (r *Repo) teeFrontier(ctx context.Context, relDir, name string, stream worktree.FrontierStream) (*runcache.FrontierRef, error) {
+	if stream == nil {
+		return nil, fmt.Errorf("runstore: observation %s has no exclusion frontier", name)
+	}
+	var digest worktree.FrontierDigest
+	if err := fsx.PublishStreamNoFollow(r.root, relDir, name, payloadPerm, func(w io.Writer) error {
+		cur, err := stream.Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = cur.Close() }()
+		d, err := frontierjsonl.Tee(w, cur, r.hasher)
+		digest = d
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return &runcache.FrontierRef{File: name, Digest: digest}, nil
 }
 
 // truncationMarker renders the marker appended to a truncated output stream. It
@@ -198,13 +219,21 @@ func (p *pendingRun) Commit(ctx context.Context, entry runcache.RunEntry, obs ru
 	if err != nil {
 		return err
 	}
-	entry.Before = &runcache.Observation{Manifest: beforeRef, ScanConfigHash: obs.BeforeScanConfigHash}
+	beforeFrontier, err := r.teeFrontier(ctx, tmpEntryRel, beforeFrontierName, obs.BeforeFrontier)
+	if err != nil {
+		return err
+	}
+	entry.Before = &runcache.Observation{Manifest: beforeRef, ScanConfigHash: obs.BeforeScanConfigHash, Frontier: beforeFrontier}
 	if obs.After != nil {
 		afterRef, err := r.teeObservation(ctx, tmpEntryRel, afterManifestName, obs.After, r.hasher)
 		if err != nil {
 			return err
 		}
-		entry.After = &runcache.Observation{Manifest: afterRef, ScanConfigHash: obs.AfterScanConfigHash}
+		afterFrontier, err := r.teeFrontier(ctx, tmpEntryRel, afterFrontierName, obs.AfterFrontier)
+		if err != nil {
+			return err
+		}
+		entry.After = &runcache.Observation{Manifest: afterRef, ScanConfigHash: obs.AfterScanConfigHash, Frontier: afterFrontier}
 	}
 
 	// With the observation refs filled, re-validate the whole entry: this is where

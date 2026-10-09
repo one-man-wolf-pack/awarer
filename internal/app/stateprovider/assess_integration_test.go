@@ -145,7 +145,7 @@ func putManifest(t *testing.T, repo *checkpointjson.Repo, id checkpoint.Checkpoi
 		TrustMode:            config.TrustNormal,
 		OmittedStatFields:    omitted,
 	}
-	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, skipped)); err != nil {
+	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, skipped), scantest.FrontierStream()); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 }
@@ -224,7 +224,7 @@ func TestResolveLatestResolved(t *testing.T) {
 // the node changed during the scan, modelling an in-scope input that moved mid-observation.
 type changingWalker struct{}
 
-func (changingWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error) error {
+func (changingWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error, _ func(worktree.FrontierRecord) error) error {
 	p, err := worktree.ParseRelPath("a.txt")
 	if err != nil {
 		return err
@@ -271,7 +271,7 @@ type scriptedWalker struct {
 	rest  []worktree.Node
 }
 
-func (w *scriptedWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error) error {
+func (w *scriptedWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error, _ func(worktree.FrontierRecord) error) error {
 	w.calls++
 	nodes := w.rest
 	if w.calls == 1 {
@@ -718,7 +718,7 @@ func TestResolveCorruptManifestContentIsMetadataCorrupt(t *testing.T) {
 	}
 }
 
-// TestCompareEqualFastPathVerifiesManifest proves the hash-based equal fast path does not
+// TestCompareEqualFastPathVerifiesManifest proves the same-record equal path does not
 // declare equal without confirming both operands' manifests are readable, and that an
 // unavailable comparison never publishes an unreadable operand as a resolved identity:
 // comparing a manifest-less checkpoint to itself is unavailable with no operand

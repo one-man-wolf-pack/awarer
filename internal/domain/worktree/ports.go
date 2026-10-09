@@ -21,7 +21,9 @@ type Walker interface {
 	// excludes itself. Returning a non-nil error from visit aborts the walk with
 	// that error. Walk itself returns the first error encountered, so a filesystem
 	// failure that affects correctness stops the scan loudly rather than being skipped.
-	Walk(ctx context.Context, layout paths.Layout, scope config.ScanScope, visit func(Node) error) error
+	// omit receives every encountered node the boundary leaves unobserved; the
+	// absence proofs built from it are only as complete as these calls.
+	Walk(ctx context.Context, layout paths.Layout, scope config.ScanScope, visit func(Node) error, omit func(FrontierRecord) error) error
 }
 
 // Node is a single filesystem node surfaced by the walker, before hashing. The

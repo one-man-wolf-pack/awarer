@@ -515,11 +515,14 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 			Mutation:    mutation,
 			EffectGuard: effect,
 		}
+		afterFrontier, _, _ := afterScan.Coverage().Frontier()
 		obs := runcache.RunObservations{
 			Before:               kc.BeforeManifest(),
 			After:                afterScan.Manifest(),
 			BeforeScanConfigHash: kc.BeforeScanConfigHash(),
 			AfterScanConfigHash:  afterScan.Meta().ConfigHash,
+			BeforeFrontier:       kc.BeforeFrontier(),
+			AfterFrontier:        afterFrontier,
 		}
 		if err := pending.Commit(ctx, entry, obs); err != nil {
 			return Result{}, err
@@ -625,6 +628,11 @@ type keyContext struct {
 // its before-observation. It is derived from beforeScan rather than stored separately,
 // so it can never drift from the scan it belongs to.
 func (kc keyContext) BeforeManifest() worktree.ManifestStream { return kc.beforeScan.Manifest() }
+
+func (kc keyContext) BeforeFrontier() worktree.FrontierStream {
+	f, _, _ := kc.beforeScan.Coverage().Frontier()
+	return f
+}
 
 // BeforeScanConfigHash is the scanner-produced scan_config_hash of the pre-run scan,
 // persisted with the before-observation so the run can be resolved to a complete

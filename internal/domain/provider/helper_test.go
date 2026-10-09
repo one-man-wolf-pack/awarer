@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"awarer/internal/domain/worktree"
 	"bytes"
 	"fmt"
 	"hash/fnv"
@@ -98,7 +99,7 @@ func validScan(t *testing.T, cfgNibble string) provider.ScanIdentity {
 // boundary builds a valid evidence boundary.
 func boundary(t *testing.T, skipped int) provider.EvidenceBoundary {
 	t.Helper()
-	b, err := provider.NewEvidenceBoundary(skipped)
+	b, err := provider.NewEvidenceBoundary(skipped, worktree.CoverageRecorded)
 	if err != nil {
 		t.Fatalf("NewEvidenceBoundary: %v", err)
 	}

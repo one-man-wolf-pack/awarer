@@ -866,7 +866,7 @@ func TestReasonVocabularyIsClosedAndStable(t *testing.T) {
 	// change here must be a deliberate contract change, not a rename side effect.
 	want := []Reason{
 		ReasonHashOnlyContent, ReasonBlobMissing, ReasonBlobCorrupt, ReasonSkippedBoundary,
-		ReasonIgnoredBoundary, ReasonPolicyIncompatible, ReasonObservationUnstable, ReasonOutOfProvenScope,
+		ReasonIgnoredBoundary, ReasonPolicyIncompatible, ReasonAbsenceUnproved, ReasonObservationUnstable, ReasonOutOfProvenScope,
 		ReasonPathConflict, ReasonRootEscape, ReasonSymlinkAncestor, ReasonUnsupportedEntryKind,
 		ReasonPreconditionMismatch,
 		ReasonRecoveryIncomplete, ReasonCancelled, ReasonIOFailure, ReasonPartialApply,

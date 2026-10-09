@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"awarer/internal/domain/worktree"
 	"testing"
 	"time"
 
@@ -162,15 +163,14 @@ func TestClassifyRunSelfIsEqual(t *testing.T) {
 	}
 }
 
-func TestClassifyRunBeforeVsAfterUnchangedIsEqual(t *testing.T) {
-	// before vs after of the same run are different observations (not the same record),
-	// but both carry the run's persisted scan policy identity. When the run did not
-	// mutate its inputs the two tree hashes match, so with proven-compatible policy
-	// the pair is equal.
+func TestClassifyRunBeforeVsAfterUnchangedNeedsCoverageMerge(t *testing.T) {
+	// before vs after of the same run are different observations (not the same record).
+	// Matching tree hashes under one policy still need the coverage merge: equality is
+	// proved only where each side's recorded coverage reached the other's paths.
 	before := runIdent(t, true, "run1", "9", "a")
 	after := runIdent(t, false, "run1", "9", "a")
-	if v := provider.Classify(before, after); v != provider.VerdictEqual {
-		t.Errorf("Classify run before/after unchanged = %v, want equal", v)
+	if v := provider.Classify(before, after); v != provider.VerdictNeedsMerge {
+		t.Errorf("Classify run before/after unchanged = %v, want needs-merge", v)
 	}
 }
 
@@ -190,8 +190,27 @@ func TestClassifyProvenCompatibleEqualHash(t *testing.T) {
 	scan := validScan(t, "a")
 	l := cpIdent(t, "a", "1", scan)
 	r := cpIdent(t, "b", "1", scan) // distinct records, same scan identity + tree hash
-	if v := provider.Classify(l, r); v != provider.VerdictEqual {
-		t.Errorf("Classify proven-compatible equal hash = %v, want equal", v)
+	if v := provider.Classify(l, r); v != provider.VerdictNeedsMerge {
+		t.Errorf("Classify proven-compatible equal hash = %v, want needs-merge", v)
+	}
+}
+
+func TestClassifyUnknownCoverageIsAbsenceUnproved(t *testing.T) {
+	scan := validScan(t, "a")
+	l := cpIdent(t, "a", "1", scan)
+	unknown, err := provider.NewEvidenceBoundary(0, worktree.CoverageUnknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := provider.NewCheckpointIdentity(cpID(t, "b"), treeHash(t, "1"), scan, time.Unix(1, 0), unknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := provider.Classify(l, r); v != provider.VerdictAbsenceUnproved {
+		t.Errorf("Classify against a predecessor without coverage = %v, want absence-unproved", v)
+	}
+	if v := provider.Classify(r, r); v != provider.VerdictEqual {
+		t.Errorf("Classify the same predecessor record = %v, want equal", v)
 	}
 }
 
@@ -241,13 +260,12 @@ func TestClassifyDistinctRecordsNeedProof(t *testing.T) {
 
 func TestClassifyDistinctRunsProvenCompatible(t *testing.T) {
 	// The converse of TestClassifyDistinctRecordsNeedProof: two distinct run records
-	// under the same known scan policy with the same tree hash are provably compatible
-	// and equal — the enrichment that lets independently named run observations compare
-	// once their policies are actually compatible.
+	// under the same known scan policy are provably compatible, so the coverage merge
+	// decides their relationship.
 	l := runIdent(t, true, "run1", "1", "a")
 	r := runIdent(t, false, "run2", "1", "a")
-	if v := provider.Classify(l, r); v != provider.VerdictEqual {
-		t.Errorf("Classify proven-compatible distinct runs = %v, want equal", v)
+	if v := provider.Classify(l, r); v != provider.VerdictNeedsMerge {
+		t.Errorf("Classify proven-compatible distinct runs = %v, want needs-merge", v)
 	}
 }
 

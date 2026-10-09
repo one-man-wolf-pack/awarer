@@ -24,9 +24,13 @@ import (
 // checkpoint has; a node of any other shape under the checkpoints directory is
 // structural corruption, never a document to be classified (see listIDs).
 const (
-	headerSchemaVersion = 1
-	headerName          = "header.json"
-	manifestName        = "manifest.jsonl"
+	headerSchemaVersion = 2
+	// legacyHeaderSchemaVersion is the published predecessor, read with unknown
+	// path coverage.
+	legacyHeaderSchemaVersion = 1
+	headerName                = "header.json"
+	manifestName              = "manifest.jsonl"
+	frontierName              = "frontier.jsonl"
 )
 
 // headerDoc is the persisted form of a checkpoint header: a checkpoint's metadata
@@ -48,10 +52,34 @@ type headerDoc struct {
 	Git                   *gitDoc                    `json:"git"`
 	Stats                 checkpoint.CheckpointStats `json:"stats"`
 	RecordCount           int                        `json:"record_count"`
+	Frontier              *frontierDoc               `json:"frontier,omitempty"`
+}
+
+type frontierDoc struct {
+	RecordCount int    `json:"record_count"`
+	Hash        string `json:"hash"`
+}
+
+func encodeFrontier(d worktree.FrontierDigest) *frontierDoc {
+	return &frontierDoc{RecordCount: d.Count, Hash: d.Hash.String()}
+}
+
+func decodeFrontier(doc *frontierDoc) (*worktree.FrontierDigest, error) {
+	h, err := hashing.ParseTreeHash(doc.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("exclusion frontier: %w", err)
+	}
+	if doc.RecordCount < 0 {
+		return nil, fmt.Errorf("exclusion frontier has negative record count %d", doc.RecordCount)
+	}
+	return &worktree.FrontierDigest{Hash: h, Count: doc.RecordCount}, nil
 }
 
 // encodeHeader renders a checkpoint's header as current-schema JSON bytes.
 func encodeHeader(h checkpoint.CheckpointHeader) ([]byte, error) {
+	if h.Frontier == nil {
+		return nil, fmt.Errorf("encoding checkpoint header %s: no exclusion frontier", h.ID)
+	}
 	doc := headerDoc{
 		SchemaVersion:         headerSchemaVersion,
 		ID:                    h.ID.String(),
@@ -69,6 +97,7 @@ func encodeHeader(h checkpoint.CheckpointHeader) ([]byte, error) {
 		Git:                   encodeGit(h.Git),
 		Stats:                 h.Stats,
 		RecordCount:           h.RecordCount,
+		Frontier:              encodeFrontier(*h.Frontier),
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -77,22 +106,23 @@ func encodeHeader(h checkpoint.CheckpointHeader) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// decodeHeader parses current-schema header bytes into a validated CheckpointHeader,
+// decodeHeader parses supported header bytes into a validated CheckpointHeader,
 // rebuilding every value object through its constructor so a malformed or hand-edited
 // header fails here rather than being trusted.
 //
 // It draws the incompatible/corrupt line first and only once. A lenient probe reads
-// the document's own schema_version: a readable version other than the current one is
-// a format this build does not speak (ErrIncompatibleFormat) and is never decoded
-// through any other shape, while data that is not even a schema-carrying JSON object
-// is corruption. Only a document claiming the current schema reaches the strict
-// reader, where an unknown field, a missing invariant, or trailing bytes are
-// corruption too.
+// the document's own schema_version: a version other than the current one or its
+// published predecessor is a format this build does not speak (ErrIncompatibleFormat),
+// while data that is not even a schema-carrying JSON object is corruption. Only a
+// supported document reaches the strict reader, where an unknown field, a missing
+// invariant, a frontier the declared generation does not match, or trailing bytes
+// are corruption too.
 func decodeHeader(data []byte) (checkpoint.CheckpointHeader, error) {
-	switch v, err := probeSchemaVersion(data); {
+	v, err := probeSchemaVersion(data)
+	switch {
 	case err != nil:
 		return checkpoint.CheckpointHeader{}, fmt.Errorf("decoding checkpoint header: %w", err)
-	case v != headerSchemaVersion:
+	case v != headerSchemaVersion && v != legacyHeaderSchemaVersion:
 		return checkpoint.CheckpointHeader{}, fmt.Errorf("%w: checkpoint header schema version %d, want %d",
 			checkpoint.ErrIncompatibleFormat, v, headerSchemaVersion)
 	}
@@ -139,6 +169,17 @@ func decodeHeader(data []byte) (checkpoint.CheckpointHeader, error) {
 	if err != nil {
 		return checkpoint.CheckpointHeader{}, err
 	}
+	var frontier *worktree.FrontierDigest
+	switch {
+	case v == legacyHeaderSchemaVersion && doc.Frontier != nil:
+		return checkpoint.CheckpointHeader{}, fmt.Errorf("checkpoint %s: schema %d carries no exclusion frontier", doc.ID, v)
+	case v == headerSchemaVersion && doc.Frontier == nil:
+		return checkpoint.CheckpointHeader{}, fmt.Errorf("checkpoint %s: schema %d requires an exclusion frontier", doc.ID, v)
+	case doc.Frontier != nil:
+		if frontier, err = decodeFrontier(doc.Frontier); err != nil {
+			return checkpoint.CheckpointHeader{}, fmt.Errorf("checkpoint %s: %w", doc.ID, err)
+		}
+	}
 	h := checkpoint.CheckpointHeader{
 		ID:                    id,
 		CreatedAt:             createdAt,
@@ -155,6 +196,7 @@ func decodeHeader(data []byte) (checkpoint.CheckpointHeader, error) {
 		Git:                   git,
 		Stats:                 doc.Stats,
 		RecordCount:           doc.RecordCount,
+		Frontier:              frontier,
 	}
 	if err := h.Validate(); err != nil {
 		return checkpoint.CheckpointHeader{}, err

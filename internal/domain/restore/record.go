@@ -24,7 +24,8 @@ var (
 	// belongs. It is distinct from ErrRecoveryNotFound (absent, normal) so the CLI
 	// can signal state-action-required rather than an ordinary failure, and so GC
 	// can fail closed on blob reachability instead of guessing.
-	ErrCorruptRecoveryStore = errors.New("corrupt restore recovery store")
+	ErrCorruptRecoveryStore       = errors.New("corrupt restore recovery store")
+	ErrIncompatibleRecoveryRecord = errors.New("restore recovery observation format is not supported by this build")
 	// ErrRecoveryIDCollision reports that a recovery observation id already exists.
 	// The store never overwrites an immutable record, so a collision is surfaced.
 	ErrRecoveryIDCollision = errors.New("restore recovery observation id already exists")
@@ -46,10 +47,10 @@ type ManifestRef struct {
 //
 // The scope is what makes the observation a complete undo. The manifest alone
 // records the entries that existed; the scope additionally records the paths the
-// restore was going to *create*, which had no current entry to capture. A path
-// inside the scope but absent from the manifest is therefore proved to have been
-// absent — which is exactly what an inverse restore needs in order to delete it
-// again.
+// restore was going to *create*, which had no current entry to capture. In a
+// proof-bearing record a path inside the scope but absent from the manifest was
+// independently proved physically absent before publication; a predecessor
+// record's covered membership proves no absence.
 type ScopeRef struct {
 	File      string
 	PathCount int
@@ -73,6 +74,7 @@ type RecoveryObservation struct {
 	manifest        ManifestRef
 	scope           ScopeRef
 	contentComplete bool
+	predecessor     bool
 }
 
 // RecoveryBuild carries the non-derived facts a recovery observation is
@@ -171,6 +173,18 @@ func (o RecoveryObservation) Scope() ScopeRef { return o.scope }
 // in the blob store. It is always true for a published record; the accessor
 // exists so output can state the fact rather than imply it.
 func (o RecoveryObservation) ContentComplete() bool { return o.contentComplete }
+
+func (o RecoveryObservation) AsPredecessor() RecoveryObservation {
+	o.predecessor = true
+	return o
+}
+
+func (o RecoveryObservation) Coverage() worktree.Coverage {
+	if o.predecessor {
+		return worktree.UnknownCoverage()
+	}
+	return worktree.ScopedCoverage()
+}
 
 // BeforeRef returns the state reference that names this observation.
 func (o RecoveryObservation) BeforeRef() string { return o.id.BeforeRef() }

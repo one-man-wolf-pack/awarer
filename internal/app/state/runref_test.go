@@ -57,7 +57,7 @@ func (s stubRuns) Observation(runcache.RunID, bool) (runcache.RunObservationRead
 	if s.obsErr != nil {
 		return runcache.RunObservationRead{}, s.obsErr
 	}
-	return runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), s.tree, s.cfg, runcache.ReusableCacheEntry())
+	return runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), s.tree, s.cfg, runcache.ReusableCacheEntry(), worktree.UnknownCoverage())
 }
 
 func TestResolveRunObservation(t *testing.T) {

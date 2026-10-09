@@ -20,6 +20,7 @@ import (
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/runcache"
+	"awarer/internal/domain/worktree"
 )
 
 // decodeStrict parses exactly one JSON document into v, rejecting any field the
@@ -47,13 +48,17 @@ func decodeStrict(data []byte, v any) error {
 	return nil
 }
 
-// metaSchemaVersion is the run metadata document version this build reads and
-// writes. There is exactly one: a document declaring any other version is
-// incompatible (ErrIncompatibleEntry) and is never decoded through a second shape,
-// migrated, or guessed. The store owns this boundary and names both versions in the
-// error text, so a doctor or gc diagnostic can report which record is unreadable
-// without any consumer restating a number that moves.
-const metaSchemaVersion = 1
+// metaSchemaVersion is the run metadata document version this build writes. It also
+// reads legacyMetaSchemaVersion; a document declaring any other version is
+// incompatible (ErrIncompatibleEntry) and is never decoded, migrated, or guessed. The
+// store owns this boundary and names the versions in the error text, so a doctor or gc
+// diagnostic can report which record is unreadable without any consumer restating a
+// number that moves.
+const metaSchemaVersion = 2
+
+// legacyMetaSchemaVersion is the published predecessor, read with unknown path
+// coverage for both observations.
+const legacyMetaSchemaVersion = 1
 
 // pointerSchemaVersion is the key pointer document version, independent of the
 // metadata version: the pointer is an index into the entries, not a copy of one.
@@ -100,10 +105,17 @@ type observationsDoc struct {
 // scan policy identity that interprets that tree hash). The two are one identity, so
 // scan_config_hash is required — never omitempty.
 type observationDoc struct {
-	File           string `json:"file"`
-	TreeHash       string `json:"tree_hash"`
-	RecordCount    int    `json:"record_count"`
-	ScanConfigHash string `json:"scan_config_hash"`
+	File           string       `json:"file"`
+	TreeHash       string       `json:"tree_hash"`
+	RecordCount    int          `json:"record_count"`
+	ScanConfigHash string       `json:"scan_config_hash"`
+	Frontier       *frontierDoc `json:"frontier,omitempty"`
+}
+
+type frontierDoc struct {
+	File        string `json:"file"`
+	RecordCount int    `json:"record_count"`
+	Hash        string `json:"hash"`
 }
 
 type exitDoc struct {
@@ -237,7 +249,15 @@ func encodeObservation(o *runcache.Observation) *observationDoc {
 		TreeHash:       o.Manifest.TreeHash.String(),
 		RecordCount:    o.Manifest.RecordCount,
 		ScanConfigHash: o.ScanConfigHash.String(),
+		Frontier:       encodeFrontier(o.Frontier),
 	}
+}
+
+func encodeFrontier(f *runcache.FrontierRef) *frontierDoc {
+	if f == nil {
+		return nil
+	}
+	return &frontierDoc{File: f.File, RecordCount: f.Digest.Count, Hash: f.Digest.Hash.String()}
 }
 
 func encodeSkipped(s runcache.SkippedSummary) skippedDoc {
@@ -295,13 +315,13 @@ func encodeOutput(c runcache.OutputCapture) outputDoc {
 // rebuilding every value object through its constructor.
 //
 // It draws the incompatible/corrupt line first and only once. A lenient probe reads
-// the document's own schema_version: a readable version other than the current one is
-// a format this build does not speak (ErrIncompatibleEntry) and is never routed to a
-// second decoder, while data that is not even a schema-carrying JSON document is
-// corruption — reported with the reason, since a truncated record and a wrong-shaped
-// one need different fixes. Only a document claiming the current schema reaches the
-// strict reader below, where an unknown field, a missing invariant, or a cross-field
-// contradiction is corruption too.
+// the document's own schema_version: a version other than the current one or its
+// published predecessor is a format this build does not speak (ErrIncompatibleEntry),
+// while data that is not even a schema-carrying JSON document is corruption — reported
+// with the reason, since a truncated record and a wrong-shaped one need different
+// fixes. Only a supported document reaches the strict reader below, where an unknown
+// field, a missing invariant, a frontier the declared generation does not match, or a
+// cross-field contradiction is corruption too.
 func decodeMeta(data []byte) (runcache.RunEntry, error) {
 	var probe struct {
 		SchemaVersion *int `json:"schema_version"`
@@ -312,11 +332,25 @@ func decodeMeta(data []byte) (runcache.RunEntry, error) {
 	if probe.SchemaVersion == nil {
 		return runcache.RunEntry{}, fmt.Errorf("decoding run: no schema_version")
 	}
-	if *probe.SchemaVersion != metaSchemaVersion {
+	v := *probe.SchemaVersion
+	if v != metaSchemaVersion && v != legacyMetaSchemaVersion {
 		return runcache.RunEntry{}, fmt.Errorf("%w: schema version %d, want %d",
-			runcache.ErrIncompatibleEntry, *probe.SchemaVersion, metaSchemaVersion)
+			runcache.ErrIncompatibleEntry, v, metaSchemaVersion)
 	}
-	return decodeCurrentMeta(data)
+	entry, err := decodeCurrentMeta(data)
+	if err != nil {
+		return runcache.RunEntry{}, err
+	}
+	for _, o := range []*runcache.Observation{entry.Before, entry.After} {
+		switch {
+		case o == nil:
+		case v == legacyMetaSchemaVersion && o.Frontier != nil:
+			return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d carries no exclusion frontier", v)
+		case v == metaSchemaVersion && o.Frontier == nil:
+			return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d requires an exclusion frontier for every observation", v)
+		}
+	}
+	return entry, nil
 }
 
 // decodeCurrentMeta strictly decodes a current-schema record: its typed reuse state,
@@ -482,6 +516,13 @@ func decodeObservation(d *observationDoc) (*runcache.Observation, error) {
 			RecordCount: d.RecordCount,
 		},
 		ScanConfigHash: scanConfig,
+	}
+	if f := d.Frontier; f != nil {
+		h, err := hashing.ParseTreeHash(f.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("exclusion frontier: %w", err)
+		}
+		obs.Frontier = &runcache.FrontierRef{File: f.File, Digest: worktree.FrontierDigest{Hash: h, Count: f.RecordCount}}
 	}
 	if err := obs.Validate(); err != nil {
 		return nil, err

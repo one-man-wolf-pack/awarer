@@ -31,7 +31,7 @@ var (
 	// the CLI can tell the user to reset local evidence rather than report damage.
 	//
 	// It is an upgrade seam, not compatibility: awa never decodes such a record through
-	// another type, and it names no list of prior versions. The record is retained —
+	// another type. The record is retained —
 	// never a hit, a state reference, a timeline fact, or an automatic reclamation —
 	// until the user resets the store explicitly.
 	ErrIncompatibleFormat = errors.New("incompatible checkpoint schema")
@@ -60,7 +60,7 @@ type Repository interface {
 	// atomically (header is the commit point) and returns the resulting header, or
 	// ErrIDCollision if the id already exists. Each record is validated as it is
 	// consumed.
-	PutManifest(ctx context.Context, build CheckpointBuild, manifest worktree.ManifestStream) (CheckpointHeader, error)
+	PutManifest(ctx context.Context, build CheckpointBuild, manifest worktree.ManifestStream, frontier worktree.FrontierStream) (CheckpointHeader, error)
 	// Header returns the checkpoint's small metadata without materializing its
 	// manifest, or ErrNotFound. Durable derived fields are validated on read.
 	Header(id CheckpointID) (CheckpointHeader, error)
@@ -68,6 +68,7 @@ type Repository interface {
 	// records in canonical path order, or ErrNotFound. The stream validates each
 	// record as hostile input and fails loudly on a corrupt or out-of-order record.
 	OpenManifest(id CheckpointID) (worktree.ManifestStream, error)
+	Coverage(id CheckpointID) (worktree.Coverage, error)
 	// ResolvePrefix returns the single id a short prefix identifies, or
 	// ErrNotFound / ErrAmbiguousPrefix. It enumerates the stored ids to match the prefix,
 	// so it takes a context and honors cancellation mid-scan on a large store.

@@ -1,6 +1,10 @@
 package provider
 
-import "fmt"
+import (
+	"fmt"
+
+	"awarer/internal/domain/worktree"
+)
 
 // EvidenceBoundary carries the bounded evidence-boundary facts a resolved identity or
 // a comparison exposes: how many inputs the observation skipped (unreadable or
@@ -13,15 +17,18 @@ import "fmt"
 // is not awa's evidence to report.
 type EvidenceBoundary struct {
 	skippedInputs int
+	coverage      worktree.CoverageKind
 }
 
 // NewEvidenceBoundary builds a boundary from a non-negative skipped-input count.
-func NewEvidenceBoundary(skippedInputs int) (EvidenceBoundary, error) {
+func NewEvidenceBoundary(skippedInputs int, coverage worktree.CoverageKind) (EvidenceBoundary, error) {
 	if skippedInputs < 0 {
 		return EvidenceBoundary{}, fmt.Errorf("evidence boundary has negative skipped-input count %d", skippedInputs)
 	}
-	return EvidenceBoundary{skippedInputs: skippedInputs}, nil
+	return EvidenceBoundary{skippedInputs: skippedInputs, coverage: coverage}, nil
 }
+
+func (b EvidenceBoundary) PathCoverage() worktree.CoverageKind { return b.coverage }
 
 // SkippedInputs is the number of inputs the observation skipped.
 func (b EvidenceBoundary) SkippedInputs() int { return b.skippedInputs }

@@ -69,7 +69,7 @@ func requireClassifyParity(t *testing.T, root string, names []string) {
 		if err := New().Walk(context.Background(), layout, scope, func(n worktree.Node) error {
 			walked[n.Path.String()] = n
 			return nil
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 		classified := map[string]worktree.Node{}

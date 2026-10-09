@@ -16,6 +16,7 @@ import (
 	"awarer/internal/domain/runcache"
 	"awarer/internal/domain/runevidence"
 	"awarer/internal/domain/worktree"
+	"awarer/internal/infra/frontierjsonl"
 	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/manifestjsonl"
 )
@@ -29,6 +30,8 @@ const (
 	stderrName         = "stderr.log"
 	beforeManifestName = "before.manifest.jsonl"
 	afterManifestName  = "after.manifest.jsonl"
+	beforeFrontierName = "before.frontier.jsonl"
+	afterFrontierName  = "after.frontier.jsonl"
 
 	// metaPerm is the mode for a published, immutable metadata file. Owner-only:
 	// run metadata can carry sensitive evidence and must not be world-readable.
@@ -234,7 +237,33 @@ func (r *Repo) openObservation(id runcache.RunID, after bool) (runcache.RunObser
 		obs = entry.After
 	}
 	stream := r.verifiedManifestStream(id, obs.Manifest)
-	return runcache.NewRunObservationRead(stream, obs.Manifest.TreeHash, obs.ScanConfigHash, entry.Reuse)
+	coverage, err := r.observationCoverage(id, obs)
+	if err != nil {
+		return runcache.RunObservationRead{}, err
+	}
+	return runcache.NewRunObservationRead(stream, obs.Manifest.TreeHash, obs.ScanConfigHash, entry.Reuse, coverage)
+}
+
+func (r *Repo) observationFrontier(id runcache.RunID, obs *runcache.Observation) (worktree.FrontierStream, bool) {
+	if obs == nil || obs.Frontier == nil {
+		return nil, false
+	}
+	return frontierjsonl.Stream{
+		Root:     r.root,
+		Abs:      filepath.Join(r.root, filepath.FromSlash(r.entryDirRel(id)), obs.Frontier.File),
+		Expected: obs.Frontier.Digest,
+		Hasher:   r.hasher,
+		Label:    "run " + id.Short(),
+		Corrupt:  func(e error) error { return fmt.Errorf("%w: %v", runcache.ErrCorruptStore, e) },
+	}, true
+}
+
+func (r *Repo) observationCoverage(id runcache.RunID, obs *runcache.Observation) (worktree.Coverage, error) {
+	stream, ok := r.observationFrontier(id, obs)
+	if !ok {
+		return worktree.UnknownCoverage(), nil
+	}
+	return obs.Coverage(stream)
 }
 
 // verifiedManifestStream returns a stream whose drain re-derives the manifest's
@@ -323,6 +352,12 @@ func (r *Repo) entryFromMeta(id runcache.RunID, data []byte) (runcache.RunEntry,
 	}
 	if entry.After != nil && entry.After.Manifest.File != afterManifestName {
 		return runcache.RunEntry{}, fmt.Errorf("%w: run %s after-observation points at %q, not %s", runcache.ErrCorruptStore, id.Short(), entry.After.Manifest.File, afterManifestName)
+	}
+	if f := entry.Before.Frontier; f != nil && f.File != beforeFrontierName {
+		return runcache.RunEntry{}, fmt.Errorf("%w: run %s before-observation frontier points at %q, not %s", runcache.ErrCorruptStore, id.Short(), f.File, beforeFrontierName)
+	}
+	if entry.After != nil && entry.After.Frontier != nil && entry.After.Frontier.File != afterFrontierName {
+		return runcache.RunEntry{}, fmt.Errorf("%w: run %s after-observation frontier points at %q, not %s", runcache.ErrCorruptStore, id.Short(), entry.After.Frontier.File, afterFrontierName)
 	}
 	return entry, nil
 }

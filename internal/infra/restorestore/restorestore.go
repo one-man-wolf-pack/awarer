@@ -58,11 +58,12 @@ const (
 	// classify by age, never a half-built record that reads as real.
 	tmpDirName = "tmp"
 
-	// metaSchemaVersion is the record schema this build understands. A record
-	// stamped with a different version is not readable by this build and is
-	// classified as corruption rather than silently half-decoded: the project is in
-	// formative mode, so there is exactly one current shape and no legacy reader.
-	metaSchemaVersion = 1
+	// metaSchemaVersion is the proof-bearing record schema this build writes: its
+	// covered paths absent from the manifest were proved physically absent.
+	metaSchemaVersion = 2
+	// legacyMetaSchemaVersion is the published predecessor, read with unknown
+	// absence for its covered paths.
+	legacyMetaSchemaVersion = 1
 
 	// recordPerm is the mode for a published, immutable payload. A recovery
 	// observation captures the user's own worktree content identity, so it is
@@ -329,6 +330,9 @@ func (r *Repo) Get(id restore.OperationID) (restore.RecoveryObservation, error) 
 	}
 	record, err := decodeMeta(data)
 	if err != nil {
+		if errors.Is(err, restore.ErrIncompatibleRecoveryRecord) {
+			return restore.RecoveryObservation{}, fmt.Errorf("recovery observation %s: %w", id.Short(), err)
+		}
 		return restore.RecoveryObservation{}, corrupt("recovery observation %s: %v", id.Short(), err)
 	}
 	// The directory name is an index into the store; the record inside is the
@@ -819,6 +823,19 @@ func encodeMeta(o restore.RecoveryObservation) ([]byte, error) {
 // domain constructors, so a hand-edited or foreign document cannot become a
 // trusted recovery observation.
 func decodeMeta(data []byte) (restore.RecoveryObservation, error) {
+	var probe struct {
+		SchemaVersion *int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return restore.RecoveryObservation{}, err
+	}
+	switch {
+	case probe.SchemaVersion == nil:
+		return restore.RecoveryObservation{}, fmt.Errorf("no schema_version")
+	case *probe.SchemaVersion != metaSchemaVersion && *probe.SchemaVersion != legacyMetaSchemaVersion:
+		return restore.RecoveryObservation{}, fmt.Errorf("%w: schema version %d, want %d",
+			restore.ErrIncompatibleRecoveryRecord, *probe.SchemaVersion, metaSchemaVersion)
+	}
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.DisallowUnknownFields()
 	var doc metaDoc
@@ -827,9 +844,6 @@ func decodeMeta(data []byte) (restore.RecoveryObservation, error) {
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return restore.RecoveryObservation{}, fmt.Errorf("unexpected trailing data after JSON document")
-	}
-	if doc.SchemaVersion != metaSchemaVersion {
-		return restore.RecoveryObservation{}, fmt.Errorf("unsupported schema version %d (this build reads %d)", doc.SchemaVersion, metaSchemaVersion)
 	}
 	id, err := restore.ParseOperationID(doc.ID)
 	if err != nil {
@@ -868,7 +882,7 @@ func decodeMeta(data []byte) (restore.RecoveryObservation, error) {
 			return restore.RecoveryObservation{}, err
 		}
 	}
-	return restore.NewRecoveryObservation(
+	record, err := restore.NewRecoveryObservation(
 		restore.RecoveryBuild{
 			ID:             id,
 			CreatedAt:      createdAt,
@@ -881,6 +895,13 @@ func decodeMeta(data []byte) (restore.RecoveryObservation, error) {
 		restore.ScopeRef{File: doc.Scope.File, PathCount: doc.Scope.PathCount},
 		doc.ContentComplete,
 	)
+	if err != nil {
+		return restore.RecoveryObservation{}, err
+	}
+	if doc.SchemaVersion == legacyMetaSchemaVersion {
+		record = record.AsPredecessor()
+	}
+	return record, nil
 }
 
 // parseSourceKind resolves the persisted source-kind token. It is the read-side

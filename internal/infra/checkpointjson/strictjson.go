@@ -24,8 +24,8 @@ var errTrailingData = errors.New("unexpected trailing data after JSON document")
 // for the wrong problem.
 //
 // It is deliberately the only concession to a document this build did not write: it
-// classifies, it never dispatches. There is exactly one decoder per record, and a
-// version other than the current one is refused rather than routed to a second shape.
+// classifies, it never dispatches: a version this build does not read is refused
+// rather than routed to another record's shape.
 func probeSchemaVersion(data []byte) (int, error) {
 	var probe struct {
 		SchemaVersion *int `json:"schema_version"`

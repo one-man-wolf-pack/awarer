@@ -40,7 +40,7 @@ func walkScope(t *testing.T, root string, scope config.ScanScope) []string {
 			got = append(got, n.Path.String())
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestWalkCapturesStatAndKinds(t *testing.T) {
 			sawDir = true
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}

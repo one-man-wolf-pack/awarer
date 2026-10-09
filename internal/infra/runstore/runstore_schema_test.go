@@ -52,17 +52,11 @@ func TestRunObservationScanConfigRoundTrips(t *testing.T) {
 	}
 }
 
-// TestNonCurrentSchemaClassifiedIncompatible pins the formative-mode rule: there is
-// one current record shape and no reader for any other. A record declaring a
-// different schema is refused as incompatible — never decoded through the current
-// type, never served as a hit, and never mistaken for corruption.
-//
-// The probes are a version below and a version above the current one, which is the
-// whole rule: the classifier keys on "not the current version", not on a list of
-// versions it has met before. Nothing here names a historical generation, because
-// this build has no relationship with one.
-func TestNonCurrentSchemaClassifiedIncompatible(t *testing.T) {
-	for _, other := range []int{runstore.MetaSchemaVersionForTest - 1, runstore.MetaSchemaVersionForTest + 1} {
+// TestUnsupportedSchemaClassifiedIncompatible proves a record declaring a schema
+// this build does not read is refused as incompatible, never decoded and never
+// mistaken for corruption.
+func TestUnsupportedSchemaClassifiedIncompatible(t *testing.T) {
+	for _, other := range []int{0, runstore.MetaSchemaVersionForTest + 1} {
 		t.Run(fmt.Sprintf("schema%d", other), func(t *testing.T) {
 			r, layout, h := newStore(t)
 			entry := storeRun(t, r, h, fmt.Sprintf("s%d", other), "out", "", 1<<20)

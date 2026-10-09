@@ -149,7 +149,7 @@ func commitStatusCheckpoint(t *testing.T, layout paths.Layout, idByte byte, crea
 		CheckpointPolicyHash: cfgHash,
 		TrustMode:            config.TrustNormal,
 	}
-	if _, err := checkpointjson.NewRepo(layout).PutManifest(context.Background(), build, scantest.CanonicalStream(nil, nil)); err != nil {
+	if _, err := checkpointjson.NewRepo(layout).PutManifest(context.Background(), build, scantest.CanonicalStream(nil, nil), scantest.FrontierStream()); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 	return id
@@ -288,6 +288,8 @@ func commitStatusRun(t *testing.T, layout paths.Layout, h hashing.Hasher, disc s
 		After:                scantest.CanonicalStream(nil, nil),
 		BeforeScanConfigHash: scanCfg,
 		AfterScanConfigHash:  scanCfg,
+		BeforeFrontier:       scantest.FrontierStream(),
+		AfterFrontier:        scantest.FrontierStream(),
 	}
 	if err := pending.Commit(context.Background(), entry, obs); err != nil {
 		t.Fatalf("Commit: %v", err)

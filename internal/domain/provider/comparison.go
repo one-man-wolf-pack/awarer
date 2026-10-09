@@ -180,25 +180,18 @@ func (c Comparison) Reason() (Reason, bool) {
 type CompatibilityVerdict int
 
 const (
-	// VerdictEqual: the pair is provably equal without a merge — the same immutable
-	// record, or a proven-compatible pair with identical tree hashes.
 	VerdictEqual CompatibilityVerdict = iota + 1
-	// VerdictNeedsMerge: the pair is provably compatible and its tree hashes differ, so
-	// the per-kind counts must come from the canonical streaming merge.
 	VerdictNeedsMerge
-	// VerdictIncomparable: scope/observation policy compatibility is not proven, so no
-	// honest comparison exists.
 	VerdictIncomparable
+	VerdictAbsenceUnproved
 )
 
 // Classify decides how two resolved identities relate before any manifest is read.
 //
-// The rule is deliberately strict: equal tree-hash bytes alone never prove equality
-// across unproven observation policies. A pair is equal only when it is the same
-// immutable record, or when its policy compatibility is proven (both scan identities
-// valid, same scan-config) and the tree hashes match. Anything else with proven
-// compatibility and differing hashes needs the merge; everything else is
-// incomparable.
+// Equal tree-hash bytes alone never prove equality. Only the same immutable record
+// is equal without a merge. Distinct records need a proven-compatible policy and
+// recorded path coverage on both sides, and then the coverage merge decides: a path
+// one side lacks is only absent where that side's coverage reached it.
 func Classify(left, right Identity) CompatibilityVerdict {
 	if left.sameImmutableRecord(right) {
 		return VerdictEqual
@@ -206,11 +199,13 @@ func Classify(left, right Identity) CompatibilityVerdict {
 	if !provablyCompatible(left, right) {
 		return VerdictIncomparable
 	}
-	if left.treeHash == right.treeHash {
-		return VerdictEqual
+	if !left.boundary.coverage.Known() || !right.boundary.coverage.Known() {
+		return VerdictAbsenceUnproved
 	}
 	return VerdictNeedsMerge
 }
+
+func SameTree(left, right Identity) bool { return left.treeHash == right.treeHash }
 
 // provablyCompatible reports whether two identities share a proven scope/observation
 // policy: both scan identities valid (non-zero-value) and the same scan-config hash.

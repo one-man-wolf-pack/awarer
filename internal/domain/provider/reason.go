@@ -81,6 +81,7 @@ const (
 	// observed under differing scan identities. Equal tree-hash bytes alone do not
 	// overcome it.
 	ReasonIncompatibleIdentityPolicy Reason = "incompatible-identity-policy"
+	ReasonAbsenceUnproved            Reason = "absence-unproved"
 )
 
 // reasonSet is the closed set of known reasons, the single source of truth for Valid.
@@ -96,6 +97,7 @@ var reasonSet = map[Reason]bool{
 	ReasonObservationUnstable:        true,
 	ReasonUnsupportedReference:       true,
 	ReasonIncompatibleIdentityPolicy: true,
+	ReasonAbsenceUnproved:            true,
 }
 
 // Valid reports whether r is a known reason token.

@@ -59,7 +59,8 @@ func classifyStateError(err error) error {
 		return c
 	}
 	switch {
-	case errors.Is(err, checkpoint.ErrCorruptStore), errors.Is(err, blob.ErrCorruptBlob), errors.Is(err, runcache.ErrCorruptStore), errors.Is(err, restore.ErrCorruptRecoveryStore):
+	case errors.Is(err, checkpoint.ErrCorruptStore), errors.Is(err, blob.ErrCorruptBlob), errors.Is(err, runcache.ErrCorruptStore), errors.Is(err, restore.ErrCorruptRecoveryStore),
+		errors.Is(err, restore.ErrIncompatibleRecoveryRecord):
 		return stateActionErrorf("%v", err)
 	case errors.Is(err, checkpoint.ErrAmbiguousPrefix):
 		return usageErrorf("%v\nuse a longer id prefix", err)

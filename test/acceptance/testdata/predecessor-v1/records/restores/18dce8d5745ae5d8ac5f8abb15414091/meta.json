@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "18dce8d5745ae5d8ac5f8abb15414091",
+  "created_at": "2026-10-09T16:19:15.279898Z",
+  "awa_version": "v0.3.2",
+  "scan_config_hash": "blake3:53341a057cfb0cc9c91d13fff4de3aeeac74286922dbc9cbe493a6044ae5812d",
+  "source": {
+    "kind": "checkpoint",
+    "id": "y3e85ytwxtgm13etqp794x2brp6nqw18",
+    "canonical_ref": "y3e85ytwxtgm13etqp794x2brp6nqw18",
+    "requested": "y3e85ytwxtgm13etqp794x2brp6nqw18"
+  },
+  "selection": {
+    "all": false,
+    "paths": [
+      "a-visible.txt",
+      "z-hidden.txt"
+    ]
+  },
+  "manifest": {
+    "file": "before.manifest.jsonl",
+    "tree_hash": "blake3:0c389a743e34fda435fbd575bb889dbc0d3e66b9f9d81e00be33b7188509e7eb",
+    "record_count": 0
+  },
+  "scope": {
+    "file": "scope.jsonl",
+    "path_count": 2
+  },
+  "content_complete": true
+}

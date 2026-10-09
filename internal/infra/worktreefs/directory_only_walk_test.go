@@ -24,7 +24,7 @@ func walkAllNodePaths(t *testing.T, root string, scope config.ScanScope) []strin
 			got = append(got, p)
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}

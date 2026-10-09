@@ -1,6 +1,7 @@
 package checkpointjson
 
 import (
+	"awarer/internal/scantest"
 	"context"
 	"errors"
 	"os"
@@ -14,8 +15,7 @@ import (
 
 // TestPutManifestCrashAfterManifestBeforeHeaderInvisible proves an interruption
 // after the manifest is written but before the header (the commit point) leaves a
-// checkpoint that no reader can see, though the manifest file remains on disk for
-// gc/doctor to reclaim.
+// checkpoint that no reader can see, though the manifest file remains on disk.
 func TestPutManifestCrashAfterManifestBeforeHeaderInvisible(t *testing.T) {
 	layout := paths.New(t.TempDir())
 	repo := NewRepo(layout)
@@ -27,7 +27,7 @@ func TestPutManifestCrashAfterManifestBeforeHeaderInvisible(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := repo.PutManifest(context.Background(), s.build, s.stream()); err == nil {
+	if _, err := repo.PutManifest(context.Background(), s.build, s.stream(), scantest.FrontierStream()); err == nil {
 		t.Fatalf("expected PutManifest to abort before the header")
 	}
 
@@ -49,7 +49,7 @@ func TestPutManifestCrashAfterManifestBeforeHeaderInvisible(t *testing.T) {
 		t.Fatalf("Get should fail for a header-less checkpoint")
 	}
 
-	// The manifest leftover exists on disk (the reclaimable orphan).
+	// The manifest leftover exists on disk as an invisible orphan.
 	manifestPath := filepath.Join(layout.CheckpointsDir(), s.id().String(), manifestName)
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected an orphan manifest on disk: %v", err)
@@ -70,13 +70,13 @@ func TestPutManifestReRunWithNewIDSucceeds(t *testing.T) {
 		return nil
 	}
 	orphan := buildCheckpoint(t, idFrom(t, 0x01), time.Unix(1, 0).UTC(), false)
-	if _, err := repo.PutManifest(context.Background(), orphan.build, orphan.stream()); err == nil {
+	if _, err := repo.PutManifest(context.Background(), orphan.build, orphan.stream(), scantest.FrontierStream()); err == nil {
 		t.Fatalf("expected first PutManifest to abort")
 	}
 
 	repo.fail = nil
 	good := buildCheckpoint(t, idFrom(t, 0x02), time.Unix(2, 0).UTC(), false)
-	if _, err := repo.PutManifest(context.Background(), good.build, good.stream()); err != nil {
+	if _, err := repo.PutManifest(context.Background(), good.build, good.stream(), scantest.FrontierStream()); err != nil {
 		t.Fatalf("re-run PutManifest: %v", err)
 	}
 

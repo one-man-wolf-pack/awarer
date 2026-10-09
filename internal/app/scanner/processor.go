@@ -11,6 +11,7 @@ import (
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/worktree"
+	"awarer/internal/infra/frontierjsonl"
 	"awarer/internal/infra/manifestsort"
 )
 
@@ -32,8 +33,9 @@ type processor struct {
 	cfg    config.Config
 	opts   Options
 
-	sorter  *manifestsort.Sorter
-	omitted worktree.FieldSet
+	sorter   *manifestsort.Sorter
+	frontier *frontierjsonl.Sorter
+	omitted  worktree.FieldSet
 	// samples holds the canonically-smallest skipped inputs (by path), kept sorted and
 	// capped at maxSkippedSampleBuffer, so SkippedSummary reports a deterministic
 	// canonical head regardless of walk order and without retaining every skipped input.

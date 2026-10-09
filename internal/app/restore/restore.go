@@ -354,7 +354,7 @@ type compatibility struct {
 	policyMatches bool
 }
 
-func (c compatibility) deletionsProven() bool { return c.policyMatches }
+func (c compatibility) allowsDeletion() bool { return c.policyMatches }
 
 // compatibilityOf compares the source's persisted scan identity with the identity
 // of the current observation this invocation just took. It reads the observation

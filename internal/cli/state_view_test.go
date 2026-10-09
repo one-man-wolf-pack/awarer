@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"awarer/internal/domain/worktree"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestAssessmentProjectionMatchesSentinels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScanIdentity: %v", err)
 	}
-	bound, err := provider.NewEvidenceBoundary(0)
+	bound, err := provider.NewEvidenceBoundary(0, worktree.CoverageRecorded)
 	if err != nil {
 		t.Fatalf("NewEvidenceBoundary: %v", err)
 	}

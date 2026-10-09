@@ -72,7 +72,7 @@ func putCheckpoint(t *testing.T, repo *checkpointjson.Repo, h hashing.Hasher, id
 		OmittedStatFields: worktree.FieldSet(0).With(worktree.FieldCtime).With(worktree.FieldDev).With(worktree.FieldIno).With(worktree.FieldNlink),
 	}
 	// The store derives the tree hash and stats from the records it streams.
-	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, nil)); err != nil {
+	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream(entries, nil), scantest.FrontierStream()); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"awarer/internal/domain/worktree"
 	"testing"
 
 	"awarer/internal/domain/evidence"
@@ -88,10 +89,10 @@ func TestContractToken(t *testing.T) {
 }
 
 func TestEvidenceBoundaryRejectsNegative(t *testing.T) {
-	if _, err := provider.NewEvidenceBoundary(-1); err == nil {
+	if _, err := provider.NewEvidenceBoundary(-1, worktree.CoverageRecorded); err == nil {
 		t.Error("expected error for negative skipped-input count")
 	}
-	b, err := provider.NewEvidenceBoundary(3)
+	b, err := provider.NewEvidenceBoundary(3, worktree.CoverageRecorded)
 	if err != nil {
 		t.Fatalf("NewEvidenceBoundary: %v", err)
 	}

@@ -26,6 +26,16 @@ Refs: `now`, `latest`, `<checkpoint-id>`, `run:<id>:before`, `run:<id>:after`
 (see [awa help refs](refs.md)). An expected "unavailable" is a successful
 assessment (exit 0), not an error to scrape from stderr.
 
+`equal` and `different` counts are claimed only where each side's recorded path
+coverage proves a path missing from it was really absent. A path present on one
+side but behind the other side's ignore, scope, or protected boundary is not
+proved absent there, so compare reports `incomparable` with reason
+`absence-unproved` instead of guessed counts; that state's coverage is still
+`recorded`. A state recorded before path coverage existed reports
+`evidence_boundary.path_coverage` as `unknown`: it still resolves and compares
+`equal` to itself, but against any other state under the same scan policy it is
+`incomparable` with `absence-unproved`, even when the tree hashes match.
+
 ## Run evidence — `awa run show` (provider_contract: `awa-evidence/v1`)
 
 ```text
@@ -50,8 +60,10 @@ reports presence, and integrity stays "unverified" until an explicit
 Provider versions are independent. `awa-state/v1` versions state identity; the
 enclosing `awa-evidence/v1` versions run-evidence composition. Additive detail
 may appear; a changed identity field, outcome/reason spelling, or equality
-meaning is a version bump. The private `.awa/` storage format is separate from
-both and may change freely before release.
+meaning is a version bump. The one exception is the absence-safety correction
+behind `absence-unproved`: it withdraws relationships the evidence never proved and
+stays within `awa-state/v1`. The private `.awa/` storage format is separate from
+both; evidence it retains stays readable across upgrades without a reset.
 
 ## Availability and GC
 

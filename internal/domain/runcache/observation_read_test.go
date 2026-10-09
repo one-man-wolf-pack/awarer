@@ -1,6 +1,7 @@
 package runcache_test
 
 import (
+	"awarer/internal/domain/worktree"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestNewRunObservationReadGuards(t *testing.T) {
 	reuse := runcache.ReusableCacheEntry()
 
 	// Happy path: non-nil stream, complete identity.
-	read, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), tree, cfg, reuse)
+	read, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), tree, cfg, reuse, worktree.UnknownCoverage())
 	if err != nil {
 		t.Fatalf("NewRunObservationRead happy path: %v", err)
 	}
@@ -49,13 +50,13 @@ func TestNewRunObservationReadGuards(t *testing.T) {
 		t.Error("accessors did not round-trip the constructed values")
 	}
 
-	if _, err := runcache.NewRunObservationRead(nil, tree, cfg, reuse); err == nil {
+	if _, err := runcache.NewRunObservationRead(nil, tree, cfg, reuse, worktree.UnknownCoverage()); err == nil {
 		t.Error("must reject a nil manifest stream")
 	}
-	if _, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), hashing.TreeHash{}, cfg, reuse); err == nil {
+	if _, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), hashing.TreeHash{}, cfg, reuse, worktree.UnknownCoverage()); err == nil {
 		t.Error("must reject a zero tree hash")
 	}
-	if _, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), tree, hashing.ConfigHash{}, reuse); err == nil {
+	if _, err := runcache.NewRunObservationRead(scantest.CanonicalStream(nil, nil), tree, hashing.ConfigHash{}, reuse, worktree.UnknownCoverage()); err == nil {
 		t.Error("must reject a zero scan config hash")
 	}
 }

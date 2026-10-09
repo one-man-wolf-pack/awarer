@@ -56,6 +56,7 @@ type walk struct {
 	protected map[string]bool // base names never scanned, whatever the ignore rules say
 	scope     config.ScanScope
 	visit     func(worktree.Node) error
+	omit      func(worktree.FrontierRecord) error
 	// leavesOnly stops a followed directory symlink from being descended: the
 	// single-entry classification (see ClassifyRootFile) asks about one leaf, never
 	// a subtree.
@@ -63,7 +64,7 @@ type walk struct {
 }
 
 // Walk implements worktree.Walker.
-func (w *Walker) Walk(ctx context.Context, layout paths.Layout, scope config.ScanScope, visit func(worktree.Node) error) error {
+func (w *Walker) Walk(ctx context.Context, layout paths.Layout, scope config.ScanScope, visit func(worktree.Node) error, omit func(worktree.FrontierRecord) error) error {
 	root := layout.Root()
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -78,8 +79,31 @@ func (w *Walker) Walk(ctx context.Context, layout paths.Layout, scope config.Sca
 		protected: protectedNames(),
 		scope:     scope,
 		visit:     visit,
+		omit:      omit,
 	}
 	return filepath.WalkDir(root, st.base)
+}
+
+// omitNode records an encountered node the traversal leaves unobserved. A real
+// directory, or a symlink that following could have resolved to one, hides its
+// whole subtree; any other node hides only itself.
+func (w *walk) omitNode(rel string, isDir, isSymlink bool) error {
+	limit := worktree.LimitNode
+	if isDir || (isSymlink && w.scope.FollowSymlinks) {
+		limit = worktree.LimitSubtree
+	}
+	return w.omitPath(rel, limit)
+}
+
+func (w *walk) omitPath(rel string, limit worktree.CoverageLimit) error {
+	if w.omit == nil {
+		return nil
+	}
+	p, err := worktree.ParseRelPath(rel)
+	if err != nil {
+		return err
+	}
+	return w.omit(worktree.FrontierRecord{Path: p, Limit: limit})
 }
 
 // base is the WalkDir callback for the project's own tree. It prunes ignored and
@@ -108,6 +132,9 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 		// only correct for a directory: from a non-directory entry it would skip the
 		// rest of the parent, silently omitting sibling files, so a stray protected
 		// file just skips itself.
+		if err := w.omitNode(rel, d.IsDir(), d.Type()&fs.ModeSymlink != 0); err != nil {
+			return err
+		}
 		if d.IsDir() {
 			return fs.SkipDir
 		}
@@ -123,6 +150,9 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 	// include living beneath it.
 	dirLike := isDir || (isSymlink && w.scope.FollowSymlinks)
 	if !w.inc.allows(rel, dirLike) {
+		if err := w.omitNode(rel, isDir, isSymlink); err != nil {
+			return err
+		}
 		if isDir {
 			return fs.SkipDir
 		}
@@ -133,6 +163,9 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 	// it. Protected paths were already handled above and stay excluded regardless.
 	if !w.inc.overridesExcludes() {
 		if w.eng.ignores(rel, isDir) {
+			if err := w.omitNode(rel, isDir, isSymlink); err != nil {
+				return err
+			}
 			if isDir {
 				return fs.SkipDir
 			}
@@ -228,15 +261,18 @@ func (w *walk) follow(symlinkAbs, virtualRel string, depth int, chain map[string
 	// otherwise a narrow scan would pull in a link it never included. The directory
 	// descend below is exempt: that is the ancestor case the dirLike pass is for.
 	leafInScope := w.inc.allows(virtualRel, false)
+	// A provisional ancestor that resolves to anything but a descendable
+	// directory leaves its name unobserved.
+	dropLeaf := func() error { return w.omitPath(virtualRel, worktree.LimitSubtree) }
 	skipLeaf := func(reason worktree.SkippedReason) error {
 		if !leafInScope {
-			return nil
+			return dropLeaf()
 		}
 		return w.skipSymlink(virtualRel, target, linkStat, nodeTr, reason)
 	}
 	brokenLeaf := func() error {
 		if !leafInScope {
-			return nil
+			return dropLeaf()
 		}
 		return w.recordBrokenLink(virtualRel, symlinkAbs, nodeTr)
 	}
@@ -348,7 +384,7 @@ func (w *walk) follow(symlinkAbs, virtualRel string, depth int, chain map[string
 
 		if realInfo.Mode().IsRegular() {
 			if !leafInScope {
-				return nil
+				return dropLeaf()
 			}
 			return w.emitFollowedFile(virtualRel, next, chainTo, realInfo, tr)
 		}
@@ -356,7 +392,7 @@ func (w *walk) follow(symlinkAbs, virtualRel string, depth int, chain map[string
 			// A followed link to a device/socket/fifo: surfaced as special so the
 			// scanner records the skip, consistent with special files in the base tree.
 			if !leafInScope {
-				return nil
+				return dropLeaf()
 			}
 			p, perr := worktree.ParseRelPath(virtualRel)
 			if perr != nil {
@@ -531,14 +567,14 @@ func (w *walk) walkRealChildren(realDir, virtualDir string, depth int, chain map
 
 		// Protected names are a hard boundary inside followed subtrees too, so an
 		// ignore-file negation cannot re-include VCS or awa state reached via a symlink.
-		if w.protected[e.Name()] {
-			continue
-		}
-		if !w.inc.allows(childVirtual, dirLike) {
-			continue
-		}
-		// As in base(), an explicit narrowed scope outranks the ignore engine.
-		if !w.inc.overridesExcludes() && w.eng.ignores(childVirtual, isDir) {
+		omitted := w.protected[e.Name()] ||
+			!w.inc.allows(childVirtual, dirLike) ||
+			// As in base(), an explicit narrowed scope outranks the ignore engine.
+			(!w.inc.overridesExcludes() && w.eng.ignores(childVirtual, isDir))
+		if omitted {
+			if err := w.omitNode(childVirtual, isDir, isSymlink); err != nil {
+				return err
+			}
 			continue
 		}
 

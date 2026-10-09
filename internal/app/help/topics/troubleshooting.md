@@ -216,7 +216,9 @@ For the provider surfaces (`awa state resolve`, `awa state compare`,
 *complete assessment*, not a failure: they exit 0 and name the situation with a
 closed reason token such as `not-initialized`, `not-found`,
 `ambiguous-reference`, `metadata-corrupt`, or `permission-denied`. Read the token
-rather than inferring from the exit code. See
+rather than inferring from the exit code. A compare that is `incomparable` with
+`absence-unproved` means one side cannot prove a path absent — it was excluded
+there, or the state predates recorded path coverage. See
 [awa help integrations](integrations.md).
 
 ## A generator or formatter rewrote files it should not have
@@ -232,8 +234,10 @@ awa restore --apply <checkpoint-id> -- <path>
 If the preview reports blocked operations, it names why — `hash-only-content`
 means the source proved the file's identity but stored no bytes, `blob-missing`
 means the content was already reclaimed, `policy-incompatible` means the source
-was observed under a different scan policy so deletions cannot be justified. See
-[awa help restore](restore.md).
+was observed under a different scan policy so deletions cannot be justified,
+`ignored-boundary` means a path was outside evidence on one side, and
+`absence-unproved` means an older record cannot prove a deletion — narrow the
+selection. See [awa help restore](restore.md).
 
 ## See also
 

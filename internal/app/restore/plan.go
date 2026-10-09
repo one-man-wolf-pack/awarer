@@ -33,6 +33,9 @@ type session struct {
 
 	sourceIdentity restore.Source
 	compat         compatibility
+	root           string
+	absence        *worktree.AbsenceTracker
+	currentCover   *worktree.AbsenceTracker
 
 	// scopeStream bounds a recovery-observation source to the exact path set it
 	// proves. It is nil for a checkpoint or run source, whose evidence covers the
@@ -79,6 +82,11 @@ func (s *Service) begin(ctx context.Context, req Request, mutating bool) (*sessi
 	for _, p := range req.Selection.Paths() {
 		sess.selectionSeen[p.String()] = false
 	}
+	layout, err := req.Project.Paths()
+	if err != nil {
+		return nil, err
+	}
+	sess.root = layout.Root()
 
 	// One resolution, one identity: from here the invocation acts on a pinned
 	// immutable state even if `latest` moves under it.
@@ -167,9 +175,29 @@ func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 	sess.boundary = restore.Boundary{
 		SourceSkipped:    sess.source.Skipped(),
 		CurrentSkipped:   sess.current.Stats().Skipped,
-		PolicyCompatible: sess.compat.deletionsProven(),
+		PolicyCompatible: sess.compat.allowsDeletion(),
 		ScopeBounded:     sess.scopeStream != nil,
+		SourceCoverage:   sess.source.Coverage().Kind(),
 	}
+
+	absence, err := worktree.NewAbsenceTracker(ctx, sess.source.Coverage())
+	if err != nil {
+		return restore.Plan{}, err
+	}
+	sess.absence = absence
+	defer func() {
+		_ = absence.Close()
+		sess.absence = nil
+	}()
+	currentCover, err := worktree.NewAbsenceTracker(ctx, sess.current.Coverage())
+	if err != nil {
+		return restore.Plan{}, err
+	}
+	sess.currentCover = currentCover
+	defer func() {
+		_ = currentCover.Close()
+		sess.currentCover = nil
+	}()
 
 	srcCur, err := sess.source.Manifest(ctx)
 	if err != nil {
@@ -197,11 +225,23 @@ func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 		if err := ctx.Err(); err != nil {
 			return restore.Plan{}, err
 		}
+		if err := sess.absence.Note(m.source); err != nil {
+			return restore.Plan{}, err
+		}
+		if err := currentCover.Note(m.current); err != nil {
+			return restore.Plan{}, err
+		}
 		if err := sess.decide(m.path, m.source, m.current, m.inScope); err != nil {
 			return restore.Plan{}, err
 		}
 	}
 	if err := m.err(); err != nil {
+		return restore.Plan{}, err
+	}
+	if err := absence.Finish(); err != nil {
+		return restore.Plan{}, err
+	}
+	if err := currentCover.Finish(); err != nil {
 		return restore.Plan{}, err
 	}
 	if err := sess.explainEmptySelections(); err != nil {
@@ -255,10 +295,18 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 		return nil
 	}
 
-	// A deletion needs absence to be *proven*, which a differing scan policy cannot
-	// do: the path may simply have been outside the source observation's boundary.
-	if !desired.Present() && !sess.compat.deletionsProven() {
+	if !desired.Present() && !sess.compat.allowsDeletion() {
 		return sess.blocked(path, current, desired, restore.ReasonPolicyIncompatible)
+	}
+	// The source's nonappearance never proves absence on its own: an excluded path,
+	// even under identical rules, may exist at that spelling, and deleting it would
+	// destroy unobserved data.
+	if !desired.Present() {
+		if r, blocked, err := verdictReason(sess.absence.Absent(path)); err != nil {
+			return err
+		} else if blocked {
+			return sess.blocked(path, current, desired, r)
+		}
 	}
 
 	// Provenance is part of the comparison, not a note beside it. A node state answers
@@ -276,6 +324,21 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 	// through a link, which makes this path a boundary rather than work.
 	if desiredNode.traversal != currentNode.traversal {
 		return sess.blocked(path, current, desired, restore.ReasonSymlinkAncestor)
+	}
+
+	if !current.Present() {
+		if r, blocked, err := sess.currentAbsence(path); err != nil {
+			return err
+		} else if blocked {
+			return sess.blocked(path, current, desired, r)
+		}
+		// Physically absent, but below a current boundary — for example under an
+		// excluded file the create would need to replace — it is outside evidence.
+		if r, blocked, err := verdictReason(sess.currentCover.Reachable(path)); err != nil {
+			return err
+		} else if blocked {
+			return sess.blocked(path, current, desired, r)
+		}
 	}
 
 	op, err := restore.NewPlannedOperation(path, current, desired)
@@ -325,6 +388,38 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 		return nil
 	}
 	return sess.spool.Add(op)
+}
+
+func verdictReason(verdict worktree.AbsenceVerdict, err error) (restore.Reason, bool, error) {
+	if err != nil {
+		return "", false, err
+	}
+	switch verdict {
+	case worktree.AbsenceProved:
+		return "", false, nil
+	case worktree.AbsenceExcluded:
+		return restore.ReasonIgnoredBoundary, true, nil
+	case worktree.AbsenceSkippedBoundary:
+		return restore.ReasonSkippedBoundary, true, nil
+	default:
+		return restore.ReasonAbsenceUnproved, true, nil
+	}
+}
+
+// The filtered current scan cannot prove a create's destination absent: an
+// excluded file there would be overwritten, so the destination is checked on disk.
+func (sess *session) currentAbsence(path worktree.RelPath) (restore.Reason, bool, error) {
+	err := fsx.StatNoFollowAt(sess.root, path.String())
+	switch {
+	case err == nil:
+		return restore.ReasonIgnoredBoundary, true, nil
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, fsx.ErrNotDirectory):
+		return "", false, nil
+	case fsx.IsSymlinkOpenRejection(err):
+		return restore.ReasonSymlinkAncestor, true, nil
+	default:
+		return restore.ReasonAbsenceUnproved, true, nil
+	}
 }
 
 // contentReason reports whether the source can actually produce this entry's

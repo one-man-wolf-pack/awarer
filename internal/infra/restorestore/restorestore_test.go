@@ -336,7 +336,7 @@ func TestGetRejectsTamperedMetadata(t *testing.T) {
 		{
 			name: "unknown field",
 			mutate: func(t *testing.T, metaPath string, _ restore.OperationID) {
-				replaceInFile(t, metaPath, `"schema_version": 1,`, `"schema_version": 1,`+"\n  \"surprise\": true,")
+				replaceInFile(t, metaPath, `"schema_version": 2,`, `"schema_version": 2,`+"\n  \"surprise\": true,")
 			},
 			wantErr: restore.ErrCorruptRecoveryStore,
 		},
@@ -350,9 +350,16 @@ func TestGetRejectsTamperedMetadata(t *testing.T) {
 		{
 			name: "unsupported schema version",
 			mutate: func(t *testing.T, metaPath string, _ restore.OperationID) {
-				replaceInFile(t, metaPath, `"schema_version": 1`, `"schema_version": 99`)
+				replaceInFile(t, metaPath, `"schema_version": 2`, `"schema_version": 99`)
 			},
-			wantErr: restore.ErrCorruptRecoveryStore,
+			wantErr: restore.ErrIncompatibleRecoveryRecord,
+		},
+		{
+			name: "newer schema with fields this build does not know",
+			mutate: func(t *testing.T, metaPath string, _ restore.OperationID) {
+				replaceInFile(t, metaPath, `"schema_version": 2,`, `"schema_version": 3,`+"\n  \"surprise\": true,")
+			},
+			wantErr: restore.ErrIncompatibleRecoveryRecord,
 		},
 		{
 			name: "id disagrees with the directory name",
@@ -391,10 +398,38 @@ func TestGetRejectsTamperedMetadata(t *testing.T) {
 			h.publishOne(id)
 			metaPath := filepath.Join(h.layout.RestoresDir(), id.String(), metaName)
 			tc.mutate(t, metaPath, id)
-			if _, err := h.repo.Get(id); !errors.Is(err, tc.wantErr) {
+			_, err := h.repo.Get(id)
+			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Get after %s = %v, want %v", tc.name, err, tc.wantErr)
 			}
+			if tc.wantErr == restore.ErrIncompatibleRecoveryRecord && errors.Is(err, restore.ErrCorruptRecoveryStore) {
+				t.Fatalf("an unsupported generation was classified as corruption: %v", err)
+			}
 		})
+	}
+}
+
+func TestPredecessorRecordReadsWithUnknownAbsence(t *testing.T) {
+	h := setup(t)
+	id := h.id(1)
+	h.publishOne(id)
+	current, err := h.repo.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Coverage().Kind() != worktree.CoverageScoped {
+		t.Fatalf("a published record has coverage %v, want scoped proof", current.Coverage().Kind())
+	}
+	replaceInFile(t, filepath.Join(h.layout.RestoresDir(), id.String(), metaName), `"schema_version": 2`, `"schema_version": 1`)
+	legacy, err := h.repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get a predecessor record: %v", err)
+	}
+	if legacy.Coverage().Kind().Known() {
+		t.Fatalf("a predecessor record claims absence coverage %v", legacy.Coverage().Kind())
+	}
+	if legacy.Manifest() != current.Manifest() || legacy.Scope() != current.Scope() {
+		t.Fatalf("a predecessor record lost its positive facts")
 	}
 }
 

@@ -639,8 +639,8 @@ func TestIncompatibleCheckpointFormatReported(t *testing.T) {
 // The replacement is derived from the document awa itself just produced rather than
 // written as a literal. A literal would have to be a real retired generation to look
 // plausible, and keeping those numbers alive in ordinary tests is exactly the
-// archaeology the reset removed from production: the classifier keys on "not the
-// current version", so that is what the fixture must express.
+// archaeology the reset removed from production: the classifier keys on versions this
+// build does not read, and one past the current is always such a version.
 func restampToNonCurrentSchema(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)

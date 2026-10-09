@@ -119,3 +119,27 @@ func BenchmarkIndexLookupUpdateRepeatedScan(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkScanExclusionBoundaries(b *testing.B) {
+	const n = 2000
+	root := b.TempDir()
+	proj := scantest.InitProject(b, root)
+	buildTree(b, root, n)
+	scantest.Write(b, root, ".awaignore", "*.log\n")
+	for i := 0; i < n; i++ {
+		scantest.Write(b, root, fmt.Sprintf("node_modules/m%02d/f%04d.js", i%20, i), "x")
+		scantest.Write(b, root, fmt.Sprintf("logs/%04d.log", i), "x")
+	}
+	svc := scanner.New(worktreefs.New(), blake3hash.New(), nil)
+	cfg := config.Defaults()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, err := svc.Scan(context.Background(), proj, cfg, cfg.HistoryScanScope(), scanner.Options{ReadOnly: true})
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = res.Close()
+	}
+}

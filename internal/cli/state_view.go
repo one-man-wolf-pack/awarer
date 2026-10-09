@@ -17,8 +17,9 @@ type scanIdentityDoc struct {
 }
 
 type evidenceBoundaryDoc struct {
-	SkippedInputs               int  `json:"skipped_inputs"`
-	IgnoredPathsOutsideEvidence bool `json:"ignored_paths_outside_evidence"`
+	SkippedInputs               int    `json:"skipped_inputs"`
+	IgnoredPathsOutsideEvidence bool   `json:"ignored_paths_outside_evidence"`
+	PathCoverage                string `json:"path_coverage"`
 }
 
 type stateProjectionDoc struct {
@@ -88,6 +89,7 @@ func projectionDoc(id provider.Identity) stateProjectionDoc {
 		EvidenceBoundary: evidenceBoundaryDoc{
 			SkippedInputs:               id.Boundary().SkippedInputs(),
 			IgnoredPathsOutsideEvidence: id.Boundary().IgnoredOutsideEvidence(),
+			PathCoverage:                id.Boundary().PathCoverage().String(),
 		},
 	}
 	if t, ok := id.ObservedAt(); ok {

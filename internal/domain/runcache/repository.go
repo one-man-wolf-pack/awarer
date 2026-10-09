@@ -81,6 +81,8 @@ type RunObservations struct {
 	// whenever an after observation exists.
 	BeforeScanConfigHash hashing.ConfigHash
 	AfterScanConfigHash  hashing.ConfigHash
+	BeforeFrontier       worktree.FrontierStream
+	AfterFrontier        worktree.FrontierStream
 }
 
 // RunObservationRead is the constructor-owned result of opening a recorded run's
@@ -96,13 +98,14 @@ type RunObservationRead struct {
 	treeHash       hashing.TreeHash
 	scanConfigHash hashing.ConfigHash
 	reuse          ReuseState
+	coverage       worktree.Coverage
 }
 
 // NewRunObservationRead builds a validated observation read. It requires a non-nil
 // manifest stream and a complete observation identity: a non-zero tree hash and a
 // non-zero scan-config hash. Reuse comes from the run entry the store already
 // validated, so it is trusted.
-func NewRunObservationRead(manifest worktree.ManifestStream, treeHash hashing.TreeHash, scanConfigHash hashing.ConfigHash, reuse ReuseState) (RunObservationRead, error) {
+func NewRunObservationRead(manifest worktree.ManifestStream, treeHash hashing.TreeHash, scanConfigHash hashing.ConfigHash, reuse ReuseState, coverage worktree.Coverage) (RunObservationRead, error) {
 	if manifest == nil {
 		return RunObservationRead{}, fmt.Errorf("run observation read requires a manifest stream")
 	}
@@ -112,8 +115,10 @@ func NewRunObservationRead(manifest worktree.ManifestStream, treeHash hashing.Tr
 	if scanConfigHash.IsZero() {
 		return RunObservationRead{}, fmt.Errorf("run observation read requires a scan config hash")
 	}
-	return RunObservationRead{manifest: manifest, treeHash: treeHash, scanConfigHash: scanConfigHash, reuse: reuse}, nil
+	return RunObservationRead{manifest: manifest, treeHash: treeHash, scanConfigHash: scanConfigHash, reuse: reuse, coverage: coverage}, nil
 }
+
+func (r RunObservationRead) Coverage() worktree.Coverage { return r.coverage }
 
 // Manifest returns the verified observation manifest stream.
 func (r RunObservationRead) Manifest() worktree.ManifestStream { return r.manifest }

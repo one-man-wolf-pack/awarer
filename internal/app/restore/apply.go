@@ -327,7 +327,18 @@ func (sess *session) captureCurrentBytes(ctx context.Context) (stop, error) {
 		}
 		op := join.Operation()
 		current := op.Current()
-		if !current.Present() || current.Kind() != worktree.KindRegular {
+		if !current.Present() {
+			// The record will claim this covered path was absent, which lets a later undo
+			// delete whatever is there. The claim must hold physically now, not merely in
+			// the filtered observation the plan was built from.
+			if _, blocked, err := sess.currentAbsence(op.Path()); err != nil {
+				return stop{}, err
+			} else if blocked {
+				return stoppedAt(op, restore.ReasonRecoveryIncomplete)
+			}
+			continue
+		}
+		if current.Kind() != worktree.KindRegular {
 			continue
 		}
 		entry, ok := join.Entry()

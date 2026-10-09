@@ -57,7 +57,8 @@ const (
 	// unreadable record it is retained, and it additionally references blobs, so an
 	// unreadable one leaves blob reachability incomplete and the sweep must fail
 	// closed until doctor or reinitialization resolves it.
-	ReasonRestoreCorrupt RetentionReason = "restore-corrupt"
+	ReasonRestoreCorrupt      RetentionReason = "restore-corrupt"
+	ReasonRestoreIncompatible RetentionReason = "restore-incompatible"
 
 	// Skipped reasons.
 	ReasonSubsystemFiltered RetentionReason = "subsystem-filtered"
@@ -112,6 +113,7 @@ var reasonCatalog = []reasonSpec{
 	{ReasonRunCorrupt, ActionBlocked, []CandidateKind{KindRun}},
 	{ReasonRunIncompatible, ActionBlocked, []CandidateKind{KindRun}},
 	{ReasonRestoreCorrupt, ActionBlocked, []CandidateKind{KindRestore}},
+	{ReasonRestoreIncompatible, ActionBlocked, []CandidateKind{KindRestore}},
 
 	// Skipped: a subsystem filter excluded an otherwise-deletable item.
 	{ReasonSubsystemFiltered, ActionSkipped, []CandidateKind{KindCheckpoint, KindRun, KindBlob, KindTemp, KindRestore}},
@@ -167,14 +169,14 @@ func (r RetentionReason) Action() CandidateAction { return reasonAction[r] }
 // or discard damage, the other to reset evidence this build has no reader for.
 func (r RetentionReason) needsUserAction() bool {
 	return r == ReasonCheckpointCorrupt || r == ReasonRunCorrupt || r == ReasonRestoreCorrupt ||
-		r == ReasonCheckpointIncompatible || r == ReasonRunIncompatible
+		r == ReasonCheckpointIncompatible || r == ReasonRunIncompatible || r == ReasonRestoreIncompatible
 }
 
 // Incompatible reports whether r marks an intact record in a schema this build cannot
 // read, as opposed to damage. A presentation layer uses it to name the obstruction
 // honestly instead of calling every blocked plan corruption.
 func (r RetentionReason) Incompatible() bool {
-	return r == ReasonCheckpointIncompatible || r == ReasonRunIncompatible
+	return r == ReasonCheckpointIncompatible || r == ReasonRunIncompatible || r == ReasonRestoreIncompatible
 }
 
 // isLock reports whether r marks a lock obstruction that blocks destructive GC but

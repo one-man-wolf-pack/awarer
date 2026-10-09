@@ -199,11 +199,12 @@ type restoreDoc struct {
 			Blocked         int `json:"blocked"`
 		} `json:"counts"`
 		Boundary struct {
-			SourceSkippedInputs         int  `json:"source_skipped_inputs"`
-			CurrentSkippedInputs        int  `json:"current_skipped_inputs"`
-			PolicyCompatible            bool `json:"policy_compatible"`
-			ScopeBounded                bool `json:"scope_bounded"`
-			IgnoredPathsOutsideEvidence bool `json:"ignored_paths_outside_evidence"`
+			SourceSkippedInputs         int    `json:"source_skipped_inputs"`
+			CurrentSkippedInputs        int    `json:"current_skipped_inputs"`
+			PolicyCompatible            bool   `json:"policy_compatible"`
+			ScopeBounded                bool   `json:"scope_bounded"`
+			IgnoredPathsOutsideEvidence bool   `json:"ignored_paths_outside_evidence"`
+			SourcePathCoverage          string `json:"source_path_coverage"`
 		} `json:"evidence_boundary"`
 		Complete  bool     `json:"complete"`
 		Completed int      `json:"completed"`

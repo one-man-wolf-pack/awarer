@@ -42,13 +42,15 @@ branch on the code rather than on the message. They group by subsystem:
 ```text
 config-invalid                a config layer is present but not valid
 required-dir-*                a required .awa/ directory is missing or wrong
-checkpoint-*                  a checkpoint record, manifest, or blob is corrupt,
-                              missing, or in a schema this awa cannot read
+checkpoint-*                  a checkpoint record, manifest, exclusion frontier,
+                              or blob is corrupt, missing, or in a schema this
+                              awa cannot read
 run-*                         a stored run's metadata, pointer, or payload is
                               corrupt, or in a schema this awa cannot read
-restore-recovery-*            a restore recovery observation is unreadable, or
-                              its captured content is gone — that restore can no
-                              longer be undone
+restore-recovery-*            a restore recovery observation is unreadable, in a
+                              format this awa cannot read, or its captured
+                              content is gone — that restore can no longer be
+                              undone
 index-*                       the worktree index is unreadable, schema-invalid,
                               or stale
 lock-stale, lock-unknown      a lock file left behind, or one awa cannot classify

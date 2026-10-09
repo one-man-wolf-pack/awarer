@@ -55,9 +55,10 @@ const (
 	// never deleted merely for being absent from a source manifest.
 	ReasonIgnoredBoundary Reason = "ignored-boundary"
 	// ReasonPolicyIncompatible: the source's persisted scan identity and the
-	// current effective scan identity disagree, so absence in the source is not
-	// proof of absence in awa scope and deletion cannot be justified.
+	// current effective scan identity disagree. Agreement is required for a
+	// deletion but never proves absence on its own.
 	ReasonPolicyIncompatible Reason = "policy-incompatible"
+	ReasonAbsenceUnproved    Reason = "absence-unproved"
 	// ReasonObservationUnstable: the current observation could not be taken as a
 	// consistent point-in-time snapshot, so its preconditions are not trustworthy.
 	ReasonObservationUnstable Reason = "observation-unstable"
@@ -123,6 +124,7 @@ var reasonCatalog = []reasonSpec{
 	{ReasonSkippedBoundary, []Availability{Blocked}},
 	{ReasonIgnoredBoundary, []Availability{Blocked}},
 	{ReasonPolicyIncompatible, []Availability{Blocked}},
+	{ReasonAbsenceUnproved, []Availability{Blocked}},
 	{ReasonObservationUnstable, []Availability{Blocked}},
 	{ReasonOutOfProvenScope, []Availability{Blocked}},
 

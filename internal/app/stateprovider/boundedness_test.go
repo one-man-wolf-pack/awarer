@@ -69,7 +69,7 @@ func (g *genCursor) Close() error                    { return nil }
 func (g *genCursor) reads() int { return g.i }
 
 // drainModified streams a left/right pair of n all-modified entries through the canonical
-// merge into the same fixed-size Summary mergeCounts uses, and returns that Summary.
+// merge into the same fixed-size Summary the covered merge uses, and returns that Summary.
 //
 // While draining it holds the merge to its own shape. Both sides are all-modified pairs of
 // the same n, so each successful source read is also exactly one emitted change and the two
@@ -131,19 +131,18 @@ func TestCompareDrainScales(t *testing.T) {
 	}
 }
 
-// TestMergeCountsUsesStreamingMerge pins the ownership rule no runtime observation can catch:
-// a per-change slice that is appended to, counted, and dropped before mergeCounts returns is
-// already collectable by the time any measurement could run, yet it is exactly the regression
-// this boundary exists to prevent. So it is checked where it is decided, in the source: one
-// method body, three facts — it calls compare.CompareStream, it does not reach for the
-// materializing CompareToChangeSet adapter, and it builds no collection of its own. Everything
-// else belongs to the production code and the behavioral tests above; this cannot prove every
-// materialization shape and is not meant to.
+// TestCoveredMergeUsesStreamingClassification pins the ownership rule no runtime observation
+// can catch: a per-change slice that is appended to, counted, and dropped before the covered
+// merge returns is already collectable by the time any measurement could run, yet it is
+// exactly the regression this boundary exists to prevent. So it is checked where it is
+// decided, in the source: one method body, three facts — it classifies each path with
+// compare.ComparePair, it does not reach for the materializing CompareToChangeSet adapter,
+// and it builds no collection of its own.
 //
-// Mutation proof: declare `var acc []compare.Change` in mergeCounts, append cur.Change() to it
-// inside the drain loop, and drop acc before the return — the append rule goes red even though
+// Mutation proof: declare `var acc []compare.Change` in walkCovered, append each change to
+// it inside the loop, and drop acc before the return — the append rule goes red even though
 // the slice never outlives the call.
-func TestMergeCountsUsesStreamingMerge(t *testing.T) {
+func TestCoveredMergeUsesStreamingClassification(t *testing.T) {
 	qualified := func(e ast.Expr, name string) bool {
 		sel, ok := e.(*ast.SelectorExpr)
 		return ok && sel.Sel.Name == name && identName(sel.X) == "compare"
@@ -160,7 +159,7 @@ func TestMergeCountsUsesStreamingMerge(t *testing.T) {
 		case *ast.CallExpr:
 			if identName(node.Fun) == "append" {
 				appends++
-			} else if qualified(node.Fun, "CompareStream") {
+			} else if qualified(node.Fun, "ComparePair") {
 				streams++
 			}
 		}
@@ -168,13 +167,13 @@ func TestMergeCountsUsesStreamingMerge(t *testing.T) {
 	})
 
 	if streams == 0 {
-		t.Error("mergeCounts must call compare.CompareStream: the counts come from the canonical streaming merge")
+		t.Error("walkCovered must classify each path with compare.ComparePair: the counts come from the canonical per-path classification")
 	}
 	if adapters != 0 {
-		t.Errorf("mergeCounts references compare.CompareToChangeSet %d times: that adapter materializes the whole change set", adapters)
+		t.Errorf("walkCovered references compare.CompareToChangeSet %d times: that adapter materializes the whole change set", adapters)
 	}
 	if appends != 0 {
-		t.Errorf("mergeCounts calls append %d times: a per-change collection here is worktree cardinality held in application memory, even if it is dropped before the function returns", appends)
+		t.Errorf("walkCovered calls append %d times: a per-change collection here is worktree cardinality held in application memory, even if it is dropped before the function returns", appends)
 	}
 }
 
@@ -186,24 +185,24 @@ func identName(e ast.Expr) string {
 	return ""
 }
 
-// mergeCountsBody returns the body of the one (*Assessor).mergeCounts declaration in
-// compare.go, failing loudly rather than passing vacuously when it is not found.
+// mergeCountsBody returns the body of the one (*Assessor).walkCovered declaration in
+// coverage.go, failing loudly rather than passing vacuously when it is not found.
 func mergeCountsBody(t *testing.T) *ast.BlockStmt {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "compare.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "coverage.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parsing compare.go: %v", err)
+		t.Fatalf("parsing coverage.go: %v", err)
 	}
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "mergeCounts" || fn.Body == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		if !ok || fn.Name.Name != "walkCovered" || fn.Body == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
 			continue
 		}
 		if star, ok := fn.Recv.List[0].Type.(*ast.StarExpr); ok && identName(star.X) == "Assessor" {
 			return fn.Body
 		}
 	}
-	t.Fatal("compare.go declares no (*Assessor).mergeCounts body: this guard checks nothing if it cannot find the method")
+	t.Fatal("coverage.go declares no (*Assessor).walkCovered body: this guard checks nothing if it cannot find the method")
 	return nil
 }
 

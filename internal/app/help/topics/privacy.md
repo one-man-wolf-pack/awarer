@@ -11,7 +11,12 @@ untracked.
   content-addressed blobs;
 - run cache/history: the command line, cwd, exit status, timings, and captured
   stdout/stderr;
-- the run key inputs and diagnostics.
+- the run key inputs and diagnostics;
+- for each checkpoint and recorded run, the names of excluded paths the scan met:
+  ignored files, pruned directories, and out-of-scope or protected entries. Only
+  the name is kept — never content, hashes, or sizes, and nothing below a pruned
+  directory — but a name can itself be sensitive. It is what lets restore and
+  `awa state compare` tell "excluded" from "absent".
 
 Three facts combine in a way worth stating explicitly: a checkpoint always covers
 untracked files, checkpoints store file contents by default, and `.gitignore` is

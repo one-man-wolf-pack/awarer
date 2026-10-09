@@ -207,8 +207,11 @@ func TestAcceptanceCheckpointCreatesCheckpoint(t *testing.T) {
 	}
 
 	doc := readOnlyCheckpoint(t, root)
-	if doc["schema_version"].(float64) != 1 {
-		t.Errorf("schema_version = %v, want 1", doc["schema_version"])
+	if doc["schema_version"].(float64) != 2 {
+		t.Errorf("schema_version = %v, want 2", doc["schema_version"])
+	}
+	if _, ok := doc["frontier"].(map[string]any); !ok {
+		t.Errorf("a new checkpoint header carries no exclusion frontier: %v", doc["frontier"])
 	}
 	if doc["git"] != nil {
 		t.Errorf("non-git project should have git: null, got %v", doc["git"])

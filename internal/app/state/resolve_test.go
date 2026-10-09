@@ -85,7 +85,7 @@ func putCheckpoint(t *testing.T, repo *checkpointjson.Repo, idByte byte, created
 	}
 	// The write derives the tree hash, stats, and record count from the records it
 	// streams, so the fixture supplies only the metadata and the manifest.
-	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream([]worktree.Entry{entry}, nil)); err != nil {
+	if _, err := repo.PutManifest(context.Background(), build, scantest.CanonicalStream([]worktree.Entry{entry}, nil), scantest.FrontierStream()); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 	return id

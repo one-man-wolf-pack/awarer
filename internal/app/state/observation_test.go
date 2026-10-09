@@ -22,7 +22,7 @@ import (
 // the verified content opener produces for a racing file, without real timing.
 type changingWalker struct{ path string }
 
-func (w changingWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error) error {
+func (w changingWalker) Walk(_ context.Context, _ paths.Layout, _ config.ScanScope, visit func(worktree.Node) error, _ func(worktree.FrontierRecord) error) error {
 	p, err := worktree.ParseRelPath(w.path)
 	if err != nil {
 		return err

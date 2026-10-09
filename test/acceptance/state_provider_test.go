@@ -33,7 +33,8 @@ type stateProjection struct {
 	Comparable       bool `json:"comparable"`
 	Reconstructable  bool `json:"reconstructable"`
 	EvidenceBoundary struct {
-		SkippedInputs int `json:"skipped_inputs"`
+		SkippedInputs int    `json:"skipped_inputs"`
+		PathCoverage  string `json:"path_coverage"`
 	} `json:"evidence_boundary"`
 }
 
@@ -633,7 +634,7 @@ func TestAcceptanceStateJSONPublishesExactlyItsDocumentedFields(t *testing.T) {
 		assertObjectFields(t, "state.resolve "+ref+" scan_identity",
 			s.ScanIdentity, []string{"scan_config_hash"}, nil)
 		assertObjectFields(t, "state.resolve "+ref+" evidence_boundary",
-			s.EvidenceBoundary, []string{"skipped_inputs", "ignored_paths_outside_evidence"}, nil)
+			s.EvidenceBoundary, []string{"skipped_inputs", "ignored_paths_outside_evidence", "path_coverage"}, nil)
 	}
 }
 

@@ -46,6 +46,8 @@ func internalUnchangedObs() runcache.RunObservations {
 		After:                scantest.CanonicalStream(nil, nil),
 		BeforeScanConfigHash: cfg,
 		AfterScanConfigHash:  cfg,
+		BeforeFrontier:       scantest.FrontierStream(),
+		AfterFrontier:        scantest.FrontierStream(),
 	}
 }
 

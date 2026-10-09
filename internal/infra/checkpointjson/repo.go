@@ -14,6 +14,7 @@ import (
 	"awarer/internal/domain/paths"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
+	"awarer/internal/infra/frontierjsonl"
 	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/manifestjsonl"
 )
@@ -39,8 +40,8 @@ type Repo struct {
 }
 
 // failStage names a fault-injection point inside PutManifest. The header is the
-// commit point, so the meaningful crash window is between the manifest and the
-// header — a stage a fresh reader must treat as an invisible, reclaimable orphan.
+// commit point, so the meaningful crash window is between the payloads and the
+// header — a stage a fresh reader must treat as an invisible orphan.
 type failStage string
 
 const failAfterManifestBeforeHeader failStage = "after-manifest-before-header"
@@ -141,6 +142,10 @@ func (r *Repo) manifestFor(id checkpoint.CheckpointID) string {
 	return filepath.Join(r.dirFor(id), manifestName)
 }
 
+func (r *Repo) frontierFor(id checkpoint.CheckpointID) string {
+	return filepath.Join(r.dirFor(id), frontierName)
+}
+
 // committed reports whether id names a published checkpoint: its directory holds a
 // header, the exclusive commit point. It is the one place "this id exists" is
 // decided, so no caller has to reimplement the rule. A symlinked component or a
@@ -158,7 +163,10 @@ func committed(root, dir string, id checkpoint.CheckpointID) (bool, error) {
 // readers and two writers racing on one id cannot leave a committed header
 // describing a different writer's manifest. A collision is checked up front so it
 // never mutates an established checkpoint's records.
-func (r *Repo) PutManifest(ctx context.Context, build checkpoint.CheckpointBuild, manifest worktree.ManifestStream) (checkpoint.CheckpointHeader, error) {
+func (r *Repo) PutManifest(ctx context.Context, build checkpoint.CheckpointBuild, manifest worktree.ManifestStream, frontier worktree.FrontierStream) (checkpoint.CheckpointHeader, error) {
+	if frontier == nil {
+		return checkpoint.CheckpointHeader{}, fmt.Errorf("checkpoint %s: no exclusion frontier", build.ID)
+	}
 	if err := build.Validate(); err != nil {
 		return checkpoint.CheckpointHeader{}, err
 	}
@@ -194,15 +202,33 @@ func (r *Repo) PutManifest(ctx context.Context, build checkpoint.CheckpointBuild
 		return checkpoint.CheckpointHeader{}, storeCorrupt(r.manifestFor(build.ID), err)
 	}
 
+	fcur, err := frontier.Open(ctx)
+	if err != nil {
+		return checkpoint.CheckpointHeader{}, err
+	}
+	defer func() { _ = fcur.Close() }()
+	var digest worktree.FrontierDigest
+	if err := fsx.PublishStreamNoFollow(r.root, relIDDir, frontierName, checkpointPerm, func(w io.Writer) error {
+		d, err := frontierjsonl.Tee(w, fcur, blake3hash.New())
+		digest = d
+		return err
+	}); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return checkpoint.CheckpointHeader{}, fmt.Errorf("%w: %s", checkpoint.ErrIDCollision, build.ID)
+		}
+		return checkpoint.CheckpointHeader{}, storeCorrupt(r.frontierFor(build.ID), err)
+	}
+
 	if err := r.checkFail(failAfterManifestBeforeHeader); err != nil {
-		// The manifest is published but the header — the commit point — is not. The
-		// leftover <id>/manifest.jsonl is invisible to every reader (which key off the
-		// header) and is reclaimable by gc/doctor; a fresh checkpoint uses a new id.
+		// The payloads are published but the header — the commit point — is not. The
+		// leftover <id>/ directory is invisible to every reader, which key off the
+		// header; no cleanup path reclaims it, and a fresh checkpoint uses a new id.
 		return checkpoint.CheckpointHeader{}, err
 	}
 
 	red := reducer.Finish()
 	header := build.Header(red.Hash, checkpoint.StatsFromReduced(red.Stats), red.Count)
+	header.Frontier = &digest
 	if err := header.Validate(); err != nil {
 		return checkpoint.CheckpointHeader{}, err
 	}
@@ -260,6 +286,28 @@ func (r *Repo) OpenManifest(id checkpoint.CheckpointID) (worktree.ManifestStream
 		return nil, err
 	}
 	return r.manifestStream(id, h.RecordCount), nil
+}
+
+func (r *Repo) Coverage(id checkpoint.CheckpointID) (worktree.Coverage, error) {
+	h, err := r.readHeader(id)
+	if err != nil {
+		return worktree.Coverage{}, err
+	}
+	return r.coverageOf(h)
+}
+
+func (r *Repo) coverageOf(h checkpoint.CheckpointHeader) (worktree.Coverage, error) {
+	if h.Frontier == nil {
+		return worktree.UnknownCoverage(), nil
+	}
+	return worktree.RecordedCoverage(frontierjsonl.Stream{
+		Root:     r.root,
+		Abs:      r.frontierFor(h.ID),
+		Expected: *h.Frontier,
+		Hasher:   blake3hash.New(),
+		Label:    "checkpoint " + h.ID.String(),
+		Corrupt:  func(e error) error { return fmt.Errorf("%w: %v", checkpoint.ErrCorruptStore, e) },
+	}, *h.Frontier)
 }
 
 // ResolvePrefix returns the single id a short prefix identifies. It matches on

@@ -1,6 +1,7 @@
 package checkpointjson
 
 import (
+	"awarer/internal/scantest"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -246,7 +247,7 @@ func TestCheckpointPutManifestDerivesHeader(t *testing.T) {
 	repo := NewRepo(paths.New(t.TempDir()))
 	s := buildCheckpoint(t, idFrom(t, 0x1e), time.Unix(1, 0).UTC(), false)
 
-	header, err := repo.PutManifest(context.Background(), s.build, s.stream())
+	header, err := repo.PutManifest(context.Background(), s.build, s.stream(), scantest.FrontierStream())
 	if err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
@@ -267,7 +268,7 @@ func TestCheckpointPutManifestDerivesHeader(t *testing.T) {
 		t.Fatalf("full read of the stored checkpoint: %v", err)
 	}
 
-	if _, err := repo.PutManifest(context.Background(), s.build, s.stream()); !errors.Is(err, checkpoint.ErrIDCollision) {
+	if _, err := repo.PutManifest(context.Background(), s.build, s.stream(), scantest.FrontierStream()); !errors.Is(err, checkpoint.ErrIDCollision) {
 		t.Fatalf("second PutManifest err = %v, want ErrIDCollision", err)
 	}
 }

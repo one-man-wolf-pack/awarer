@@ -47,48 +47,66 @@ func (a *Assessor) Compare(ctx context.Context, rng state.Range, now state.NowCo
 
 	switch verdict := provider.Classify(left.id, right.id); verdict {
 	case provider.VerdictNeedsMerge:
-		// The merge streams both manifests in full, so it is itself the readability
-		// confirmation for a difference — no separate verify pass. A mid-merge failure
-		// never yields a partial count; it becomes unavailable, publishing only the side
-		// that still verifies readable.
-		counts, err := a.mergeCounts(ctx, left.rs, right.rs)
+		// The covered merge drains both manifests, so it is the readability
+		// confirmation; a mid-merge failure never yields a partial count.
+		sum, supported, err := a.coveredMerge(ctx, left.rs, right.rs)
 		if err != nil {
-			reason, isAvailability := reasonFor(err)
-			if !isAvailability {
-				return provider.Comparison{}, err
-			}
-			// Both operands resolved, so their unavailability (if any) is a manifest
-			// read failure; re-verify each to publish the readable side and pick the
-			// left-first reason, falling back to the merge's reason.
-			return a.unavailable(ctx, left, right, "", "", reason)
+			return a.mergeFailed(ctx, left, right, err)
+		}
+		if !supported {
+			return a.settle(ctx, left, right, provider.ReasonAbsenceUnproved)
+		}
+		if provider.SameTree(left.id, right.id) && sum.Total() == 0 {
+			return provider.Equal(left.id, right.id), nil
+		}
+		counts, err := countsOf(sum)
+		if err != nil {
+			return provider.Comparison{}, err
 		}
 		return provider.Different(left.id, right.id, counts), nil
 
-	case provider.VerdictEqual, provider.VerdictIncomparable:
-		// equal (hash fast path) and incomparable read neither manifest, so finalize both
-		// here — the single verification pass for this verdict. If a side is unreadable the
-		// comparison is unavailable, publishing only the readable side(s).
-		leftOut, fault := a.finalize(ctx, left, "")
-		if fault != nil {
-			return provider.Comparison{}, fault
-		}
-		rightOut, fault := a.finalize(ctx, right, "")
-		if fault != nil {
-			return provider.Comparison{}, fault
-		}
-		_, leftOK := leftOut.identity()
-		_, rightOK := rightOut.identity()
-		if !leftOK || !rightOK {
-			return unavailableFrom(leftOut, rightOut, "")
-		}
-		if verdict == provider.VerdictEqual {
-			return provider.Equal(left.id, right.id), nil
-		}
-		return provider.Incomparable(left.id, right.id, provider.ReasonIncompatibleIdentityPolicy)
+	case provider.VerdictEqual:
+		return a.settle(ctx, left, right, "")
+
+	case provider.VerdictIncomparable:
+		return a.settle(ctx, left, right, provider.ReasonIncompatibleIdentityPolicy)
+
+	case provider.VerdictAbsenceUnproved:
+		return a.settle(ctx, left, right, provider.ReasonAbsenceUnproved)
 
 	default:
 		return provider.Comparison{}, fmt.Errorf("state provider: unknown compatibility verdict %d", verdict)
 	}
+}
+
+func (a *Assessor) mergeFailed(ctx context.Context, left, right *candidate, err error) (provider.Comparison, error) {
+	reason, isAvailability := reasonFor(err)
+	if !isAvailability {
+		return provider.Comparison{}, err
+	}
+	return a.unavailable(ctx, left, right, "", "", reason)
+}
+
+// settle verifies both operands for a verdict that did not drain them, so an
+// unreadable side is published as unavailable rather than as an identity.
+func (a *Assessor) settle(ctx context.Context, left, right *candidate, reason provider.Reason) (provider.Comparison, error) {
+	leftOut, fault := a.finalize(ctx, left, "")
+	if fault != nil {
+		return provider.Comparison{}, fault
+	}
+	rightOut, fault := a.finalize(ctx, right, "")
+	if fault != nil {
+		return provider.Comparison{}, fault
+	}
+	_, leftOK := leftOut.identity()
+	_, rightOK := rightOut.identity()
+	if !leftOK || !rightOK {
+		return unavailableFrom(leftOut, rightOut, "")
+	}
+	if reason == "" {
+		return provider.Equal(left.id, right.id), nil
+	}
+	return provider.Incomparable(left.id, right.id, reason)
 }
 
 // unavailable builds an unavailable comparison from each operand's final outcome. It
@@ -129,50 +147,7 @@ func unavailableFrom(leftOut, rightOut operandOutcome, fallback provider.Reason)
 	return provider.ComparisonUnavailable(leftID, rightID, reason)
 }
 
-// mergeCounts drains the canonical streaming merge into bounded per-kind counts. It
-// keeps only a fixed-size Summary — never a changed-path slice — so retained memory is
-// O(1) with respect to tree cardinality. Rename detection is disabled, so a rename
-// appears as a separate delete and add (rename pairing is outside this summary surface);
-// the returned counts must therefore carry no renamed entries. Renamed is the only summary
-// status without a counts field, and it is asserted zero below rather than discarded; every
-// other status the comparator produces — including a skipped transition — is carried
-// through, so the counts always sum to the change cardinality.
-//
-// Its three self-raised failures — a merge it cannot construct over two manifests it just
-// opened, a renamed count under disabled pairing, and a monotonic non-negative summary the
-// counts constructor rejects — are impossible internal states, not evidence degradation, so
-// they carry errInternalFault and propagate as faults. Manifest open/iteration failures and
-// interruption are left unmarked for the availability classifier.
-func (a *Assessor) mergeCounts(ctx context.Context, left, right *state.ResolvedState) (provider.Counts, error) {
-	lc, err := left.Manifest(ctx)
-	if err != nil {
-		return provider.Counts{}, err
-	}
-	rc, err := right.Manifest(ctx)
-	if err != nil {
-		_ = lc.Close()
-		return provider.Counts{}, err
-	}
-	// CompareStream takes ownership of lc and rc: its cursor's Close closes them, so we
-	// must not close them separately once it is constructed.
-	cur, err := compare.CompareStream(lc, rc, compare.Options{DetectRenames: false})
-	if err != nil {
-		_ = lc.Close()
-		_ = rc.Close()
-		return provider.Counts{}, fmt.Errorf("state provider: %w: constructing the non-rename merge over two opened manifests: %w", errInternalFault, err)
-	}
-	defer func() { _ = cur.Close() }()
-
-	var sum compare.Summary
-	for cur.Next() {
-		if cerr := ctx.Err(); cerr != nil {
-			return provider.Counts{}, cerr
-		}
-		sum.Add(cur.Change())
-	}
-	if cerr := cur.Err(); cerr != nil {
-		return provider.Counts{}, cerr
-	}
+func countsOf(sum compare.Summary) (provider.Counts, error) {
 	if sum.Renamed != 0 {
 		return provider.Counts{}, fmt.Errorf("state provider: %w: rename count %d with rename detection disabled", errInternalFault, sum.Renamed)
 	}

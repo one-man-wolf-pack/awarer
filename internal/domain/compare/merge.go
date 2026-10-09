@@ -147,6 +147,19 @@ func (m *mergeCursor) Next() bool {
 	}
 }
 
+func ComparePair(left, right worktree.ManifestRecord) (Change, bool) {
+	switch {
+	case left.IsZero() && right.IsZero():
+		return Change{}, false
+	case right.IsZero():
+		return deletedChange(nodeOf(left)), true
+	case left.IsZero():
+		return addedChange(nodeOf(right)), true
+	default:
+		return comparePresent(nodeOf(left), nodeOf(right))
+	}
+}
+
 // advance pulls the next record from cur into dst, recording the cursor's terminal
 // error (if any) on the merge. It returns whether a record was produced.
 func (m *mergeCursor) advance(cur worktree.ManifestCursor, dst *worktree.ManifestRecord) bool {

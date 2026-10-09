@@ -131,12 +131,14 @@ const (
 	CodeCheckpointManifestCorrupt    FindingCode = "checkpoint-manifest-corrupt"
 	CodeCheckpointMissingBlob        FindingCode = "checkpoint-missing-blob"
 	CodeCheckpointMissingManifest    FindingCode = "checkpoint-missing-manifest"
+	CodeCheckpointFrontierCorrupt    FindingCode = "checkpoint-frontier-corrupt"
 	CodeRunCorrupt                   FindingCode = "run-corrupt"
 	CodeRunIncompatibleFormat        FindingCode = "run-incompatible-format"
 	CodeRunPointerCorrupt            FindingCode = "run-pointer-corrupt"
 	CodeRunPayloadCorrupt            FindingCode = "run-payload-corrupt"
 	CodeRestoreRecoveryCorrupt       FindingCode = "restore-recovery-corrupt"
 	CodeRestoreRecoveryMissingBlob   FindingCode = "restore-recovery-missing-blob"
+	CodeRestoreRecoveryIncompatible  FindingCode = "restore-recovery-incompatible-format"
 	CodeIndexUnreadable              FindingCode = "index-unreadable"
 	CodeIndexSchemaInvalid           FindingCode = "index-schema-invalid"
 	CodeIndexStale                   FindingCode = "index-stale"
@@ -204,6 +206,7 @@ var findingCodes = []FindingCode{
 	CodeCheckpointManifestCorrupt,
 	CodeCheckpointMissingBlob,
 	CodeCheckpointMissingManifest,
+	CodeCheckpointFrontierCorrupt,
 	// run records
 	CodeRunCorrupt,
 	CodeRunIncompatibleFormat,
@@ -212,6 +215,7 @@ var findingCodes = []FindingCode{
 	// restore recovery observations
 	CodeRestoreRecoveryCorrupt,
 	CodeRestoreRecoveryMissingBlob,
+	CodeRestoreRecoveryIncompatible,
 	// the worktree index
 	CodeIndexUnreadable,
 	CodeIndexSchemaInvalid,

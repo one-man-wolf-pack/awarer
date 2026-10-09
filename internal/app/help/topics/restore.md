@@ -75,20 +75,36 @@ target: a change there is reported as `symlink-ancestor` instead of previewing a
 work that would fail. An unchanged path reached that way needs no mutation and is
 simply counted as already-matching scope.
 
-Deletion needs positive proof: the path must be currently observed and provably
-absent from a **policy-compatible** source. If the source was observed under a
-different scan policy, absence is not proof — the path may simply have been out
-of scope then — so deletions are not planned. Directory removal is empty-only and
-deepest-first; awa never recursively deletes a worktree path.
+Deletion needs positive proof: the path must be currently observed, the source
+must share the current scan policy (`policy-incompatible` otherwise), and the
+source's own recorded path coverage must prove the path was physically absent.
+Not appearing in a source is not proof: a path an ignore rule, scope, or protected
+name excluded was never looked at, so deleting it is blocked as `ignored-boundary`
+(or `skipped-boundary` below a skipped input) even when the rules never changed.
+Directory removal is empty-only and deepest-first; awa never recursively deletes a
+worktree path.
+
+A create checks the destination itself, without following links, while planning:
+a path the current policy hides but that exists on disk, or one below a hidden
+entry, is blocked as `ignored-boundary` in the preview instead of being
+overwritten.
 
 Ignored paths are outside awa's evidence boundary. They are never restored and
 never deleted for being absent from a source manifest.
+
+Checkpoints, runs, and recovery observations written before path coverage was
+recorded stay readable and keep restoring the bytes they own, but they cannot
+prove a path absent: an operation that depends on that is blocked as
+`absence-unproved`, and because one blocked path refuses the whole selection, so
+can `--all` or an undo from such a record. Narrow the selection to the paths that
+remain provable, or take a new checkpoint. `source_path_coverage` in `--json`
+reports `recorded` or `unknown` for the source.
 
 ## Blocked reasons
 
 When a path cannot be restored, the preview names why with a stable token:
 `hash-only-content`, `blob-missing`, `blob-corrupt`, `skipped-boundary`,
-`ignored-boundary`, `policy-incompatible`, `observation-unstable`,
+`ignored-boundary`, `policy-incompatible`, `absence-unproved`, `observation-unstable`,
 `out-of-proven-scope`, `path-conflict`, `root-escape`, `symlink-ancestor`, or
 `unsupported-entry-kind`. `--apply` refuses while any of them applies.
 
@@ -102,8 +118,9 @@ restore was going to change and holds no evidence about anything else.
 ## Undo: the recovery observation
 
 Before its first write, `--apply` durably records the exact current state it may
-replace or delete — with verified content — as an immutable **recovery
-observation**, and prints its `restore:<id>:before` reference:
+replace or delete — with verified content, and the confirmed absence of every path
+it may create — as an immutable **recovery observation**, and prints its
+`restore:<id>:before` reference:
 
 ```text
 recovery: restore:<operation-id>:before

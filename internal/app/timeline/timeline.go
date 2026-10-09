@@ -11,6 +11,7 @@ package timeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -111,10 +112,11 @@ type RunSummary struct {
 // readable. It deliberately carries no "undo available until" field — retention has
 // an explicit override, so a date here would be a promise awa cannot keep.
 type RestoreSummary struct {
-	ID        restore.OperationID
-	SourceRef string
-	Selection string
-	Corrupt   bool
+	ID           restore.OperationID
+	SourceRef    string
+	Selection    string
+	Corrupt      bool
+	Incompatible bool
 }
 
 // SourceSummaryLine renders "from <source-ref> covering <selection>" for the human
@@ -122,7 +124,7 @@ type RestoreSummary struct {
 // rather than in the renderer so the full timeline and any future restore
 // inspection surface describe a recovery observation the same way.
 func (s RestoreSummary) SourceSummaryLine() string {
-	if s.Corrupt || s.SourceRef == "" {
+	if s.Corrupt || s.Incompatible || s.SourceRef == "" {
 		return ""
 	}
 	if s.Selection == "" {
@@ -372,7 +374,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 // unreadable record still becomes an entry — labelled corrupt — because a record
 // that exists but cannot be read is exactly what a reader needs to see.
 func restoreEntry(f restore.RecoveryFinding) TimelineEntry {
-	sum := RestoreSummary{ID: f.ID, Corrupt: !f.Readable()}
+	incompatible := errors.Is(f.Err, restore.ErrIncompatibleRecoveryRecord)
+	sum := RestoreSummary{ID: f.ID, Corrupt: !f.Readable() && !incompatible, Incompatible: incompatible}
 	if f.Readable() {
 		sum.SourceRef = f.Record.Source().CanonicalRef()
 		sum.Selection = f.Record.Selection().String()

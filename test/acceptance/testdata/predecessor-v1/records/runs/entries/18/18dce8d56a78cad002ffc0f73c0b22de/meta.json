@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "id": "18dce8d56a78cad002ffc0f73c0b22de",
+  "key": "blake3:edcf341e2b6601dee5785c9d2d9ad439cb2ec86fd0df2eb23cddac1b96781545",
+  "started_at": "2026-10-09T16:19:15.098594Z",
+  "finished_at": "2026-10-09T16:19:15.102851Z",
+  "duration_ms": 4,
+  "exit": {
+    "kind": "normal",
+    "code": 0
+  },
+  "cache_decision": {
+    "cacheable": false,
+    "reason": "record-only"
+  },
+  "skipped": {
+    "count": 0,
+    "allowed": false
+  },
+  "key_input": {
+    "cache_schema_version": 1,
+    "awa_version": "v0.3.2",
+    "invocation_mode": "argv",
+    "command": {
+      "argv": [
+        "true"
+      ],
+      "raw_executable": "true",
+      "resolved_path": "/usr/bin/true",
+      "resolved_stat": "size=133184 mode=755 mtime=1790233837000000000"
+    },
+    "cwd": ".",
+    "input_tree_hash": "blake3:685bda111201d17751cfdc9931e52313afd6eb68701261cbb01815b3807cfd9a",
+    "effect": {
+      "status": "observed",
+      "signature": "blake3:949ed44061c3ca8384c691d84c05146b33c06f4de9589d485a423bc862b940c7",
+      "root_count": 16
+    },
+    "include_scope": [
+      "."
+    ],
+    "exclude_scope": [
+      ".git",
+      ".awa",
+      "node_modules",
+      ".next",
+      ".nuxt",
+      ".turbo",
+      ".cache",
+      "__pycache__",
+      ".pytest_cache",
+      ".mypy_cache",
+      ".ruff_cache",
+      ".venv",
+      "venv",
+      "target"
+    ],
+    "use_gitignore": false,
+    "use_awaignore": true,
+    "trust_mode": "normal",
+    "run_config_hash": "blake3:2d4fa568f8bd28745d692d37f1b8be750828e12776de356d1ee70b18e40553d1",
+    "env": [
+      {
+        "name": "AWA_RUN",
+        "presence": "set",
+        "identity": "blake3:d63bd9a826af91c1fea371965a64e11ee20f13e46b5f52c59901136605b3a487"
+      },
+      {
+        "name": "CI",
+        "presence": "unset"
+      },
+      {
+        "name": "HOME",
+        "presence": "set",
+        "identity": "blake3:eaf0cfd83fa8aab1a6f2db25dba0205a099817ae20c1b26dea6ecb6e319fdc25"
+      },
+      {
+        "name": "LANG",
+        "presence": "set",
+        "identity": "blake3:52cc39294b843f9b7e661c6f042a1a6f586f45feff42ad94463133afd215c37f"
+      },
+      {
+        "name": "LANGUAGE",
+        "presence": "set",
+        "identity": "blake3:5e9ff2a85515ace74dc9d3ca0b3934f872379f94657fb5abf0ce2b0c417e0a4f"
+      },
+      {
+        "name": "LC_ALL",
+        "presence": "set",
+        "identity": "blake3:52cc39294b843f9b7e661c6f042a1a6f586f45feff42ad94463133afd215c37f"
+      },
+      {
+        "name": "LC_COLLATE",
+        "presence": "unset"
+      },
+      {
+        "name": "LC_CTYPE",
+        "presence": "unset"
+      },
+      {
+        "name": "LC_MESSAGES",
+        "presence": "unset"
+      },
+      {
+        "name": "LC_MONETARY",
+        "presence": "unset"
+      },
+      {
+        "name": "LC_NUMERIC",
+        "presence": "unset"
+      },
+      {
+        "name": "LC_TIME",
+        "presence": "unset"
+      },
+      {
+        "name": "LOGNAME",
+        "presence": "set",
+        "identity": "blake3:f08b079a722ab85fde2b219d921aab7fcfebbc6b0dc456e297b7cb187a7f8226"
+      },
+      {
+        "name": "NODE_ENV",
+        "presence": "unset"
+      },
+      {
+        "name": "PATH",
+        "presence": "set",
+        "identity": "blake3:ed358162350d0ce7f294ba1ae85688bc9295295ef9214644aebd1f9749750db0"
+      },
+      {
+        "name": "SHELL",
+        "presence": "set",
+        "identity": "blake3:0f1132da172f280ea0fbeba77decba256bcb237b0875d17e4053531a446cfd0a"
+      },
+      {
+        "name": "TEMP",
+        "presence": "unset"
+      },
+      {
+        "name": "TMP",
+        "presence": "unset"
+      },
+      {
+        "name": "TMPDIR",
+        "presence": "set",
+        "identity": "blake3:3236d93d0a4204da9e53c5931f97985b3a2bc54aaa447ee29e1646bb2823926b"
+      },
+      {
+        "name": "USER",
+        "presence": "set",
+        "identity": "blake3:f08b079a722ab85fde2b219d921aab7fcfebbc6b0dc456e297b7cb187a7f8226"
+      }
+    ],
+    "platform": {
+      "goos": "darwin",
+      "goarch": "arm64"
+    },
+    "stdin_mode": "pipe",
+    "tty_allowed": false,
+    "allow_skipped_inputs": false
+  },
+  "stdout": {
+    "original_bytes": 0,
+    "stored_bytes": 0,
+    "truncated": false,
+    "omitted_bytes": 0,
+    "truncation_policy": "none",
+    "hash": "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+    "file": "stdout.log"
+  },
+  "stderr": {
+    "original_bytes": 0,
+    "stored_bytes": 0,
+    "truncated": false,
+    "omitted_bytes": 0,
+    "truncation_policy": "none",
+    "hash": "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+    "file": "stderr.log"
+  },
+  "reuse": {
+    "kind": "record-only",
+    "reason": "record-only"
+  },
+  "mutation": "unchanged",
+  "effect_guard": "unchanged",
+  "observations": {
+    "before": {
+      "file": "before.manifest.jsonl",
+      "tree_hash": "blake3:685bda111201d17751cfdc9931e52313afd6eb68701261cbb01815b3807cfd9a",
+      "record_count": 5,
+      "scan_config_hash": "blake3:ff7f9eb60ae5739ab3acfc973333fb163a4a3701aa72549ad06103301748a644"
+    },
+    "after": {
+      "file": "after.manifest.jsonl",
+      "tree_hash": "blake3:685bda111201d17751cfdc9931e52313afd6eb68701261cbb01815b3807cfd9a",
+      "record_count": 5,
+      "scan_config_hash": "blake3:ff7f9eb60ae5739ab3acfc973333fb163a4a3701aa72549ad06103301748a644"
+    }
+  }
+}

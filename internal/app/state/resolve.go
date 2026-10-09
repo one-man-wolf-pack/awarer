@@ -198,7 +198,11 @@ type ResolvedState struct {
 	// always travels with the record rather than being looked up separately.
 	recovery      restore.RecoveryObservation
 	recoveryScope restore.CoveredScopeStream
+
+	coverage worktree.Coverage
 }
+
+func (s *ResolvedState) Coverage() worktree.Coverage { return s.coverage }
 
 // Close releases resources held by the resolved state. For a "now" state that is the
 // ephemeral scan's Result, whose manifest may be backed by temp spill files; for a
@@ -541,6 +545,7 @@ func (r *Resolver) resolveRunObservation(ctx context.Context, ref Ref) (*Resolve
 		runReuse:      read.Reuse().String(),
 		runReuseWhy:   read.Reuse().Reason().String(),
 		runScanConfig: read.ScanConfigHash(),
+		coverage:      read.Coverage(),
 	}, nil
 }
 
@@ -577,6 +582,7 @@ func (r *Resolver) resolveRestoreObservation(ctx context.Context, ref Ref) (*Res
 		hash:          r.deps.Hasher,
 		recovery:      record,
 		recoveryScope: read.Scope(),
+		coverage:      record.Coverage(),
 	}, nil
 }
 
@@ -696,6 +702,10 @@ func (r *Resolver) fromHeader(h checkpoint.CheckpointHeader, requested string) (
 	if err != nil {
 		return nil, err
 	}
+	coverage, err := r.deps.Checkpoints.Coverage(h.ID)
+	if err != nil {
+		return nil, err
+	}
 	header := h
 	return &ResolvedState{
 		Kind:         KindCheckpoint,
@@ -706,6 +716,7 @@ func (r *Resolver) fromHeader(h checkpoint.CheckpointHeader, requested string) (
 		manifest:     manifest,
 		blobs:        r.deps.Blobs,
 		hash:         r.deps.Hasher,
+		coverage:     coverage,
 	}, nil
 }
 
@@ -748,5 +759,6 @@ func (r *Resolver) resolveNow(ctx context.Context, now NowContext) (*ResolvedSta
 		manifest:     res.Manifest(),
 		now:          res,
 		hash:         r.deps.Hasher,
+		coverage:     res.Coverage(),
 	}, nil
 }

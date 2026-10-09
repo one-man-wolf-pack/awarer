@@ -65,7 +65,13 @@ func benchHeader(b *testing.B, f checkpointFixture) checkpoint.CheckpointHeader 
 	if err != nil {
 		b.Fatal(err)
 	}
-	return f.build.Header(red.Hash, checkpoint.StatsFromReduced(red.Stats), red.Count)
+	h := f.build.Header(red.Hash, checkpoint.StatsFromReduced(red.Stats), red.Count)
+	empty, err := worktree.ReduceFrontier(blake3hash.New(), worktree.NewFrontierSliceCursor(nil))
+	if err != nil {
+		b.Fatal(err)
+	}
+	h.Frontier = &empty
+	return h
 }
 
 func BenchmarkEncodeHeader(b *testing.B) {

@@ -47,3 +47,15 @@ type canonicalStream struct {
 func (s canonicalStream) Open(context.Context) (worktree.ManifestCursor, error) {
 	return CanonicalCursor(s.entries, s.skipped), nil
 }
+
+func FrontierStream(records ...worktree.FrontierRecord) worktree.FrontierStream {
+	sorted := append([]worktree.FrontierRecord(nil), records...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path.Less(sorted[j].Path) })
+	return frontierStream{records: sorted}
+}
+
+type frontierStream struct{ records []worktree.FrontierRecord }
+
+func (s frontierStream) Open(context.Context) (worktree.FrontierCursor, error) {
+	return worktree.OrderedFrontier(worktree.NewFrontierSliceCursor(s.records)), nil
+}

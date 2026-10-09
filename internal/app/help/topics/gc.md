@@ -68,6 +68,8 @@ run-corrupt                 a run record that cannot be planned safely
 run-incompatible            a run record in a schema this awa cannot read
 restore-corrupt             a recovery observation that cannot be read, so blob
                             reachability is incomplete and the sweep stands down
+restore-incompatible        a recovery observation in a format this awa cannot
+                            read; it blocks the sweep the same way
 ```
 
 Skipped — excluded by a subsystem filter:
@@ -158,7 +160,8 @@ obstruction", not as an estimate; clear the blocker and re-run
 `gc` never removes a record it cannot read. A record in a schema this awa does
 not speak is intact evidence with an unknown reference model: nothing can prove
 what it points at, so deleting it could orphan or destroy referenced content. It
-is retained under `checkpoint-incompatible` or `run-incompatible`, the blob sweep
+is retained under `checkpoint-incompatible`, `run-incompatible`, or
+`restore-incompatible`, the blob sweep
 stands down, and `awa gc` exits with the state-action-required code. Resolving it
 is a deliberate act: drop a single stored run with `awa run rm <id>`, or reset the
 store by deleting the evidence directories under `.awa/` and running `awa init`

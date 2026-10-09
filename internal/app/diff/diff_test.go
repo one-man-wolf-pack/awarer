@@ -116,7 +116,7 @@ func (f fixture) putCheckpoint(t *testing.T, idByte byte, created time.Time, pat
 		OmittedStatFields:    worktree.FieldSet(0).With(worktree.FieldCtime).With(worktree.FieldDev).With(worktree.FieldIno).With(worktree.FieldNlink),
 	}
 	// The store derives the tree hash and stats from the records it streams.
-	if _, err := f.repo.PutManifest(context.Background(), build, scantest.CanonicalStream([]worktree.Entry{entry}, nil)); err != nil {
+	if _, err := f.repo.PutManifest(context.Background(), build, scantest.CanonicalStream([]worktree.Entry{entry}, nil), scantest.FrontierStream()); err != nil {
 		t.Fatalf("PutManifest: %v", err)
 	}
 }

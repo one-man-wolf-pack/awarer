@@ -52,6 +52,8 @@ func observationWithFile(t *testing.T, h hashing.Hasher) (runcache.RunObservatio
 		After:                scantest.CanonicalStream(entries, nil),
 		BeforeScanConfigHash: cfg,
 		AfterScanConfigHash:  cfg,
+		BeforeFrontier:       scantest.FrontierStream(),
+		AfterFrontier:        scantest.FrontierStream(),
 	}, entries
 }
 

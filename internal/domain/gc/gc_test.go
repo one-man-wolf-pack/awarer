@@ -307,8 +307,8 @@ func assertPanics(t *testing.T, name string, fn func()) {
 // documentation coverage matrix — sees.
 func TestRetentionReasonsIsTheClosedVocabulary(t *testing.T) {
 	reasons := RetentionReasons()
-	if len(reasons) != 23 {
-		t.Errorf("RetentionReasons() has %d entries, want 23 — update the documentation coverage matrix too", len(reasons))
+	if len(reasons) != 24 {
+		t.Errorf("RetentionReasons() has %d entries, want 24 — update the documentation coverage matrix too", len(reasons))
 	}
 	seen := map[RetentionReason]bool{}
 	for _, r := range reasons {

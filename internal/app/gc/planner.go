@@ -577,6 +577,11 @@ func (p *planner) planRestores() (map[string]bool, error) {
 		path := p.restorePath(idStr)
 		if !f.Readable() {
 			p.restoreReadFailed = true
+			if errors.Is(f.Err, restoredom.ErrIncompatibleRecoveryRecord) {
+				p.add(gcdom.KindRestore, gcdom.ReasonRestoreIncompatible, idStr, path,
+					"recovery observation is in a format this build cannot read: "+f.Err.Error(), gcdom.UnmeasuredBytes())
+				continue
+			}
 			p.add(gcdom.KindRestore, gcdom.ReasonRestoreCorrupt, idStr, path,
 				"recovery observation is corrupt or unreadable: "+f.Err.Error(), gcdom.UnmeasuredBytes())
 			continue

@@ -126,6 +126,8 @@ type CheckpointHeader struct {
 	Git                   *GitMetadata
 	Stats                 CheckpointStats
 	RecordCount           int
+	// Frontier is nil for a predecessor published without coverage evidence.
+	Frontier *worktree.FrontierDigest
 }
 
 // CompareNewestFirst is the checkpoint domain's single answer to "which of these two
@@ -201,6 +203,9 @@ func (h CheckpointHeader) Validate() error {
 	}
 	if want := h.Stats.Files + h.Stats.Dirs + h.Stats.Symlinks + h.Stats.Skipped; h.RecordCount != want {
 		return fmt.Errorf("checkpoint %s record count %d does not match stats total %d", h.ID, h.RecordCount, want)
+	}
+	if f := h.Frontier; f != nil && (f.Hash.IsZero() || f.Count < 0) {
+		return fmt.Errorf("checkpoint %s has an invalid exclusion-frontier digest", h.ID)
 	}
 	return nil
 }

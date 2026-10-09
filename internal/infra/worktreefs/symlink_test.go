@@ -49,7 +49,7 @@ func collectNodes(t *testing.T, root string, cfg config.Config) map[string]workt
 	err := w.Walk(context.Background(), paths.New(root), cfg.HistoryScanScope(), func(n worktree.Node) error {
 		out[n.Path.String()] = n
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}

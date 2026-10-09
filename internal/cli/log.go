@@ -494,10 +494,11 @@ type timelineEntryView struct {
 	// Reuse, ReuseReason, and Mutation name the run's reuse classification and the
 	// mutation guard's outcome with the same field names the run/log/show JSON uses, so
 	// the concepts read identically across every run-bearing document.
-	Reuse       string `json:"reuse,omitempty"`
-	ReuseReason string `json:"reuse_reason,omitempty"`
-	Mutation    string `json:"mutation,omitempty"`
-	Corrupt     bool   `json:"corrupt,omitempty"`
+	Reuse        string `json:"reuse,omitempty"`
+	ReuseReason  string `json:"reuse_reason,omitempty"`
+	Mutation     string `json:"mutation,omitempty"`
+	Corrupt      bool   `json:"corrupt,omitempty"`
+	Incompatible bool   `json:"incompatible,omitempty"`
 	// git commit boundary (kind == "git_commit"). A context marker, not an awa state
 	// reference: it carries no "ref" field precisely because it is not addressable.
 	GitCommit string `json:"git_commit,omitempty"`
@@ -605,7 +606,8 @@ func timelineView(res timeline.Result, limit int) timelineDoc {
 			r := e.Restore
 			ev.RestoreID = r.ID.String()
 			ev.Corrupt = r.Corrupt
-			if !r.Corrupt {
+			ev.Incompatible = r.Incompatible
+			if !r.Corrupt && !r.Incompatible {
 				ev.RestoreSource = r.SourceRef
 				ev.RestoreSelection = r.Selection
 			}
@@ -649,6 +651,10 @@ func renderTimelineHuman(w *output.Writer, res timeline.Result, td domainconfig.
 			line := e.Ref + "  " + at + "  " + e.Kind.Label()
 			if r.Corrupt {
 				w.Line(line + "  (corrupt)")
+				continue
+			}
+			if r.Incompatible {
+				w.Line(line + "  (format not readable by this awa)")
 				continue
 			}
 			if r.SourceSummaryLine() != "" {

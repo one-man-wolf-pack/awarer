@@ -237,8 +237,8 @@ func (a *Assessor) verifyReadable(ctx context.Context, rs *state.ResolvedState) 
 	return "", nil
 }
 
-// verifyManifest streams a stored state's manifest through its verifying cursor to
-// confirm it is readable and internally consistent. A missing manifest payload surfaces
+// verifyManifest streams a stored state's manifest and recorded frontier through their
+// verifying cursors to confirm they are readable and internally consistent. A missing manifest payload surfaces
 // as manifest-unavailable and corrupt/truncated content as metadata-corrupt, so an
 // unreadable manifest yields an unavailable assessment rather than a false resolved. A
 // "now" state's manifest is the fresh scan just taken, readable by construction, so it is
@@ -248,6 +248,27 @@ func verifyManifest(ctx context.Context, rs *state.ResolvedState) error {
 		return nil
 	}
 	cur, err := rs.Manifest(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cur.Close() }()
+	for cur.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if err := cur.Err(); err != nil {
+		return err
+	}
+	return verifyCoverage(ctx, rs)
+}
+
+func verifyCoverage(ctx context.Context, rs *state.ResolvedState) error {
+	stream, _, ok := rs.Coverage().Frontier()
+	if !ok {
+		return nil
+	}
+	cur, err := stream.Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -331,7 +352,7 @@ func identityFrom(rs *state.ResolvedState) (provider.Identity, error) {
 	if err != nil {
 		return provider.Identity{}, err
 	}
-	bnd, err := provider.NewEvidenceBoundary(rs.Skipped())
+	bnd, err := provider.NewEvidenceBoundary(rs.Skipped(), rs.Coverage().Kind())
 	if err != nil {
 		return provider.Identity{}, err
 	}
