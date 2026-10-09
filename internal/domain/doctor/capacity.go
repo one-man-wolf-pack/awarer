@@ -57,9 +57,13 @@ const (
 	GapDepthLimit CapacityGap = "depth-limit"
 	// GapUnreadableEntries: some entries could not be stat'ed, opened, or listed.
 	GapUnreadableEntries CapacityGap = "unreadable-entries"
+	// GapAggregateBudget: a watched-root audit had spent the work budget it shares
+	// across roots, so this root was sized only partly or not at all. The store
+	// measurement, a single tree, never reports it.
+	GapAggregateBudget CapacityGap = "aggregate-budget"
 )
 
-var capacityGaps = []CapacityGap{GapUnavailable, GapWorkBudget, GapDepthLimit, GapUnreadableEntries}
+var capacityGaps = []CapacityGap{GapUnavailable, GapWorkBudget, GapAggregateBudget, GapDepthLimit, GapUnreadableEntries}
 
 // CapacityGaps returns the closed gap vocabulary in canonical order.
 func CapacityGaps() []CapacityGap { return append([]CapacityGap(nil), capacityGaps...) }
@@ -103,7 +107,7 @@ func MeasuredStoreCapacity(observed, threshold int64, gaps ...CapacityGap) (Stor
 	}
 	present := make(map[CapacityGap]bool, len(gaps))
 	for _, g := range gaps {
-		if g == GapUnavailable || !g.valid() {
+		if g == GapUnavailable || g == GapAggregateBudget || !g.valid() {
 			return StoreCapacity{}, fmt.Errorf("%q is not a gap of a measured store", g)
 		}
 		present[g] = true

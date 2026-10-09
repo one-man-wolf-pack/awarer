@@ -137,6 +137,7 @@ func Sections() []Section {
 			Intro: "Diagnostic only: these settings change what doctor reports, never observation, reuse, retention, or evidence identity.",
 			Fields: []Field{
 				{"store_warning_size", d.Doctor.StoreWarningSize.String(), "byte size (B/KiB/MiB/GiB/TiB) or \"off\"", "Logical bytes of the regular files under .awa/ at which plain doctor reports a non-repairable store-capacity-threshold warning (exit 0). It is not disk usage or bytes gc would reclaim. \"off\" disables the advisory and its sizing walk; zero is rejected.", "Raise or lower to match how much local evidence this project expects to keep, or set \"off\" to skip sizing."},
+				{"watched_root_warning_size", d.Doctor.WatchedRootWarningSize.String(), "byte size (B/KiB/MiB/GiB/TiB) or \"off\"", "Logical bytes at which one watched effect root measured by `awa doctor --capacity` reports a non-repairable watched-root-capacity-threshold warning (exit 0). There is no default size: \"off\" reports sizes without warning, and never skips a requested audit. Plain doctor does not measure these roots; zero is rejected.", "Set a size when this project's generated or dependency output should stay below it."},
 			},
 		},
 		{

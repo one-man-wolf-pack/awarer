@@ -753,7 +753,7 @@
       "name": "doctor",
       "summary": "diagnose project and store health",
       "usage": [
-        "doctor [--repair] [--strict]"
+        "doctor [--repair] [--capacity] [--strict]"
       ],
       "topic": "doctor",
       "exit_note": "exit code: the diagnosis, not an awa failure. Healthy or warnings-only exits 0; unrepaired errors or unrepaired repairable findings exit 5.",
@@ -770,6 +770,13 @@
             "--repair"
           ],
           "desc": "restore safe awa-owned state where possible",
+          "takes_value": false
+        },
+        {
+          "spellings": [
+            "--capacity"
+          ],
+          "desc": "also audit the logical size of watched effect roots",
           "takes_value": false
         }
       ]

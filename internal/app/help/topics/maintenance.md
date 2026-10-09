@@ -11,6 +11,7 @@ is a separate decision you make and justify afterwards.
 ```text
 awa help config                # config schema, precedence, and when to change it
 awa doctor                     # integrity and privacy findings, store size
+awa doctor --capacity          # also the size of watched generated-output roots
 awa config validate            # every config layer parses and is accepted
 awa config effective           # the values actually in force, and their origin
 awa status                     # baseline, drift, and reuse at a glance
@@ -36,10 +37,13 @@ metadata-preserving edits or a crash, not a routine step. Neither
 git guard, permissions, and a bounded set of privacy hints. A clean result says
 those checks found nothing. Its `store:` line is the logical size of `.awa/` under
 a bounded walk; a `store-capacity-threshold` warning says that size reached
-`doctor.store_warning_size`, not that anything is damaged or safe to delete. It
-does not say the input scope is complete, that every environment variable a
-command reads is allowlisted, that the cache strategy suits the project, or that
-stored logs and older checkpoints are free of secrets. Treat it as one input to the review, never as its conclusion.
+`doctor.store_warning_size`, not that anything is damaged or safe to delete.
+`--capacity` sizes only the directories the effect-root selectors name, within its
+bounds; it is not a disk report (use `du` or similar), and neither doctor nor `gc`
+removes project output. A clean doctor result does not say the input scope is
+complete, that every environment variable a command reads is allowlisted, that the
+cache strategy suits the project, or that stored logs and older checkpoints are
+free of secrets. Treat it as one input to the review, never as its conclusion.
 
 ## Inputs, history, retention, and effects are different choices
 

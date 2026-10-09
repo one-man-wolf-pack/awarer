@@ -20,6 +20,7 @@ type DoctorResult struct {
 	passed   int
 	findings []Finding
 	capacity StoreCapacity
+	watched  WatchedRootAudit
 }
 
 // NewResult builds a result from a pass count and the findings recorded. The
@@ -42,6 +43,18 @@ func (r DoctorResult) WithStoreCapacity(c StoreCapacity) DoctorResult {
 
 // StoreCapacity returns the store capacity advisory's measurement.
 func (r DoctorResult) StoreCapacity() StoreCapacity { return r.capacity }
+
+// WithWatchedRoots returns the result carrying the explicit watched-root audit. Like
+// the store measurement it is reported beside the findings, and a result without one
+// is an unrequested audit.
+func (r DoctorResult) WithWatchedRoots(a WatchedRootAudit) DoctorResult {
+	r.watched = a
+	return r
+}
+
+// WatchedRoots returns the watched-root audit; its Requested is false unless
+// doctor --capacity ran it.
+func (r DoctorResult) WatchedRoots() WatchedRootAudit { return r.watched }
 
 // Findings returns the recorded findings. The returned slice is a copy.
 func (r DoctorResult) Findings() []Finding {

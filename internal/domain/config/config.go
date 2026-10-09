@@ -261,10 +261,14 @@ type Locks struct {
 
 // Doctor controls doctor's diagnostics that are advisory rather than integrity
 // checks. StoreWarningSize is the logical-byte size of .awa/ at which doctor warns;
-// "off" disables the advisory and its sizing walk. It is diagnostic only: it feeds no
+// "off" disables the advisory and its sizing walk. WatchedRootWarningSize is the
+// logical-byte size at which one root measured by the explicit watched-root audit
+// (doctor --capacity) warns; it defaults to "off", and off suppresses only the
+// warning, never the requested measurement. Both are diagnostic only: they feed no
 // observation, reuse, retention, or evidence identity.
 type Doctor struct {
-	StoreWarningSize ByteThreshold
+	StoreWarningSize       ByteThreshold
+	WatchedRootWarningSize ByteThreshold
 }
 
 // The product default excludes are layered (baseline and history excludes).
@@ -345,6 +349,39 @@ func EffectiveEffectRoots(runExtra []string) []string {
 	out = append(out, effectRootDefaults...)
 	out = append(out, runExtra...)
 	return out
+}
+
+// EffectRootMatcher is the one owner of effect-root selector matching: a selector
+// without a slash is a directory basename matched wherever it occurs, and one with a
+// slash is a project-relative path matched only there. Every traversal that selects
+// watched directories — the run's effect observation and doctor's watched-root audit —
+// asks it, so the two can never disagree about which directories a selector names.
+// Matching is exact string equality: an encountered name is compared, never parsed
+// through selector grammar, so a native name no selector could spell is simply not
+// matched. Pruning, protected names, and traversal policy stay with each walk.
+type EffectRootMatcher struct {
+	names map[string]bool
+	paths map[string]bool
+}
+
+// NewEffectRootMatcher indexes selectors, typically the EffectiveEffectRoots list.
+// Duplicates collapse, so a directory several selectors cover matches once.
+func NewEffectRootMatcher(selectors []string) EffectRootMatcher {
+	m := EffectRootMatcher{names: make(map[string]bool), paths: make(map[string]bool)}
+	for _, s := range selectors {
+		if strings.Contains(s, "/") {
+			m.paths[s] = true
+		} else {
+			m.names[s] = true
+		}
+	}
+	return m
+}
+
+// Selects reports whether the directory whose own name is name and whose
+// slash-separated project-relative path is rel is selected.
+func (m EffectRootMatcher) Selects(name, rel string) bool {
+	return m.names[name] || m.paths[rel]
 }
 
 // GeneratedOutputDirs returns the set of directory basenames awa treats as
@@ -544,7 +581,8 @@ func Defaults() Config {
 			Timeout: Duration(5 * 1e9), // 5s
 		},
 		Doctor: Doctor{
-			StoreWarningSize: ThresholdAt(1 * giB),
+			StoreWarningSize:       ThresholdAt(1 * giB),
+			WatchedRootWarningSize: ThresholdOff(),
 		},
 		UI: UI{
 			Time: DefaultTimeDisplay(),
@@ -643,6 +681,9 @@ func (c Config) Validate() error {
 	}
 	if t := c.Doctor.StoreWarningSize; t.Enabled() && t.Size() <= 0 {
 		p = append(p, "doctor.store_warning_size must be positive or \"off\"")
+	}
+	if t := c.Doctor.WatchedRootWarningSize; t.Enabled() && t.Size() <= 0 {
+		p = append(p, "doctor.watched_root_warning_size must be positive or \"off\"")
 	}
 	if len(p) > 0 {
 		return &ValidationError{Problems: p}

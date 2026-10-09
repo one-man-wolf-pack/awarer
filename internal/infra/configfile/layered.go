@@ -93,7 +93,8 @@ type overlayLocks struct {
 }
 
 type overlayDoctor struct {
-	StoreWarningSize *string `toml:"store_warning_size"`
+	StoreWarningSize       *string `toml:"store_warning_size"`
+	WatchedRootWarningSize *string `toml:"watched_root_warning_size"`
 }
 
 type overlayUI struct {
@@ -471,6 +472,14 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 			}
 			cfg.Doctor.StoreWarningSize = v
 			origins["doctor.store_warning_size"] = layer
+		}
+		if d.WatchedRootWarningSize != nil {
+			v, err := config.ParseByteThreshold(*d.WatchedRootWarningSize)
+			if err != nil {
+				return layerErr(layer, path, "doctor.watched_root_warning_size", err)
+			}
+			cfg.Doctor.WatchedRootWarningSize = v
+			origins["doctor.watched_root_warning_size"] = layer
 		}
 	}
 

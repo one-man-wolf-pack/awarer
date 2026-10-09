@@ -359,3 +359,75 @@ func singleRunMetaFile(t *testing.T, root string) string {
 	}
 	return candidates[0]
 }
+
+// TestDoctorWatchedRootAudit drives the opt-in audit end to end: plain doctor reports
+// none, --capacity measures a watched root and warns at the configured threshold with
+// exit 0, --repair --capacity removes no output, and path operands are refused.
+func TestDoctorWatchedRootAudit(t *testing.T) {
+	root := initProject(t)
+	write(t, root, "awa.toml", "[doctor]\nwatched_root_warning_size = \"64B\"\n")
+	write(t, root, "dist/bundle.js", strings.Repeat("x", 100))
+
+	code, stdout, _ := awa(t, root, "doctor", "--json")
+	if code != 0 || !strings.Contains(stdout, `"watched_root_capacity": null`) {
+		t.Fatalf("plain doctor (exit %d) must carry a null audit:\n%s", code, stdout)
+	}
+
+	code, stdout, _ = awa(t, root, "doctor", "--capacity", "--json")
+	if code != 0 {
+		t.Fatalf("doctor --capacity exit = %d, want 0\n%s", code, stdout)
+	}
+	var env struct {
+		Data struct {
+			Health   string `json:"health"`
+			Findings []struct {
+				Code       string `json:"code"`
+				Subject    string `json:"subject"`
+				Repairable bool   `json:"repairable"`
+			} `json:"findings"`
+			StoreCapacity *struct {
+				Measurement string `json:"measurement"`
+			} `json:"store_capacity"`
+			Watched *struct {
+				Search struct {
+					Complete bool `json:"complete"`
+				} `json:"search"`
+				RootsTotal *int `json:"roots_total"`
+				Roots      []struct {
+					Path          string `json:"path"`
+					Measurement   string `json:"measurement"`
+					ObservedBytes *int64 `json:"observed_bytes"`
+				} `json:"roots"`
+			} `json:"watched_root_capacity"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("invalid doctor JSON: %v\n%s", err, stdout)
+	}
+	w := env.Data.Watched
+	if w == nil || !w.Search.Complete || w.RootsTotal == nil || *w.RootsTotal != 1 || len(w.Roots) != 1 ||
+		w.Roots[0].Path != "dist" || w.Roots[0].Measurement != "exact" || w.Roots[0].ObservedBytes == nil || *w.Roots[0].ObservedBytes != 100 {
+		t.Fatalf("watched_root_capacity = %+v, want dist exact at 100 bytes from a complete search", w)
+	}
+	if env.Data.StoreCapacity == nil || env.Data.StoreCapacity.Measurement != "exact" {
+		t.Errorf("store_capacity = %+v, want the store measurement unchanged beside the audit", env.Data.StoreCapacity)
+	}
+	if env.Data.Health != "warning" || len(env.Data.Findings) != 1 || env.Data.Findings[0].Code != "watched-root-capacity-threshold" ||
+		env.Data.Findings[0].Subject != "dist" || env.Data.Findings[0].Repairable {
+		t.Fatalf("health %q findings %+v, want one non-repairable watched-root warning", env.Data.Health, env.Data.Findings)
+	}
+
+	code, stdout, _ = awa(t, root, "doctor", "--repair", "--capacity")
+	if code != 0 || !strings.Contains(stdout, "watched roots: 1 found (search complete)") {
+		t.Fatalf("doctor --repair --capacity exit = %d\n%s", code, stdout)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "dist", "bundle.js")); err != nil || len(data) != 100 {
+		t.Fatalf("dist/bundle.js after --repair --capacity: %d bytes, %v; want it untouched", len(data), err)
+	}
+
+	for _, args := range [][]string{{"doctor", "--capacity", "dist"}, {"doctor", "--capacity=yes"}} {
+		if code, _, _ := awa(t, root, args...); code != 2 {
+			t.Errorf("awa %v exit = %d, want usage error 2", args, code)
+		}
+	}
+}

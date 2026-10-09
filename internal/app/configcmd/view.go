@@ -114,10 +114,10 @@ type LocksView struct {
 	Timeout string `json:"timeout"`
 }
 
-// DoctorView shows doctor's advisory settings. StoreWarningSize is a byte size or
-// "off".
+// DoctorView shows doctor's advisory settings. Each is a byte size or "off".
 type DoctorView struct {
-	StoreWarningSize string `json:"store_warning_size"`
+	StoreWarningSize       string `json:"store_warning_size"`
+	WatchedRootWarningSize string `json:"watched_root_warning_size"`
 }
 
 // NewView projects a domain config into its string-rendered view. Slice fields
@@ -178,7 +178,8 @@ func NewView(c config.Config) View {
 			Timeout: c.Locks.Timeout.String(),
 		},
 		Doctor: DoctorView{
-			StoreWarningSize: c.Doctor.StoreWarningSize.String(),
+			StoreWarningSize:       c.Doctor.StoreWarningSize.String(),
+			WatchedRootWarningSize: c.Doctor.WatchedRootWarningSize.String(),
 		},
 		UI: UIView{
 			Time: c.UI.Time.String(),

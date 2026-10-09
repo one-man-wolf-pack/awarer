@@ -1,7 +1,7 @@
 # awa doctor — diagnose and repair local state
 
 ```text
-awa doctor [--repair] [--strict]
+awa doctor [--repair] [--capacity] [--strict]
 ```
 
 `awa doctor` inspects the durable `.awa/` state — the checkpoint store, blob
@@ -12,11 +12,13 @@ a secret-looking top-level file a checkpoint would store bytes for, overly broad
 `.awa/` permissions, and nested or ancestor `.awa` markers (see
 [awa help privacy](privacy.md)). Separately from those integrity and privacy
 checks, it reports how much the `.awa/` store holds and warns when that reaches a
-configurable size (see "Store size advisory" below).
+configurable size (see "Store size advisory" below); `--capacity` also sizes the
+watched generated-output roots (see "Watched-root audit" below).
 
 ```text
 awa doctor              # report health and any findings
 awa doctor --repair     # also perform the safe, mechanical repairs
+awa doctor --capacity   # also size the watched generated-output roots
 awa doctor --strict     # recompute hashes instead of trusting stat signatures
 awa doctor --json       # machine-readable findings (severity, subsystem, code)
 ```
@@ -71,6 +73,9 @@ nested-*, ancestor-*          another .awa marker below or above this root, or a
                               nested-marker scan that could not complete
 store-capacity-threshold      the .awa/ store's logical bytes reached
                               doctor.store_warning_size (a warning; exit 0)
+watched-root-capacity-threshold
+                              a watched root's logical bytes reached
+                              doctor.watched_root_warning_size (a warning; exit 0)
 repair-failed                 a repair was attempted and did not succeed
 ```
 
@@ -116,6 +121,34 @@ at least that much. A partial figure below it does not show the store is small.
 Files that change during the walk are counted as seen, not as an atomic snapshot.
 Sizing has its own budget and never shortens the integrity checks; an interrupted
 doctor exits as interrupted rather than reporting a partial size.
+
+## Watched-root audit (--capacity)
+
+`awa doctor --capacity` adds a `watched roots:` summary (JSON:
+`watched_root_capacity`, `null` without the flag). It searches for the real
+directories the effect-root selectors name — the built-ins and
+`[run].extra_effect_roots` (see [awa help run](run.md)) — and sizes each like the
+store: logical lengths of regular files, no file read, symlinks and `.awa`/`.git`
+never entered. A root nested in another root counts once, inside the outer one. It
+takes no paths and does not see the rest of the worktree or the disk; use system
+tools such as `du` for that.
+
+Three bounds are reported separately. The search stops after 2,000,000 entries or
+100,000 directories (`work-budget`) and notes unreadable directories
+(`unreadable-entries`); when incomplete, the found count is not a total. Each root
+is `exact` (0 means empty), `partial` — a lower bound after 1,000,000 entries
+(`work-budget`), 64 levels (`depth-limit`), 4,000,000 entries across all roots
+(`aggregate-budget`), or unreadable entries — or `unmeasured` (`unavailable`, or
+`aggregate-budget` already spent). Only the 20 found roots with the largest observed figures are listed — a partial
+figure is a lower bound, so this is no ranking of actual sizes — and
+the omitted count is given; "none found" from a complete search means no matching real directory,
+not that the project has no output.
+
+There is no default size warning. Set `[doctor] watched_root_warning_size` to warn
+per root at or above that size, partial figures included; a partial figure below
+it is not compliance. The warning is not repairable and leaves exit 0, and
+`--repair --capacity` repairs only `.awa/` state: `gc` manages awa's records, never
+project output.
 
 ## What --repair will and will not do
 

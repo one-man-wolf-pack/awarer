@@ -133,6 +133,9 @@ var keySpecs = []keySpec{
 	{"diff.algorithm", func(a, b Config) bool { return a.Diff.Algorithm != b.Diff.Algorithm }},
 	{"locks.timeout", func(a, b Config) bool { return a.Locks.Timeout != b.Locks.Timeout }},
 	{"doctor.store_warning_size", func(a, b Config) bool { return a.Doctor.StoreWarningSize != b.Doctor.StoreWarningSize }},
+	{"doctor.watched_root_warning_size", func(a, b Config) bool {
+		return a.Doctor.WatchedRootWarningSize != b.Doctor.WatchedRootWarningSize
+	}},
 	{"ui.time", func(a, b Config) bool { return a.UI.Time != b.UI.Time }},
 }
 

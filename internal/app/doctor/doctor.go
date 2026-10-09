@@ -53,6 +53,9 @@ type Deps struct {
 	// Sizing bounds the store capacity advisory's walk; a zero field takes the
 	// production default (defaultSizingMaxEntries, defaultSizingMaxDepth).
 	Sizing fsx.TreeLimits
+	// Watched bounds the explicit watched-root audit; a zero field takes its
+	// production default.
+	Watched WatchedLimits
 }
 
 // LockAcquirer takes the exclusive collector lock for doctor's repair pass and waits
@@ -65,7 +68,8 @@ type LockAcquirer interface {
 }
 
 // Request is one doctor invocation against an already-resolved, config-loaded
-// project. Strict raises verification depth; Repair opts into the safe repairs.
+// project. Strict raises verification depth; Repair opts into the safe repairs;
+// Capacity opts into the watched-root capacity audit, which authorizes no repair.
 type Request struct {
 	Project projfs.Project
 	// Resolved is the composed config plus provenance, so a config finding can name
@@ -74,6 +78,7 @@ type Request struct {
 	Resolved domconfig.ResolvedConfig
 	Strict   bool
 	Repair   bool
+	Capacity bool
 }
 
 // Service runs the doctor checks. It is constructed with Deps and is safe to reuse
@@ -87,6 +92,8 @@ type Service struct {
 	locks        LockAcquirer
 	sizing       fsx.TreeLimits
 	sizeTree     sizeTreeFunc
+	watched      WatchedLimits
+	listWatched  listDirFunc
 }
 
 // New builds a Service, filling in real-environment defaults for any zero-valued
@@ -102,6 +109,8 @@ func New(d Deps) *Service {
 		locks:        d.Locks,
 		sizing:       d.Sizing,
 		sizeTree:     fsx.SizeTreeWithin,
+		watched:      d.Watched.withDefaults(),
+		listWatched:  eachScanDirEntry,
 	}
 	if s.sizing.MaxEntries <= 0 {
 		s.sizing.MaxEntries = defaultSizingMaxEntries
@@ -164,7 +173,17 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 	if err != nil {
 		return doctor.DoctorResult{}, err
 	}
-	// The capture-eligibility check and the sizing walk run under ctx; a cancellation
+	// The watched-root audit is opt-in: without --capacity doctor neither searches nor
+	// sizes project output. It runs after the integrity checks for the same reason the
+	// store sizing does, and like it is read-only.
+	var watched doctor.WatchedRootAudit
+	if req.Capacity {
+		watched, err = s.auditWatched(ctx, layout.Root(), req.Resolved.Config(), rep)
+		if err != nil {
+			return doctor.DoctorResult{}, err
+		}
+	}
+	// The capture-eligibility check and the sizing walks run under ctx; a cancellation
 	// there is an interruption, never an incomplete-check finding or a partial size.
 	if err := ctx.Err(); err != nil {
 		return doctor.DoctorResult{}, err
@@ -187,7 +206,7 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 		s.repair(layout, rep)
 	}
 
-	return doctor.NewResult(rep.passed, rep.findings).WithStoreCapacity(capacity), nil
+	return doctor.NewResult(rep.passed, rep.findings).WithStoreCapacity(capacity).WithWatchedRoots(watched), nil
 }
 
 // report accumulates the outcome of the subsystem checks: a count of checks that

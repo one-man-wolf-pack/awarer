@@ -25,6 +25,9 @@ func TestDefaults(t *testing.T) {
 	if got := c.Doctor.StoreWarningSize; !got.Enabled() || got.Size() != 1*giB {
 		t.Errorf("doctor.store_warning_size = %v, want 1GiB", got)
 	}
+	if got := c.Doctor.WatchedRootWarningSize; got.Enabled() {
+		t.Errorf("doctor.watched_root_warning_size = %v, want off: there is no output-size default", got)
+	}
 	if err := c.Validate(); err != nil {
 		t.Errorf("Defaults() should be valid: %v", err)
 	}
@@ -69,6 +72,7 @@ func TestValidateRejectsBadValues(t *testing.T) {
 		{"negative locks timeout", func(c *Config) { c.Locks.Timeout = -1 }},
 		{"zero store warning size", func(c *Config) { c.Doctor.StoreWarningSize = ThresholdAt(0) }},
 		{"negative store warning size", func(c *Config) { c.Doctor.StoreWarningSize = ThresholdAt(-1) }},
+		{"zero watched root warning size", func(c *Config) { c.Doctor.WatchedRootWarningSize = ThresholdAt(0) }},
 		{"out-of-range trust mode", func(c *Config) { c.Hashing.TrustMode = TrustMode(999) }},
 		{"out-of-range large file policy", func(c *Config) { c.Hashing.LargeFilePolicy = LargeFilePolicy(999) }},
 		{"empty env allowlist name", func(c *Config) { c.Run.EnvAllowlist = []string{"CI", ""} }},

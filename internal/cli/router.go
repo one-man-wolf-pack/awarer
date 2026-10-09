@@ -260,13 +260,14 @@ func newRouter() *router {
 			}},
 		{name: "doctor", summary: "diagnose project and store health", run: runDoctor, capabilities: []capability{capRoot, capConfig, capJSON, capTrustMode},
 			help: commandHelp{
-				usage: []string{"doctor [--repair] [--strict]"},
-				long:  "Inspect durable .awa/ state and print a health verdict plus one line per finding, including local evidence/privacy findings. --repair restores safe, awa-owned state (e.g. the .awa/.gitignore guard).",
+				usage: []string{"doctor [--repair] [--capacity] [--strict]"},
+				long:  "Inspect durable .awa/ state and print a health verdict plus one line per finding, including local evidence/privacy findings. --repair restores safe, awa-owned state (e.g. the .awa/.gitignore guard). --capacity also sizes the watched generated-output roots; it never deletes or repairs them.",
 				flags: []flagHelp{
 					{"--repair", "restore safe awa-owned state where possible", ""},
+					{"--capacity", "also audit the logical size of watched effect roots", ""},
 				},
 				exitNote: "exit code: the diagnosis, not an awa failure. Healthy or warnings-only exits 0; unrepaired errors or unrepaired repairable findings exit 5.",
-				examples: []string{"awa doctor", "awa doctor --repair"},
+				examples: []string{"awa doctor", "awa doctor --repair", "awa doctor --capacity"},
 				topic:    "doctor",
 			}},
 		{name: "config", summary: "inspect or edit configuration", run: runConfig, capabilities: configCapabilities(), ownsHelp: true, help: configCmdHelp, subcommands: configSubcommands},

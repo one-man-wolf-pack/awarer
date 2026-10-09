@@ -173,6 +173,11 @@ const (
 	// bytes of .awa/ reached the configured threshold. It is a non-repairable warning,
 	// never an integrity verdict and never a reason for doctor to delete anything.
 	CodeStoreCapacityThreshold FindingCode = "store-capacity-threshold"
+	// CodeWatchedRootCapacityThreshold is the explicit watched-root audit's advisory:
+	// one measured watched effect root's observed logical bytes reached the configured
+	// per-root threshold. It is a non-repairable warning and authorizes no cleanup of
+	// project output.
+	CodeWatchedRootCapacityThreshold FindingCode = "watched-root-capacity-threshold"
 )
 
 // findingCodes is the canonical enumeration of the closed vocabulary. It is the one
@@ -232,6 +237,7 @@ var findingCodes = []FindingCode{
 	CodeAncestorProjectMarker,
 	// how much local evidence is kept
 	CodeStoreCapacityThreshold,
+	CodeWatchedRootCapacityThreshold,
 	// the diagnosis of a failed repair
 	CodeRepairFailed,
 }

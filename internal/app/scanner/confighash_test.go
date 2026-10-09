@@ -85,8 +85,8 @@ func TestConfigHashSensitiveToTrustMode(t *testing.T) {
 	}
 }
 
-// TestConfigHashIgnoresDoctorAdvisory pins that doctor's store-size threshold —
-// diagnostic only — never moves the scan config identity.
+// TestConfigHashIgnoresDoctorAdvisory pins that doctor's size thresholds —
+// diagnostic only — never move the scan config identity.
 func TestConfigHashIgnoresDoctorAdvisory(t *testing.T) {
 	h := blake3hash.New()
 	base := config.Defaults()
@@ -96,6 +96,11 @@ func TestConfigHashIgnoresDoctorAdvisory(t *testing.T) {
 		cfg.Doctor.StoreWarningSize = th
 		if configHash(cfg, cfg.HistoryScanScope(), h) != want {
 			t.Errorf("doctor.store_warning_size = %s changed the scan config hash", th)
+		}
+		cfg = config.Defaults()
+		cfg.Doctor.WatchedRootWarningSize = th
+		if configHash(cfg, cfg.HistoryScanScope(), h) != want {
+			t.Errorf("doctor.watched_root_warning_size = %s changed the scan config hash", th)
 		}
 	}
 }

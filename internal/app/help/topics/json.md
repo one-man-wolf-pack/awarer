@@ -87,6 +87,9 @@ or `unmeasured`. `awa doctor --json` reports the size of `.awa/` in
 `disabled`; `observed_bytes` is a number only for `exact` or `partial` (then a
 lower bound) and `threshold_bytes` only while the advisory is enabled, otherwise
 both are `null`; `incomplete_reasons` lists closed tokens such as `work-budget`.
+`watched_root_capacity` is `null` unless `--capacity` ran; then `search.complete`,
+each root's `measurement`, and `roots_detail` report search, sizing, and listing
+coverage separately, and `roots_total` is `null` when the search was incomplete.
 Similar fields elsewhere state whether a set of paths is complete, truncated, or
 unavailable.
 

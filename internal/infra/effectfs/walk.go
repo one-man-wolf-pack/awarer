@@ -129,21 +129,11 @@ func NewWithLimits(hasher hashing.Hasher, maxPerRoot, maxTotal, maxDiscovery int
 // be read safely, a matched directory exceeds the entry budget, the tree holds more
 // matching directories than the bound, or the discovery traversal exceeds its budget.
 func (w *Walker) Discover(project string, selectors []string) ([]effectobserve.DiscoveredRoot, error) {
-	names := make(map[string]bool, len(selectors))
-	paths := make(map[string]bool)
-	for _, s := range selectors {
-		if strings.Contains(s, "/") {
-			paths[s] = true
-		} else {
-			names[s] = true
-		}
-	}
 	dc := &discovery{
 		w:         w,
 		project:   project,
 		prefix:    strings.TrimSuffix(filepath.ToSlash(filepath.Clean(project)), "/") + "/",
-		names:     names,
-		paths:     paths,
+		selects:   config.NewEffectRootMatcher(selectors),
 		remaining: w.maxTotal,
 	}
 	if err := dc.run(); err != nil {
@@ -153,13 +143,12 @@ func (w *Walker) Discover(project string, selectors []string) ([]effectobserve.D
 }
 
 // discovery is the mutable state of one Discover traversal: the walker and its budgets,
-// the selector sets, the running total/discovery counters, and the discovered directories.
+// the selector matcher, the running total/discovery counters, and the discovered directories.
 type discovery struct {
 	w         *Walker
 	project   string
 	prefix    string
-	names     map[string]bool
-	paths     map[string]bool
+	selects   config.EffectRootMatcher
 	remaining int // shared per-observation entry budget left for matched directories
 	visited   int // discovery entries seen so far, matched or not
 	out       []effectobserve.DiscoveredRoot
@@ -224,7 +213,7 @@ func (dc *discovery) readDir(dir string, stack *[]string) error {
 				continue
 			}
 			rel := dc.relOf(full)
-			if dc.names[name] || dc.paths[rel] {
+			if dc.selects.Selects(name, rel) {
 				if err := dc.observe(full, rel); err != nil {
 					return err
 				}

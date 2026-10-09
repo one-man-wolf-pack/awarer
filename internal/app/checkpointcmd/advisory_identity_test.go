@@ -7,8 +7,8 @@ import (
 	"awarer/internal/infra/blake3hash"
 )
 
-// TestDoctorAdvisoryIsNotCheckpointPolicy pins that doctor's store-size threshold —
-// diagnostic only — never moves the checkpoint storage-policy identity.
+// TestDoctorAdvisoryIsNotCheckpointPolicy pins that doctor's size thresholds —
+// diagnostic only — never move the checkpoint storage-policy identity.
 func TestDoctorAdvisoryIsNotCheckpointPolicy(t *testing.T) {
 	h := blake3hash.New()
 	base := checkpointPolicyHash(config.Defaults(), h)
@@ -17,6 +17,11 @@ func TestDoctorAdvisoryIsNotCheckpointPolicy(t *testing.T) {
 		cfg.Doctor.StoreWarningSize = th
 		if checkpointPolicyHash(cfg, h) != base {
 			t.Errorf("doctor.store_warning_size = %s changed the checkpoint policy hash", th)
+		}
+		cfg = config.Defaults()
+		cfg.Doctor.WatchedRootWarningSize = th
+		if checkpointPolicyHash(cfg, h) != base {
+			t.Errorf("doctor.watched_root_warning_size = %s changed the checkpoint policy hash", th)
 		}
 	}
 }

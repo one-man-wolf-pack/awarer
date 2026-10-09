@@ -209,6 +209,57 @@ func TestComposeStoreWarningSize(t *testing.T) {
 	}
 }
 
+// TestComposeWatchedRootWarningSize pins the watched-root audit threshold: a
+// predecessor config that never names it keeps every earlier meaning and leaves the
+// threshold off (there is no output-size default), a higher layer's size or "off" wins
+// with its origin recorded, and the store threshold is a separate key that neither
+// sets nor reads it.
+func TestComposeWatchedRootWarningSize(t *testing.T) {
+	cfg, origins, err := Compose([]NamedOverlay{{Layer: config.LayerShared, Overlay: overlay(t, "[doctor]\nstore_warning_size = \"2GiB\"\n")}})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if cfg.Doctor.WatchedRootWarningSize.Enabled() || origins["doctor.watched_root_warning_size"] != config.LayerDefault {
+		t.Errorf("absent key = %s from %q, want default off", cfg.Doctor.WatchedRootWarningSize, origins["doctor.watched_root_warning_size"])
+	}
+	if got := cfg.Doctor.StoreWarningSize.String(); got != "2GiB" {
+		t.Errorf("store_warning_size = %s, want the predecessor's 2GiB", got)
+	}
+
+	shared := overlay(t, "[doctor]\nwatched_root_warning_size = \"500MiB\"\n")
+	cfg, origins, err = Compose([]NamedOverlay{{Layer: config.LayerShared, Overlay: shared}})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got := cfg.Doctor.WatchedRootWarningSize.String(); got != "500MiB" || origins["doctor.watched_root_warning_size"] != config.LayerShared {
+		t.Errorf("shared size = %s from %q, want 500MiB from shared", got, origins["doctor.watched_root_warning_size"])
+	}
+	if got := cfg.Doctor.StoreWarningSize.String(); got != "1GiB" {
+		t.Errorf("store_warning_size = %s, want the untouched 1GiB default", got)
+	}
+	cfg, origins, err = Compose([]NamedOverlay{
+		{Layer: config.LayerShared, Overlay: shared},
+		{Layer: config.LayerLocal, Overlay: overlay(t, "[doctor]\nwatched_root_warning_size = \"off\"\n")},
+	})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if cfg.Doctor.WatchedRootWarningSize.Enabled() || origins["doctor.watched_root_warning_size"] != config.LayerLocal {
+		t.Errorf("local off = %s from %q, want off from local", cfg.Doctor.WatchedRootWarningSize, origins["doctor.watched_root_warning_size"])
+	}
+
+	for _, bad := range []string{`"0"`, `"-1GiB"`, `"none"`} {
+		_, _, err := Compose([]NamedOverlay{{Layer: config.LayerShared, Overlay: overlay(t, "[doctor]\nwatched_root_warning_size = "+bad+"\n")}})
+		if err == nil {
+			t.Errorf("watched_root_warning_size = %s should be rejected", bad)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, "doctor.watched_root_warning_size") {
+			t.Errorf("error %q should name the key", msg)
+		}
+	}
+}
+
 func TestDecodeOverlayRejectsUnknownField(t *testing.T) {
 	if _, err := DecodeOverlay([]byte("[hashing]\nnope = true\n")); err == nil {
 		t.Error("DecodeOverlay should reject an unknown field")

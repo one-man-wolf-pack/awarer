@@ -15,10 +15,11 @@ import (
 // prints a concise report; with --repair it also performs the safe, mechanical
 // repairs. Verification depth is raised by the global --strict (trust-strict) flag,
 // which for doctor means recomputing hashes rather than trusting stat signatures.
-// The command takes only the local --repair flag; --root/--config/--json/--strict
-// are global. It does not consume operands.
+// The command takes the local --repair and --capacity flags; --root/--config/--json/
+// --strict are global. It does not consume operands: --capacity audits the
+// configured watched roots, never a path named on the command line.
 func runDoctor(w *output.Writer, inv invocation) error {
-	repair := false
+	repair, capacity := false, false
 	args := inv.args
 	i := 0
 	for i < len(args) {
@@ -31,6 +32,11 @@ func runDoctor(w *output.Writer, inv invocation) error {
 				return err
 			}
 			repair = true
+		case "--capacity":
+			if err := noValue(name, hasValue); err != nil {
+				return err
+			}
+			capacity = true
 		default:
 			if strings.HasPrefix(tok, "-") {
 				return usageErrorf("unknown flag %q for doctor", tok)
@@ -75,6 +81,7 @@ func runDoctor(w *output.Writer, inv invocation) error {
 		Resolved: loaded,
 		Strict:   strict,
 		Repair:   repair,
+		Capacity: capacity,
 	})
 	if err != nil {
 		// A failure that prevented diagnosis or the repair pass at all (e.g. the layout
@@ -116,6 +123,56 @@ type doctorView struct {
 	Summary       doctorSummaryView   `json:"summary"`
 	Findings      []doctorFindingView `json:"findings"`
 	StoreCapacity storeCapacityView   `json:"store_capacity"`
+	// WatchedRoots is null unless --capacity requested the watched-root audit, so an
+	// unrequested audit never reads as one that found nothing.
+	WatchedRoots *watchedRootsView `json:"watched_root_capacity"`
+}
+
+// watchedRootsView projects the explicit watched-root audit. Its three coverage facts
+// stay apart: search says whether every matching root was looked for, each root's
+// measurement says how completely it was sized, and detail says how many found roots
+// the list leaves out. RootsTotal is null unless the search was exhaustive, and
+// ObservedBytes is a lower bound unless ObservedBytesComplete. RootsReachingThreshold
+// is null without a threshold.
+type watchedRootsView struct {
+	Scope                  string                 `json:"scope"`
+	Metric                 string                 `json:"metric"`
+	Selectors              []string               `json:"selectors"`
+	ThresholdBytes         *int64                 `json:"threshold_bytes"`
+	Search                 watchedSearchView      `json:"search"`
+	RootsFound             int                    `json:"roots_found"`
+	RootsTotal             *int                   `json:"roots_total"`
+	Measurements           watchedCountsView      `json:"measurements"`
+	ObservedBytes          int64                  `json:"observed_bytes"`
+	ObservedBytesComplete  bool                   `json:"observed_bytes_complete"`
+	RootsReachingThreshold *int                   `json:"roots_reaching_threshold"`
+	Roots                  []watchedRootView      `json:"roots"`
+	Detail                 watchedRootsDetailView `json:"roots_detail"`
+}
+
+type watchedSearchView struct {
+	Complete          bool     `json:"complete"`
+	IncompleteReasons []string `json:"incomplete_reasons"`
+}
+
+type watchedCountsView struct {
+	Exact      int `json:"exact"`
+	Partial    int `json:"partial"`
+	Unmeasured int `json:"unmeasured"`
+}
+
+type watchedRootView struct {
+	Path              string   `json:"path"`
+	Measurement       string   `json:"measurement"`
+	ObservedBytes     *int64   `json:"observed_bytes"`
+	IncompleteReasons []string `json:"incomplete_reasons"`
+}
+
+type watchedRootsDetailView struct {
+	Complete bool `json:"complete"`
+	Shown    int  `json:"shown"`
+	Limit    int  `json:"limit"`
+	Omitted  int  `json:"omitted"`
 }
 
 // storeCapacityView projects the store capacity advisory's measurement as facts, not
@@ -163,6 +220,7 @@ func doctorViewOf(res domdoctor.DoctorResult) doctorView {
 		},
 		Findings:      []doctorFindingView{},
 		StoreCapacity: storeCapacityViewOf(res.StoreCapacity()),
+		WatchedRoots:  watchedRootsViewOf(res.WatchedRoots()),
 	}
 	for _, f := range res.Findings() {
 		v.Findings = append(v.Findings, doctorFindingView{
@@ -196,6 +254,102 @@ func storeCapacityViewOf(c domdoctor.StoreCapacity) storeCapacityView {
 		v.IncompleteReasons = append(v.IncompleteReasons, string(g))
 	}
 	return v
+}
+
+func watchedRootsViewOf(a domdoctor.WatchedRootAudit) *watchedRootsView {
+	if !a.Requested() {
+		return nil
+	}
+	exact, partial, unmeasured := a.Counts()
+	v := &watchedRootsView{
+		Scope:                 domdoctor.WatchedRootScope,
+		Metric:                domdoctor.StoreCapacityMetric,
+		Selectors:             a.Selectors(),
+		Search:                watchedSearchView{Complete: a.SearchComplete(), IncompleteReasons: gapStrings(a.SearchGaps())},
+		RootsFound:            a.Found(),
+		Measurements:          watchedCountsView{Exact: exact, Partial: partial, Unmeasured: unmeasured},
+		ObservedBytes:         a.ObservedBytes(),
+		ObservedBytesComplete: a.ObservedBytesComplete(),
+		Roots:                 []watchedRootView{},
+		Detail: watchedRootsDetailView{
+			Complete: a.Omitted() == 0,
+			Shown:    len(a.Detail()),
+			Limit:    a.DetailLimit(),
+			Omitted:  a.Omitted(),
+		},
+	}
+	if total, ok := a.Total(); ok {
+		v.RootsTotal = &total
+	}
+	if th, ok := a.Threshold(); ok {
+		reaching := a.Reaching()
+		v.ThresholdBytes = &th
+		v.RootsReachingThreshold = &reaching
+	}
+	for _, r := range a.Detail() {
+		rv := watchedRootView{Path: r.Path(), Measurement: r.Measurement().String(), IncompleteReasons: gapStrings(r.Gaps())}
+		if b, ok := r.ObservedBytes(); ok {
+			rv.ObservedBytes = &b
+		}
+		v.Roots = append(v.Roots, rv)
+	}
+	return v
+}
+
+func gapStrings(gaps []domdoctor.CapacityGap) []string {
+	out := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		out = append(out, string(g))
+	}
+	return out
+}
+
+// watchedRootsLines words the watched-root audit for the human report: one summary
+// line keeping search, measurement, and detail coverage apart, then one line per
+// listed root. It prints nothing for an unrequested audit.
+func watchedRootsLines(a domdoctor.WatchedRootAudit) []string {
+	if !a.Requested() {
+		return nil
+	}
+	search := "search complete"
+	if !a.SearchComplete() {
+		search = "search incomplete: " + strings.Join(gapStrings(a.SearchGaps()), ", ")
+	}
+	warn := "no size warning (doctor.watched_root_warning_size off)"
+	if th, ok := a.Threshold(); ok {
+		warn = fmt.Sprintf("%d at or above %s", a.Reaching(), humanizeBytes(th))
+	}
+	if a.Found() == 0 {
+		found := "none found"
+		if !a.SearchComplete() {
+			found = "none found so far"
+		}
+		return []string{fmt.Sprintf("watched roots: %s (%s); %s", found, search, warn)}
+	}
+	exact, partial, unmeasured := a.Counts()
+	lines := []string{fmt.Sprintf("watched roots: %d found (%s), %s; %d exact, %d partial, %d unmeasured; %s",
+		a.Found(), search, logicalBytes(a.ObservedBytes(), a.ObservedBytesComplete()), exact, partial, unmeasured, warn)}
+	for _, r := range a.Detail() {
+		lines = append(lines, "  "+watchedRootLine(r))
+	}
+	if n := a.Omitted(); n > 0 {
+		lines = append(lines, fmt.Sprintf("  ... %d more found root(s) not listed (%d with the largest observed figures shown)", n, len(a.Detail())))
+	}
+	return lines
+}
+
+func watchedRootLine(r domdoctor.WatchedRoot) string {
+	gaps := strings.Join(gapStrings(r.Gaps()), ", ")
+	b, ok := r.ObservedBytes()
+	switch {
+	case !ok:
+		return fmt.Sprintf("%s: unmeasured (%s)", r.Path(), gaps)
+	case r.Measurement() == domdoctor.CapacityPartial:
+		return fmt.Sprintf("%s: at least %s (partial: %s)", r.Path(), humanizeBytes(b), gaps)
+	case b == 0:
+		return r.Path() + ": empty"
+	}
+	return fmt.Sprintf("%s: %s", r.Path(), humanizeBytes(b))
 }
 
 // storeCapacityLine words the store measurement for the human report: the figure
@@ -237,6 +391,9 @@ func renderDoctor(w *output.Writer, res domdoctor.DoctorResult) {
 		w.Line("")
 	}
 	w.Line(storeCapacityLine(res.StoreCapacity()))
+	for _, line := range watchedRootsLines(res.WatchedRoots()) {
+		w.Line(line)
+	}
 	w.Linef("checks: %d passed, %d warnings, %d errors", s.Passed, s.Warnings, s.Errors)
 	// Summary.Repairable counts every repairable finding including those already
 	// fixed, so the still-fixable tally subtracts the repaired ones.

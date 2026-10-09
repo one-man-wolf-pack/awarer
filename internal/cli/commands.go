@@ -1359,6 +1359,7 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	w.Line("")
 	w.Line("[doctor]")
 	kv("doctor.store_warning_size", "store_warning_size = %q", v.Doctor.StoreWarningSize)
+	kv("doctor.watched_root_warning_size", "watched_root_warning_size = %q", v.Doctor.WatchedRootWarningSize)
 	w.Line("")
 	w.Line("[ui]")
 	kv("ui.time", "time = %q", v.UI.Time)
