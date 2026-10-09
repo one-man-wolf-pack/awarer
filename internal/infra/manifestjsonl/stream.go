@@ -182,12 +182,13 @@ type cursor struct {
 	expected int
 	ctx      context.Context
 
-	cur    worktree.ManifestRecord
-	line   int
-	count  int
-	err    error
-	done   bool
-	closed bool
+	cur     worktree.ManifestRecord
+	line    int
+	count   int
+	pending error
+	err     error
+	done    bool
+	closed  bool
 }
 
 func (c *cursor) Next() bool {
@@ -196,6 +197,10 @@ func (c *cursor) Next() bool {
 	}
 	if err := c.ctx.Err(); err != nil {
 		c.fail(err)
+		return false
+	}
+	if c.pending != nil {
+		c.fail(c.pending)
 		return false
 	}
 	data, rerr := c.br.ReadBytes('\n')
@@ -228,10 +233,12 @@ func (c *cursor) Next() bool {
 	}
 	c.cur = rec
 	c.count++
-	// A read error that arrived with this final line (data but no trailing newline,
-	// rerr != io.EOF) is left for the next Next: the buffered reader re-returns it,
-	// so this record is yielded cleanly and the error surfaces only once Next is
-	// false — keeping Err nil while Next is true.
+	// bufio.Reader reports a read error together with the final unterminated line
+	// only once; the next read can return a clean io.EOF. Retain it so the following
+	// Next fails instead of verifying the count and certifying an incomplete read.
+	if rerr != nil && rerr != io.EOF {
+		c.pending = rerr
+	}
 	return true
 }
 
