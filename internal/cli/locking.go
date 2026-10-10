@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"awarer/internal/domain/paths"
@@ -81,6 +82,12 @@ func (c collectorLocker) Acquire() (func() error, error) {
 	defer cancel()
 	lease, err := lockfile.AcquireCollectorExclusive(ctx, c.root, c.locksDir, c.op, lockfile.Owner{})
 	if err != nil {
+		// The lock library reports every abandoned wait as a timeout. Only the root
+		// context tells an operator's Ctrl+C from the configured wait running out, and
+		// reporting the former as the latter would exit 6 for an interruption.
+		if perr := lockParent(c.ctx).Err(); perr != nil {
+			return nil, fmt.Errorf("%s interrupted while waiting for exclusive access: %w", c.op, perr)
+		}
 		return nil, err
 	}
 	return lease.Release, nil
