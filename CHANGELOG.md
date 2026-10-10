@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.4.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.2...v0.4.0) (2026-10-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **patterns:** the same pattern text can select different paths than before. A `?` now excludes or keeps hash-only more than it did, and an inner-slash pattern such as `config/*.env` no longer applies below the project root, so nested files it used to cover are scanned and, for hash_only_patterns, store their bytes again.
+* **restore:** restore deletes a path only when the source's recorded coverage proves it absent, and refuses a create whose destination exists but is hidden. Checkpoints, runs, and recovery observations from earlier releases stay readable: their positive entries, deltas, and owned bytes remain usable, but they cannot prove absence, so dependent deletions, `--all`, and undo from such a record can refuse with `absence-unproved`. `awa state compare` reports `incomparable` / `absence-unproved` for distinct earlier observations, including both sides of one run, even when their tree hashes match; the same record still compares equal. New records keep excluded path names (never their content), and older awa binaries are not guaranteed to read the new record formats.
+* **run:** `audit` is now a reserved `awa run` subcommand. To run an executable named `audit` through awa, use `awa run -- audit`.
+
+### Features
+
+* **changes:** disclose the observation-delta basis and recorded scan configs ([c85da5f](https://github.com/one-man-wolf-pack/awarer/commit/c85da5fdad11cec2a406949515d88f02eb2af330))
+* **checkpoint:** keep selected files hash-only, env files by default ([8fedd4a](https://github.com/one-man-wolf-pack/awarer/commit/8fedd4a905fb47054dbe96c9eaa4d7470c999cc9))
+* **doctor:** advise when the .awa store reaches a configured size ([30d2be9](https://github.com/one-man-wolf-pack/awarer/commit/30d2be991c43e3ba40aa00429803fac638368b50))
+* **doctor:** audit watched effect roots with --capacity ([fc09364](https://github.com/one-man-wolf-pack/awarer/commit/fc09364727a159ffb88bfaf33d5d502f7893b4cd))
+* **doctor:** diagnose and repair headerless checkpoint publication remnants ([aeef9fc](https://github.com/one-man-wolf-pack/awarer/commit/aeef9fc67edcf1a538b27e5eb95f90cbced9cfe7))
+* **fsx:** size an open directory under native names with skipped subtrees ([889f041](https://github.com/one-man-wolf-pack/awarer/commit/889f041c93ae1676b240461dd031881ad64de4c1))
+* **run:** accept --stdin null on run and command-mode explain ([15a319a](https://github.com/one-man-wolf-pack/awarer/commit/15a319a202561da0d225beaeb19e0b42d92d8894))
+* **run:** audit recorded executions by primary stored reason ([63f1cab](https://github.com/one-man-wolf-pack/awarer/commit/63f1cab1d3c6d49954baf10a6df33cf468ab10dd))
+
+
+### Bug Fixes
+
+* **changes:** label a recovery operand in comparison JSON ([0b272c4](https://github.com/one-man-wolf-pack/awarer/commit/0b272c488b90a2a74afd2230abfa6077e5aded2e))
+* **changes:** label comparison ignore sources as current configuration ([1f18e56](https://github.com/one-man-wolf-pack/awarer/commit/1f18e569d7b8aad39c276c95b6396adb8f647e61))
+* **doctor:** report Ctrl+C during the repair lock wait as an interruption ([4f215a0](https://github.com/one-man-wolf-pack/awarer/commit/4f215a08b9ef53b3d0013e9cc5fee2fd47a6545a))
+* **gc:** account logical bytes of whole deletion boundaries ([cd9a2a9](https://github.com/one-man-wolf-pack/awarer/commit/cd9a2a99f3ff59ddfb1befd90b7c562c8b68c7e2))
+* **lockfile:** treat a lock released during a scan as gone, not unknown ([4602ba5](https://github.com/one-man-wolf-pack/awarer/commit/4602ba5cf7a1caf45c6927f5503d992ee4697388))
+* **manifest:** keep a read failure delivered with the final row ([bea0796](https://github.com/one-man-wolf-pack/awarer/commit/bea0796493c143506a2e329c5e0c4af73868ce9d))
+* **manifestsort:** fail a spill merge on a run read failure ([f242579](https://github.com/one-man-wolf-pack/awarer/commit/f242579545701a605b643246201222f92955471d))
+* **patterns:** match exclusions and retention with Git's pattern format ([9450f0d](https://github.com/one-man-wolf-pack/awarer/commit/9450f0dc4271495b8e6d41071ee4fb401a7a5eb6))
+* **restore:** prove path absence from recorded coverage ([03e7883](https://github.com/one-man-wolf-pack/awarer/commit/03e7883702a301767e2ea2ff5284761f65e09cdd))
+* **restore:** refuse directory removal over known surviving children before mutation ([5a0f4ec](https://github.com/one-man-wolf-pack/awarer/commit/5a0f4ec7e0323dfe4bc247e1824ff95bafeff09e))
+
+
+### Dependencies
+
+* move the licence manifest to modernc.org/sqlite v1.60.1 ([d0452d1](https://github.com/one-man-wolf-pack/awarer/commit/d0452d13a67dfbc2cd3f893b55c60659226d37a6))
+
+
+### Documentation
+
+* **help:** add a maintenance topic for reviewing an existing setup ([baeffa7](https://github.com/one-man-wolf-pack/awarer/commit/baeffa7ac4cbeedbd73eefa579eeeab912b37fff))
+
+
+### Tests
+
+* **acceptance:** stop leaking build dirs and key cached results to the binary's sources ([8d06773](https://github.com/one-man-wolf-pack/awarer/commit/8d067732b5d4a0b252a65701a71b757fd4c699ff))
+
+
+### Build System
+
+* **deps:** Bump modernc.org/sqlite ([ec3a2ac](https://github.com/one-man-wolf-pack/awarer/commit/ec3a2aca7093274ebab11eddecc4f9d6044b1f92))
+* **deps:** Bump vmactions/freebsd-vm ([8232031](https://github.com/one-man-wolf-pack/awarer/commit/8232031856009a810f954da4cdf116c6f08304bf))
+* **lint:** stop requiring package comments ([352ba3a](https://github.com/one-man-wolf-pack/awarer/commit/352ba3aaf379d818fdafe3a6f8f3e6449a7beda2))
+* use the go1.27.2 toolchain ([043fbcb](https://github.com/one-man-wolf-pack/awarer/commit/043fbcbe11e1b5df2148ef59121c59fb750df18d))
+
+
+### Continuous Integration
+
+* run the portable stdin wiring test on Windows and FreeBSD ([553a1b2](https://github.com/one-man-wolf-pack/awarer/commit/553a1b241e5f4244f18164af6dfa05896511d61d))
+
 ## [0.3.2](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.1...v0.3.2) (2026-09-28)
 
 
