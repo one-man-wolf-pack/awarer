@@ -34,17 +34,22 @@ type Repo struct {
 	dir  string
 	root string
 	// fail is a test-only fault-injection seam: nil in production (a single branch),
-	// set only from same-package _test.go. It interrupts PutManifest at a named stage
-	// so a test can prove a partial write never becomes an authoritative checkpoint.
+	// set only from same-package _test.go. It interrupts PutManifest or
+	// RemoveHeaderless at a named stage so a test can prove a partial write never
+	// becomes an authoritative checkpoint and a partial removal is never a completed one.
 	fail func(stage failStage) error
 }
 
-// failStage names a fault-injection point inside PutManifest. The header is the
-// commit point, so the meaningful crash window is between the payloads and the
-// header — a stage a fresh reader must treat as an invisible orphan.
+// failStage names a fault-injection point. In PutManifest the header is the commit
+// point, so the meaningful crash window is between the payloads and the header — a
+// stage a fresh reader must treat as an invisible orphan. In RemoveHeaderless it is
+// between two leaf removals, where a failure leaves a partially removed remnant.
 type failStage string
 
-const failAfterManifestBeforeHeader failStage = "after-manifest-before-header"
+const (
+	failAfterManifestBeforeHeader failStage = "after-manifest-before-header"
+	failAfterRemnantFileRemoved   failStage = "after-remnant-file-removed"
+)
 
 // checkFail invokes the fail hook (if any) for stage and returns its error so the
 // caller aborts through the normal error path.
@@ -222,7 +227,7 @@ func (r *Repo) PutManifest(ctx context.Context, build checkpoint.CheckpointBuild
 	if err := r.checkFail(failAfterManifestBeforeHeader); err != nil {
 		// The payloads are published but the header — the commit point — is not. The
 		// leftover <id>/ directory is invisible to every reader, which key off the
-		// header; no cleanup path reclaims it, and a fresh checkpoint uses a new id.
+		// header; only RemoveHeaderless reclaims it, and a fresh checkpoint uses a new id.
 		return checkpoint.CheckpointHeader{}, err
 	}
 
@@ -522,9 +527,9 @@ func (r *Repo) MeasureRecord(ctx context.Context, id checkpoint.CheckpointID) (f
 
 // eachCommittedID calls fn with the id of every committed checkpoint in the
 // directory. It reads only directory entries (no JSON decoding): an "<id>/" directory
-// holding a header.json is a committed checkpoint. A directory without a header is a
-// crashed, uncommitted publish and is skipped rather than reported. An entry that does
-// not parse as an id is unrelated to this store and is ignored.
+// holding a header.json is a committed checkpoint. A directory without a header is an
+// uncommitted publish, which this projection skips and EachHeaderless reports. An entry
+// that does not parse as an id is unrelated to this store and is ignored.
 //
 // The checkpoints directory reserves the id namespace, and a checkpoint's only
 // address is its directory. A node of any other shape on that namespace — a symlink
@@ -534,10 +539,19 @@ func (r *Repo) MeasureRecord(ctx context.Context, id checkpoint.CheckpointID) (f
 // an unrecognized artifact silently skipped — would let a store full of them read
 // back as empty, which is the one answer that must never be given.
 //
-// This is the sole owner of checkpoint address grammar: id collection, prefix
-// matching, and the health scans all project from it and none of them reimplement the
-// rules above.
+// The address grammar itself belongs to eachIDDir: id collection, prefix matching, the
+// health scans, and the headerless walk all project from it and none of them
+// reimplement the rules above.
 func (r *Repo) eachCommittedID(ctx context.Context, fn func(checkpoint.CheckpointID) error) error {
+	return r.eachIDDir(ctx, func(id checkpoint.CheckpointID, committed bool) error {
+		if !committed {
+			return nil
+		}
+		return fn(id)
+	})
+}
+
+func (r *Repo) eachIDDir(ctx context.Context, fn func(id checkpoint.CheckpointID, committed bool) error) error {
 	relDir, err := fsx.RelUnder(r.root, r.dir)
 	if err != nil {
 		return err
@@ -569,11 +583,9 @@ func (r *Repo) eachCommittedID(ctx context.Context, fn func(checkpoint.Checkpoin
 			if err != nil {
 				return err
 			}
-			if ok {
-				if err := fn(id); err != nil {
-					fnErr = err
-					return err
-				}
+			if err := fn(id, ok); err != nil {
+				fnErr = err
+				return err
 			}
 			return nil
 		}

@@ -1,12 +1,15 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 
+	"awarer/internal/domain/checkpoint"
 	"awarer/internal/domain/doctor"
 	"awarer/internal/domain/paths"
+	"awarer/internal/infra/checkpointjson"
 	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/projfs"
 	"awarer/internal/infra/sqliteindex"
@@ -21,8 +24,13 @@ import (
 //
 // The outcome is carried entirely by the findings it mutates: a repaired finding is
 // the record that its action ran, so nothing else has to be threaded out.
-func (s *Service) repair(layout paths.Layout, rep *report) {
+//
+// A checkpoint remnant is the exception to acting on the recorded finding: a publisher
+// may have committed since the unlocked diagnosis, so the repository decides again
+// under the lock the caller holds and the finding is rewritten to what it saw.
+func (s *Service) repair(ctx context.Context, layout paths.Layout, rep *report) error {
 	awaDir := layout.AwaDir()
+	withdrawn := map[int]bool{}
 
 	// Capture the length first: repair-failed findings are appended below, and they
 	// must not themselves be considered repair candidates.
@@ -41,7 +49,25 @@ func (s *Service) repair(layout paths.Layout, rep *report) {
 			rep.add(repairFailed(f, kind, "cannot plan a safe repair: "+err.Error()))
 			continue
 		}
-		if err := s.execute(layout, action); err != nil {
+		if kind == doctor.RepairRemoveCheckpointRemnant {
+			rem, err := removeRemnant(ctx, layout, action)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				rep.add(repairFailed(f, kind, "repair action failed: "+err.Error()))
+				continue
+			}
+			switch rem.State {
+			case checkpointjson.RemnantEligible:
+			case checkpointjson.RemnantAbsent, checkpointjson.RemnantHeaderPresent:
+				withdrawn[i] = true
+				continue
+			default:
+				rep.findings[i] = remnantFinding(rem)
+				continue
+			}
+		} else if err := s.execute(layout, action); err != nil {
 			rep.add(repairFailed(f, kind, "repair action failed: "+err.Error()))
 			continue
 		}
@@ -52,6 +78,24 @@ func (s *Service) repair(layout paths.Layout, rep *report) {
 		}
 		rep.findings[i] = repaired
 	}
+	if len(withdrawn) > 0 {
+		kept := rep.findings[:0]
+		for i, f := range rep.findings {
+			if !withdrawn[i] {
+				kept = append(kept, f)
+			}
+		}
+		rep.findings = kept
+	}
+	return nil
+}
+
+func removeRemnant(ctx context.Context, layout paths.Layout, action doctor.RepairAction) (checkpointjson.Remnant, error) {
+	id, err := checkpoint.ParseCheckpointID(filepath.Base(action.Target()))
+	if err != nil {
+		return checkpointjson.Remnant{}, err
+	}
+	return checkpointjson.NewRepo(layout).RemoveHeaderless(ctx, id)
 }
 
 // repairFailed builds the error finding recorded when a repair could not be
@@ -76,6 +120,8 @@ func repairKindFor(code doctor.FindingCode) (doctor.RepairKind, bool) {
 		return doctor.RepairRebuildIndex, true
 	case doctor.CodeStateGitignoreMissing, doctor.CodeStateGitignoreIneffective:
 		return doctor.RepairWriteStateGitignore, true
+	case doctor.CodeIncompletePublication:
+		return doctor.RepairRemoveCheckpointRemnant, true
 	default:
 		return 0, false
 	}

@@ -183,7 +183,9 @@ action it invites, and several are deliberately for you rather than for awa (bro
 undo). See [awa help doctor](doctor.md) for the finding families.
 
 Note that `awa doctor` exits 5 while any repairable finding is unrepaired, so a 5
-before you have run `--repair` does not by itself mean data is damaged.
+before you have run `--repair` does not by itself mean data is damaged. An
+interrupted `awa checkpoint` is the common case: it can leave an
+`incomplete-checkpoint-publication` finding that `--repair` clears.
 
 `awa gc` fails safe in the same situation, and does so wholesale: when corruption
 or an active or unknown writer lock makes deletion unsafe it reports those

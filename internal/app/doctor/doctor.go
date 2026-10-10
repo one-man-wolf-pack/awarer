@@ -8,8 +8,9 @@
 // run, blob, and index repositories), so a corrupt record is surfaced exactly as
 // those stores already classify it rather than re-parsed by a more forgiving
 // reader. Repairs are limited to removing orphan temp artifacts, provably-stale
-// recognized locks, and the derived worktree index, plus restoring the awa-owned
-// .awa/.gitignore guard; doctor never deletes a checkpoint, run, or blob.
+// recognized locks, the derived worktree index, and the recognized files of a
+// checkpoint publication that has no header, plus restoring the awa-owned
+// .awa/.gitignore guard; doctor never deletes a committed checkpoint, run, or blob.
 package doctor
 
 import (
@@ -190,8 +191,8 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 	}
 
 	if req.Repair {
-		// The repairs are destructive (removing orphan temp and stale locks, rebuilding
-		// the derived index), so take exclusive access first: the collector lock excludes
+		// The repairs are destructive (removing orphan temp, stale locks and headerless
+		// checkpoint remnants, rebuilding the derived index), so take exclusive access first: the collector lock excludes
 		// gc, and the acquirer waits out any writer already in flight while new writers
 		// stand down for the lock. A failure to reach exclusive access in time is a
 		// lock-timeout error, distinct from corruption. Diagnosis above is read-only and
@@ -203,7 +204,9 @@ func (s *Service) Run(ctx context.Context, req Request) (doctor.DoctorResult, er
 			}
 			defer func() { _ = release() }()
 		}
-		s.repair(layout, rep)
+		if err := s.repair(ctx, layout, rep); err != nil {
+			return doctor.DoctorResult{}, err
+		}
 	}
 
 	return doctor.NewResult(rep.passed, rep.findings).WithStoreCapacity(capacity).WithWatchedRoots(watched), nil

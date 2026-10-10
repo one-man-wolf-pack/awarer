@@ -132,6 +132,8 @@ const (
 	CodeCheckpointMissingBlob        FindingCode = "checkpoint-missing-blob"
 	CodeCheckpointMissingManifest    FindingCode = "checkpoint-missing-manifest"
 	CodeCheckpointFrontierCorrupt    FindingCode = "checkpoint-frontier-corrupt"
+	CodeIncompletePublication        FindingCode = "incomplete-checkpoint-publication"
+	CodeIncompleteUninspected        FindingCode = "incomplete-checkpoint-uninspected"
 	CodeRunCorrupt                   FindingCode = "run-corrupt"
 	CodeRunIncompatibleFormat        FindingCode = "run-incompatible-format"
 	CodeRunPointerCorrupt            FindingCode = "run-pointer-corrupt"
@@ -211,6 +213,8 @@ var findingCodes = []FindingCode{
 	CodeCheckpointMissingBlob,
 	CodeCheckpointMissingManifest,
 	CodeCheckpointFrontierCorrupt,
+	CodeIncompletePublication,
+	CodeIncompleteUninspected,
 	// run records
 	CodeRunCorrupt,
 	CodeRunIncompatibleFormat,

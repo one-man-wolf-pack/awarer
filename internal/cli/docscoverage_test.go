@@ -358,15 +358,16 @@ func TestNoDocumentMakesAForbiddenClaim(t *testing.T) {
 // or a wildcard nobody reviewed. (The exact count is pinned in the doctor domain's
 // own test, so it is deliberately not restated here.)
 var reviewedDoctorCodePrefixes = map[string]string{
-	"required-dir-":     "missing and not-a-directory are the same finding about the same path",
-	"pattern-":          "a never-matching exclusion rule, or the check for one that could not run",
-	"checkpoint-":       "five ways one checkpoint record can be unreadable; the reader acts on all of them the same way",
-	"run-":              "four ways one stored run can be unreadable",
-	"restore-recovery-": "the two ways a restore's undo evidence stops being usable: the record itself, or the content it captured",
-	"index-":            "three ways the worktree index is unusable and must be rebuilt",
-	"state-gitignore-":  "three states of the one awa-owned guard file",
-	"nested-":           "a marker below this root, or a scan that could not rule one out",
-	"ancestor-":         "a marker above this root; paired with nested- in the same row",
+	"required-dir-":          "missing and not-a-directory are the same finding about the same path",
+	"pattern-":               "a never-matching exclusion rule, or the check for one that could not run",
+	"checkpoint-":            "five ways one checkpoint record can be unreadable; the reader acts on all of them the same way",
+	"incomplete-checkpoint-": "a headerless checkpoint directory, or the inspection of one that could not finish",
+	"run-":                   "four ways one stored run can be unreadable",
+	"restore-recovery-":      "the two ways a restore's undo evidence stops being usable: the record itself, or the content it captured",
+	"index-":                 "three ways the worktree index is unusable and must be rebuilt",
+	"state-gitignore-":       "three states of the one awa-owned guard file",
+	"nested-":                "a marker below this root, or a scan that could not rule one out",
+	"ancestor-":              "a marker above this root; paired with nested- in the same row",
 }
 
 // minDoctorCodePrefixLen is the shortest string that can still be a subsystem name

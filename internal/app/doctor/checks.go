@@ -109,6 +109,35 @@ func (s *Service) checkCheckpoints(ctx context.Context, layout paths.Layout, str
 		}
 		s.checkOneCheckpoint(ctx, layout, repo, id, verifier, rep)
 	}
+	s.checkHeaderless(ctx, layout, repo, rep)
+}
+
+func (s *Service) checkHeaderless(ctx context.Context, layout paths.Layout, repo *checkpointjson.Repo, rep *report) {
+	err := repo.EachHeaderless(ctx, func(rem checkpointjson.Remnant) error {
+		rep.add(remnantFinding(rem))
+		return nil
+	})
+	if err != nil && ctx.Err() == nil {
+		rep.add(finding(doctor.CodeIncompleteUninspected, doctor.SeverityWarning, doctor.SubsystemCheckpoints,
+			layout.CheckpointsDir(), "checkpoints", "checkpoint directories without a header could not be enumerated: "+err.Error(), false))
+	}
+}
+
+// The wording stays short of "corrupt" or "abandoned" because a publisher that has not
+// reached its header yet looks identical; only repair, under writer exclusion, decides.
+func remnantFinding(rem checkpointjson.Remnant) doctor.Finding {
+	subject := rem.ID.String()
+	switch rem.State {
+	case checkpointjson.RemnantEligible:
+		return finding(doctor.CodeIncompletePublication, doctor.SeverityWarning, doctor.SubsystemCheckpoints,
+			rem.Path, subject, "checkpoint directory has no header (publication incomplete or still in progress); doctor --repair removes its publication files", true)
+	case checkpointjson.RemnantUnsupported:
+		return finding(doctor.CodeIncompletePublication, doctor.SeverityWarning, doctor.SubsystemCheckpoints,
+			rem.Path, subject, "checkpoint directory has no header and "+rem.Detail+"; doctor --repair leaves it in place", false)
+	default:
+		return finding(doctor.CodeIncompleteUninspected, doctor.SeverityWarning, doctor.SubsystemCheckpoints,
+			rem.Path, subject, "checkpoint directory without a readable header could not be inspected: "+rem.Detail, false)
+	}
 }
 
 func (s *Service) checkOneCheckpoint(ctx context.Context, layout paths.Layout, repo *checkpointjson.Repo, id checkpoint.CheckpointID, verifier *checkpointBlobVerifier, rep *report) {

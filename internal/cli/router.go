@@ -261,7 +261,7 @@ func newRouter() *router {
 		{name: "doctor", summary: "diagnose project and store health", run: runDoctor, capabilities: []capability{capRoot, capConfig, capJSON, capTrustMode},
 			help: commandHelp{
 				usage: []string{"doctor [--repair] [--capacity] [--strict]"},
-				long:  "Inspect durable .awa/ state and print a health verdict plus one line per finding, including local evidence/privacy findings. --repair restores safe, awa-owned state (e.g. the .awa/.gitignore guard). --capacity also sizes the watched generated-output roots; it never deletes or repairs them.",
+				long:  "Inspect durable .awa/ state and print a health verdict plus one line per finding, including local evidence/privacy findings. --repair restores safe, awa-owned state (e.g. the .awa/.gitignore guard) and removes the leftovers of a checkpoint publication that has no header. --capacity also sizes the watched generated-output roots; it never deletes or repairs them.",
 				flags: []flagHelp{
 					{"--repair", "restore safe awa-owned state where possible", ""},
 					{"--capacity", "also audit the logical size of watched effect roots", ""},

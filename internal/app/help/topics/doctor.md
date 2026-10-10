@@ -48,6 +48,8 @@ required-dir-*                a required .awa/ directory is missing or wrong
 checkpoint-*                  a checkpoint record, manifest, exclusion frontier,
                               or blob is corrupt, missing, or in a schema this
                               awa cannot read
+incomplete-checkpoint-*       a checkpoint directory has no header (interrupted
+                              or still running), or could not be inspected
 run-*                         a stored run's metadata, pointer, or payload is
                               corrupt, or in a schema this awa cannot read
 restore-recovery-*            a restore recovery observation is unreadable, in a
@@ -157,7 +159,7 @@ project output.
 
 ## What --repair will and will not do
 
-`--repair` performs exactly four safe, mechanical, awa-owned fixes, each for the
+`--repair` performs exactly five safe, mechanical, awa-owned fixes, each for the
 findings that name it:
 
 - restores the awa-owned `.awa/.gitignore` guard when it is missing or
@@ -166,18 +168,24 @@ findings that name it:
 - removes a lock record it proved stale — never one it cannot classify;
 - invalidates the worktree index when it is unreadable or stale, so the next scan
   rebuilds it. The index is acceleration-only state, so dropping it loses nothing
-  durable.
+  durable;
+- removes the leftover files of a checkpoint publication that has no header,
+  after waiting out running writers and looking again. A directory with a header
+  of any kind, or holding anything awa does not recognize, is left whole. The
+  files go even if the header was lost rather than never written; stored content
+  stays for `awa gc`.
 
 Everything else is diagnosed and left alone, including two cases worth knowing
 about before you reach for `--repair` expecting them. Overly broad `.awa/`
 permissions are reported, not changed: the finding names the exact `chmod` to
 run, because changing your filesystem permissions is your decision. And
 reclaiming unreferenced records is [awa help gc](gc.md)'s job — `doctor` never
-deletes a checkpoint, run, or blob.
+deletes a committed checkpoint, run, or blob.
 
-It never touches your worktree, never deletes a checkpoint or run you might
-still want, and never rewrites a corrupt record into a plausible-looking one. A
-finding it cannot fix safely stays reported — but only the findings the four
+It never touches your worktree, a run, a blob, a checkpoint with a header, or
+content it does not recognize, and never rewrites a corrupt record into a
+plausible-looking one. A
+finding it cannot fix safely stays reported — but only the findings the five
 repairs above cover are counted as repairable, so a finding doctor will never fix
 does not hold the exit code at 5 forever.
 

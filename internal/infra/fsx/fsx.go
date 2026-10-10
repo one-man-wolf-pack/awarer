@@ -419,6 +419,32 @@ func (w *sizeWalk) dir(d *os.File, depth int) error {
 	return nil
 }
 
+const publishTempPrefix = ".tmp-"
+
+// IsPublishTempName must not be widened past the two forms CreateTempAt produces — to
+// a bare prefix test, say: a caller reclaiming a crashed publication treats a match as
+// publisher-owned and would delete a foreign file that merely looks similar.
+func IsPublishTempName(name string) bool {
+	rest, ok := strings.CutPrefix(name, publishTempPrefix)
+	if !ok {
+		return false
+	}
+	first, second, dashed := strings.Cut(rest, "-")
+	return isDecimal(first) && (!dashed || isDecimal(second))
+}
+
+func isDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // PublishBytesNoFollow atomically and exclusively writes data as name inside relDir
 // under root, all through verified directory descriptors so neither the temp file,
 // the hard-link publish, nor the directory creation can be redirected by a symlinked
@@ -450,7 +476,7 @@ func PublishBytesAt(dir *os.File, name string, data []byte, perm os.FileMode) (e
 	if err := checkLeafName(name); err != nil {
 		return err
 	}
-	tmp, tmpName, err := CreateTempAt(dir, ".tmp-")
+	tmp, tmpName, err := CreateTempAt(dir, publishTempPrefix)
 	if err != nil {
 		return err
 	}
@@ -487,7 +513,7 @@ func PublishStreamNoFollow(root, relDir, name string, perm os.FileMode, write fu
 		return err
 	}
 	defer func() { _ = dir.Close() }()
-	tmp, tmpName, err := CreateTempAt(dir, ".tmp-")
+	tmp, tmpName, err := CreateTempAt(dir, publishTempPrefix)
 	if err != nil {
 		return err
 	}
@@ -522,7 +548,7 @@ func ReplaceBytesNoFollow(root, relDir, name string, data []byte, perm os.FileMo
 		return err
 	}
 	defer func() { _ = dir.Close() }()
-	tmp, tmpName, err := CreateTempAt(dir, ".tmp-")
+	tmp, tmpName, err := CreateTempAt(dir, publishTempPrefix)
 	if err != nil {
 		return err
 	}

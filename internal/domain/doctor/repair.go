@@ -25,6 +25,7 @@ const (
 	// state directory is ignored by git. Unlike the other kinds it creates state
 	// rather than removing it; the guard is awa-owned local state, never user data.
 	RepairWriteStateGitignore
+	RepairRemoveCheckpointRemnant
 )
 
 func (k RepairKind) String() string {
@@ -37,6 +38,8 @@ func (k RepairKind) String() string {
 		return "rebuild-index"
 	case RepairWriteStateGitignore:
 		return "write-state-gitignore"
+	case RepairRemoveCheckpointRemnant:
+		return "remove-checkpoint-remnant"
 	default:
 		return "unknown"
 	}
@@ -45,7 +48,7 @@ func (k RepairKind) String() string {
 // Valid reports whether k is a known repair kind.
 func (k RepairKind) Valid() bool {
 	return k == RepairRemoveTemp || k == RepairRemoveLock || k == RepairRebuildIndex ||
-		k == RepairWriteStateGitignore
+		k == RepairWriteStateGitignore || k == RepairRemoveCheckpointRemnant
 }
 
 // RepairAction is one safe, idempotent mutation with a typed target. Its target

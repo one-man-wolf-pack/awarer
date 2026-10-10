@@ -309,3 +309,36 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+func TestIsPublishTempNameMatchesOnlyPublisherForms(t *testing.T) {
+	dir, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dir.Close() }()
+	tmp, created, err := CreateTempAt(dir, publishTempPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tmp.Close()
+
+	for name, want := range map[string]bool{
+		created:           true,
+		".tmp-4242-7":     true,
+		".tmp-1234567890": true,
+		".tmp-":           false,
+		".tmp-4242-":      false,
+		".tmp--7":         false,
+		".tmp-4242-7-1":   false,
+		".tmp-manifest":   false,
+		".tmp-42x":        false,
+		"tmp-4242-7":      false,
+		".awa-tmp-4242":   false,
+		"manifest.jsonl":  false,
+		".tmp-4242-7.bak": false,
+	} {
+		if got := IsPublishTempName(name); got != want {
+			t.Errorf("IsPublishTempName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
