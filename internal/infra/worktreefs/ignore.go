@@ -6,48 +6,64 @@ import (
 	"path/filepath"
 	"strings"
 
-	ignore "github.com/sabhiram/go-gitignore"
+	gi "github.com/git-pkgs/gitignore"
+
+	"awarer/internal/domain/pattern"
 )
 
 // ignoreEngine evaluates paths against the layered ignore rules. Built-in
 // excludes, per-directory .gitignore, and per-directory .awaignore are merged
-// into one ordered pattern list per directory — built-in first, then all
+// into one ordered rule list per directory — built-in first, then all
 // .gitignore files shallow-to-deep, then all .awaignore files — so the highest
 // layer and deepest file win, and a higher-layer negation can re-include a path
-// a lower layer excluded. Nested patterns are rewritten to root-relative form so
-// a single matcher can evaluate them.
+// a lower layer excluded. Every rule keeps its declaring directory as a literal
+// base, so a single matcher evaluates the whole chain.
 //
-// gitByDir and awaByDir hold each directory's own rewritten patterns, so they name
+// gitByDir and awaByDir hold each directory's own matching rules, so they name
 // the effective rule boundaries; cache routes a directory to the compiled matcher
-// that decides for it, which for a directory adding no patterns of its own is
+// that decides for it, which for a directory adding no rules of its own is
 // literally its nearest ancestor boundary's instance. A compiled matcher is
-// immutable, so many directories can share one, and the expensive regexp state
-// therefore scales with rule boundaries rather than with directory count.
+// immutable, so many directories can share one, and compiled state therefore
+// scales with rule boundaries rather than with directory count.
 type ignoreEngine struct {
 	useGitignore bool
 	useAwaignore bool
+	warn         func(pattern.Diagnostic)
 
-	builtin  []string
-	gitByDir map[string][]string
-	awaByDir map[string][]string
-	cache    map[string]*ignore.GitIgnore
+	builtin  []compilerRule
+	gitByDir map[string][]compilerRule
+	awaByDir map[string][]compilerRule
+	cache    map[string]*gi.Matcher
 }
 
-func newIgnoreEngine(builtinExcludes []string, useGitignore, useAwaignore bool) *ignoreEngine {
+func newIgnoreEngine(excludes []pattern.Rule, useGitignore, useAwaignore bool, warn func(pattern.Diagnostic)) (*ignoreEngine, error) {
 	e := &ignoreEngine{
 		useGitignore: useGitignore,
 		useAwaignore: useAwaignore,
-		gitByDir:     map[string][]string{},
-		awaByDir:     map[string][]string{},
-		cache:        map[string]*ignore.GitIgnore{},
+		warn:         warn,
+		gitByDir:     map[string][]compilerRule{},
+		awaByDir:     map[string][]compilerRule{},
+		cache:        map[string]*gi.Matcher{},
 	}
-	// Built-in excludes are root-relative as written and need no rewriting.
-	for _, line := range builtinExcludes {
-		if isPattern(line) {
-			e.builtin = append(e.builtin, line)
+	builtin, err := e.vet(excludes)
+	if err != nil {
+		return nil, err
+	}
+	e.builtin = builtin
+	return e, nil
+}
+
+func (e *ignoreEngine) vet(rules []pattern.Rule) ([]compilerRule, error) {
+	vetted, diags, err := vetRules(rules)
+	if err != nil {
+		return nil, err
+	}
+	if e.warn != nil {
+		for _, d := range diags {
+			e.warn(d)
 		}
 	}
-	return e
+	return vetted, nil
 }
 
 // loadDirAt reads the ignore files in the directory at absDir, attributing them
@@ -69,42 +85,36 @@ func newIgnoreEngine(builtinExcludes []string, useGitignore, useAwaignore bool) 
 // matchers stay immutable for the life of the walk.
 func (e *ignoreEngine) loadDirAt(absDir, dirRel string) error {
 	if e.useGitignore {
-		lines, err := loadIgnoreFile(absDir, dirRel, ".gitignore")
+		rules, err := e.loadIgnoreFile(absDir, dirRel, ".gitignore")
 		if err != nil {
 			return err
 		}
-		if len(lines) > 0 {
-			e.gitByDir[dirRel] = lines
+		if len(rules) > 0 {
+			e.gitByDir[dirRel] = rules
 		}
 	}
 	if e.useAwaignore {
-		lines, err := loadIgnoreFile(absDir, dirRel, ".awaignore")
+		rules, err := e.loadIgnoreFile(absDir, dirRel, ".awaignore")
 		if err != nil {
 			return err
 		}
-		if len(lines) > 0 {
-			e.awaByDir[dirRel] = lines
+		if len(rules) > 0 {
+			e.awaByDir[dirRel] = rules
 		}
 	}
 	return nil
 }
 
 // ignores reports whether rel (a slash path relative to root) is excluded by the
-// ignore rules in force for its directory.
-// isDir must report whether rel names a directory, because a directory-only pattern
-// (e.g. "build/") applies to the directory entry itself — not only its descendants —
-// and the underlying matcher only recognizes that when the path is queried in its
-// directory form (with a trailing slash). Querying directories with the slash makes a
-// dir-only pattern prune the directory (and everything beneath it) regardless of
-// whether the directory existed when a baseline was recorded, and keeps a dir-only
-// pattern from ever matching a like-named file. A trailing slash never changes how a
-// non-dir-only pattern matches, so this is safe for every pattern.
-func (e *ignoreEngine) ignores(rel string, isDir bool) bool {
-	query := rel
-	if isDir {
-		query = rel + "/"
+// ignore rules in force for its directory. isDir must report whether rel names a
+// directory: a directory-only pattern (e.g. "build/") prunes the directory entry
+// itself and never matches a like-named file.
+func (e *ignoreEngine) ignores(rel string, isDir bool) (bool, error) {
+	m, err := e.combinedFor(parentDir(rel))
+	if err != nil {
+		return false, err
 	}
-	return e.combinedFor(parentDir(rel)).MatchesPath(query)
+	return m.MatchPath(rel, isDir), nil
 }
 
 // combinedFor returns the combined matcher deciding for files in directory dirRel.
@@ -114,24 +124,28 @@ func (e *ignoreEngine) ignores(rel string, isDir bool) bool {
 // — and the root, which carries the built-in layer — compiles its own. The cache
 // then maps every directory to a matcher, but distinct matchers exist only per
 // boundary.
-func (e *ignoreEngine) combinedFor(dirRel string) *ignore.GitIgnore {
+func (e *ignoreEngine) combinedFor(dirRel string) (*gi.Matcher, error) {
 	if c, ok := e.cache[dirRel]; ok {
-		return c
+		return c, nil
 	}
-	var c *ignore.GitIgnore
+	var c *gi.Matcher
+	var err error
 	if dirRel == "" || e.contributes(dirRel) {
-		c = e.compileFor(dirRel)
+		c, err = e.compileFor(dirRel)
 	} else {
-		c = e.combinedFor(parentDir(dirRel))
+		c, err = e.combinedFor(parentDir(dirRel))
+	}
+	if err != nil {
+		return nil, err
 	}
 	e.cache[dirRel] = c
-	return c
+	return c, nil
 }
 
 // contributes reports whether dirRel is an effective rule boundary: its own ignore
-// files supplied at least one pattern. Comment-only and empty files leave no
-// contribution behind (loadDirAt stores nothing for them), so they are not
-// boundaries.
+// files supplied at least one matching rule. Files holding only blank, comment, or
+// never-matching lines leave no contribution behind (loadDirAt stores nothing for
+// them), so they are not boundaries.
 func (e *ignoreEngine) contributes(dirRel string) bool {
 	if _, ok := e.gitByDir[dirRel]; ok {
 		return true
@@ -160,18 +174,18 @@ func parentDir(rel string) string {
 // ancestors, in precedence order. The whole ordered chain is compiled afresh rather
 // than appended to the parent's matcher: a local .gitignore must still precede an
 // inherited .awaignore, which appending would invert.
-func (e *ignoreEngine) compileFor(dirRel string) *ignore.GitIgnore {
+func (e *ignoreEngine) compileFor(dirRel string) (*gi.Matcher, error) {
 	chain := ancestorChain(dirRel)
 
-	lines := append([]string(nil), e.builtin...)
+	rules := append([]compilerRule(nil), e.builtin...)
 	for _, d := range chain {
-		lines = append(lines, e.gitByDir[d]...)
+		rules = append(rules, e.gitByDir[d]...)
 	}
 	for _, d := range chain {
-		lines = append(lines, e.awaByDir[d]...)
+		rules = append(rules, e.awaByDir[d]...)
 	}
 
-	return ignore.CompileIgnoreLines(lines...)
+	return aggregate(rules)
 }
 
 // ancestorChain returns dirRel and all its ancestors, shallowest first, ending
@@ -195,11 +209,10 @@ func ancestorChain(dirRel string) []string {
 	return chain
 }
 
-// loadIgnoreFile reads one ignore file and returns its pattern lines. dirRel is the
-// directory holding the file ("" for root); patterns are rewritten to be relative to
-// the project root so a single combined matcher can evaluate them. Blank and comment
-// lines are dropped, so a file carrying none leaves no contribution at all.
-func loadIgnoreFile(absDir, dirRel, name string) ([]string, error) {
+// loadIgnoreFile reads one ignore file and returns its matching rules, declared at
+// the virtual directory dirRel ("" for root). A file carrying none leaves no
+// contribution at all.
+func (e *ignoreEngine) loadIgnoreFile(absDir, dirRel, name string) ([]compilerRule, error) {
 	// absDir is an OS filesystem path, so join with filepath; the slash-separated
 	// path helpers elsewhere are only for project-relative keys.
 	data, err := os.ReadFile(filepath.Join(absDir, name))
@@ -209,55 +222,14 @@ func loadIgnoreFile(absDir, dirRel, name string) ([]string, error) {
 		}
 		return nil, err
 	}
-	var lines []string
-	for _, raw := range strings.Split(string(data), "\n") {
-		if !isPattern(raw) {
-			continue
-		}
-		lines = append(lines, rewritePattern(dirRel, raw))
-	}
-	return lines, nil
+	return e.vet(fileRules(path.Join(dirRel, name), dirRel, string(data)))
 }
 
-// isPattern reports whether a raw ignore line carries a pattern (not blank, not a
-// comment).
-func isPattern(raw string) bool {
-	t := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
-	return t != "" && !strings.HasPrefix(t, "#")
-}
-
-// rewritePattern rewrites a gitignore pattern from the directory dirRel to a
-// root-relative pattern. Root patterns are returned unchanged. For nested
-// directories, anchored patterns (a leading or internal slash) are prefixed with
-// the directory; unanchored patterns (a bare glob) are made to match at any
-// depth under the directory via "/**/". Negation and directory-only ("/")
-// suffixes are preserved.
-func rewritePattern(dirRel, raw string) string {
-	line := strings.TrimRight(raw, "\r")
-	if dirRel == "" {
-		return line
+func fileRules(file, base, data string) []pattern.Rule {
+	lines := strings.Split(data, "\n")
+	rules := make([]pattern.Rule, len(lines))
+	for i, line := range lines {
+		rules[i] = pattern.Rule{Text: strings.TrimSuffix(line, "\r"), Base: base, Origin: pattern.FileLine(file, i+1)}
 	}
-	body := line
-	negate := strings.HasPrefix(body, "!")
-	if negate {
-		body = body[1:]
-	}
-	dirOnly := strings.HasSuffix(body, "/")
-	core := strings.TrimSuffix(body, "/")
-	anchored := strings.HasPrefix(core, "/") || strings.Contains(core, "/")
-	core = strings.TrimPrefix(core, "/")
-
-	var rebuilt string
-	if anchored {
-		rebuilt = dirRel + "/" + core
-	} else {
-		rebuilt = dirRel + "/**/" + core
-	}
-	if dirOnly {
-		rebuilt += "/"
-	}
-	if negate {
-		rebuilt = "!" + rebuilt
-	}
-	return rebuilt
+	return rules
 }

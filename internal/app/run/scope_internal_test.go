@@ -1,9 +1,14 @@
 package run
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/pattern"
+	"awarer/internal/domain/runcache"
 	"awarer/internal/infra/blake3hash"
 )
 
@@ -147,6 +152,65 @@ func TestRunConfigHashSensitivity(t *testing.T) {
 		advisory.Doctor.WatchedRootWarningSize = th
 		if runConfigHash(advisory, h).String() != baseHash {
 			t.Errorf("doctor.watched_root_warning_size = %s changed the run config hash", th)
+		}
+	}
+}
+
+func TestRunConfigHashSeparatesMatchingGenerations(t *testing.T) {
+	h := blake3hash.New()
+	cfg := config.Defaults()
+	if runConfigHashAt(pattern.Generation, cfg, h) != runConfigHash(cfg, h) {
+		t.Error("the keyed run config hash does not carry the current matching generation")
+	}
+	if runConfigHashAt(pattern.Generation, cfg, h) == runConfigHashAt(pattern.Generation+1, cfg, h) {
+		t.Error("identical run configuration under another matching generation shares a keyed run config hash")
+	}
+}
+
+func TestRunScopeAttributesExcludes(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Scope.ExtraExcludes = []string{"s0"}
+	cfg.Run.ExtraExcludes = []string{"r0"}
+	rules := effectiveScanScope(cfg, ScopeOverrides{Exclude: []string{"cli0"}}).ExcludeRules()
+	got := map[string]string{}
+	for _, r := range rules {
+		got[r.Text] = r.Origin.String()
+	}
+	for text, want := range map[string]string{"s0": "scope.extra_excludes[0]", "r0": "run.extra_excludes[0]", "cli0": "--exclude[0]"} {
+		if got[text] != want {
+			t.Errorf("origin of %q = %q, want %q", text, got[text], want)
+		}
+	}
+}
+
+func TestProductionKeyInputCarriesTheGenerationSensitiveRunConfigHash(t *testing.T) {
+	h := blake3hash.New()
+	cfg := config.Defaults()
+	s := &Service{deps: Deps{Hasher: h}}
+	scope := effectiveScanScope(cfg, ScopeOverrides{})
+
+	ki := s.buildKeyInput(Request{Argv: []string{"tool"}}, cfg, scope, hashing.TreeHash{}, runcache.EffectObservation{}, "", "", runcache.Environment{})
+	if ki.RunConfigHash != runConfigHashAt(pattern.Generation, cfg, h) {
+		t.Error("the assembled run key input does not carry the generation-sensitive run config hash")
+	}
+	if ki.RunConfigHash == runConfigHashAt(pattern.Generation+1, cfg, h) {
+		t.Error("the assembled run key input is identical under another matching generation")
+	}
+}
+
+func TestStoredScopeWithALineFeedIsALocatedExplainRefusal(t *testing.T) {
+	id, err := runcache.ParseRunID("18dce8d56a7800000123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := runcache.RunEntry{ID: id, KeyInput: runcache.KeyInput{ExcludeScope: []string{"ok", "a\nb"}}}
+	_, err = (&Service{}).requestFromEntry(Request{}, entry)
+	if err == nil || errors.Is(err, runcache.ErrCorruptStore) {
+		t.Fatalf("requestFromEntry() error = %v, want a refusal that is not store corruption", err)
+	}
+	for _, want := range []string{id.String(), "exclude[1]", `"a\nb"`, "line feed", "intact"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
 		}
 	}
 }

@@ -107,7 +107,7 @@ func runStateResolve(w *output.Writer, inv invocation) error {
 		return genericErrorf("resolving project paths: %v", err)
 	}
 
-	assessor, nowCtx, cleanup, err := buildStateContext(inv, proj, layout, ref.Kind == state.RefNow)
+	assessor, nowCtx, cleanup, err := buildStateContext(w, inv, proj, layout, ref.Kind == state.RefNow)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func runStateCompare(w *output.Writer, inv invocation) error {
 	}
 
 	needNow := rng.Left.Kind == state.RefNow || rng.Right.Kind == state.RefNow
-	assessor, nowCtx, cleanup, err := buildStateContext(inv, proj, layout, needNow)
+	assessor, nowCtx, cleanup, err := buildStateContext(w, inv, proj, layout, needNow)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func runStateCompare(w *output.Writer, inv invocation) error {
 // while a current config is malformed. Only when a "now" side is present is the
 // effective config loaded exactly once; a malformed required config is the normal
 // config error (exit 4), never a provider unavailable outcome.
-func buildStateContext(inv invocation, proj projfs.Project, layout paths.Layout, needNow bool) (*stateprovider.Assessor, state.NowContext, func(), error) {
+func buildStateContext(w *output.Writer, inv invocation, proj projfs.Project, layout paths.Layout, needNow bool) (*stateprovider.Assessor, state.NowContext, func(), error) {
 	cfg, err := stateConfig(needNow, layout, inv.options, configcmd.LoadLayered)
 	if err != nil {
 		return nil, state.NowContext{}, nil, err
@@ -202,7 +202,7 @@ func buildStateContext(inv invocation, proj projfs.Project, layout paths.Layout,
 		// resolve), so the CLI only supplies the project and effective config here.
 		nowCtx = state.NowContext{Project: proj, Config: cfg}
 	}
-	resolver, cleanup, err := buildStateResolver(layout, cfg)
+	resolver, cleanup, err := buildStateResolver(layout, cfg, warnPatterns(w))
 	if err != nil {
 		return nil, state.NowContext{}, nil, err
 	}

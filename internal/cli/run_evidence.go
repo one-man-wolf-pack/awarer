@@ -32,11 +32,11 @@ func buildRunShowContext(ctx context.Context, opts GlobalOptions) (*apprun.Servi
 		return nil, nil, nil, err
 	}
 	cfg := domainconfig.Defaults()
-	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone)
+	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	resolver, resolverCleanup, err := buildStateResolver(layout, cfg)
+	resolver, resolverCleanup, err := buildStateResolver(layout, cfg, nil)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, err

@@ -14,6 +14,7 @@ import (
 	domconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/doctor"
 	"awarer/internal/domain/paths"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/fsx"
 	"awarer/internal/infra/worktreefs"
@@ -52,6 +53,8 @@ func (s *Service) checkConfig(ctx context.Context, layout paths.Layout, resolved
 		rep.pass()
 	}
 
+	s.checkPatterns(layout, resolved, rep)
+
 	// content-storage-enabled: storing file contents is the point of checkpoints, but in
 	// a project that looks like it holds secrets it means a plaintext secret file can
 	// become a blob in .awa/store/blobs. Flag only a recognized file a checkpoint would
@@ -72,6 +75,35 @@ func (s *Service) checkConfig(ctx context.Context, layout paths.Layout, resolved
 	}
 	if capture.eligible == "" && capture.uncertain == "" {
 		rep.pass()
+	}
+}
+
+func (s *Service) checkPatterns(layout paths.Layout, resolved domconfig.ResolvedConfig, rep *report) {
+	cfg := resolved.Config()
+	rules := pattern.KeyRules("scope.extra_excludes", cfg.Scope.ExtraExcludes)
+	rules = append(rules, pattern.KeyRules("history.extra_excludes", cfg.History.ExtraExcludes)...)
+	rules = append(rules, pattern.KeyRules("run.extra_excludes", cfg.Run.ExtraExcludes)...)
+	diags, err := worktreefs.RootDiagnostics(layout.Root(), rules,
+		cfg.Scope.UseGitignore || cfg.Run.UseGitignore, cfg.Scope.UseAwaignore || cfg.Run.UseAwaignore)
+	if err != nil {
+		rep.add(finding(doctor.CodePatternCheckIncomplete, doctor.SeverityWarning, doctor.SubsystemConfig,
+			"", "exclusion patterns", "could not check exclusion patterns: "+err.Error(), false))
+		return
+	}
+	if len(diags) == 0 {
+		rep.pass()
+		return
+	}
+	for _, d := range diags {
+		var path string
+		if d.Origin.InFile() {
+			path = filepath.Join(layout.Root(), filepath.FromSlash(d.Origin.File))
+		} else {
+			path = resolved.SourcePathOf(d.Origin.Key)
+		}
+		rep.add(finding(doctor.CodePatternNeverMatches, doctor.SeverityWarning, doctor.SubsystemConfig,
+			path, d.Origin.String(),
+			fmt.Sprintf("pattern %q never matches (%s); it excludes nothing — correct or remove it", d.Text, d.Reason), false))
 	}
 }
 
@@ -201,7 +233,11 @@ func secretCaptureCandidates(ctx context.Context, layout paths.Layout, cfg domco
 	}
 	walker := worktreefs.New()
 	scope := cfg.HistoryScanScope()
-	retention := checkpointcmd.NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns)
+	retention, err := checkpointcmd.NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns)
+	if err != nil {
+		out.uncertain = "compiling checkpoint.hash_only_patterns: " + err.Error()
+		return out
+	}
 	for _, e := range entries {
 		if ctx.Err() != nil {
 			return captureCheck{} // Run reports the interruption, not a partial answer

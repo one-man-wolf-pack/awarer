@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/perfdiag"
 	"awarer/internal/domain/runcache"
 	"awarer/internal/domain/worktree"
@@ -387,11 +388,14 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 // the symlink policy and env are taken from the current config, so a genuine config
 // change still surfaces in the comparison.
 func (s *Service) requestFromEntry(base Request, entry runcache.RunEntry) (Request, error) {
+	ki := entry.KeyInput
+	if err := storedScopeProblem(entry); err != nil {
+		return Request{}, err
+	}
 	layout, err := base.Project.Paths()
 	if err != nil {
 		return Request{}, err
 	}
-	ki := entry.KeyInput
 	cwd := ki.CWD
 	absDir := filepath.Join(layout.Root(), filepath.FromSlash(cwd.String()))
 	scope := config.ScanScope{
@@ -414,6 +418,17 @@ func (s *Service) requestFromEntry(base Request, entry runcache.RunEntry) (Reque
 		TTYAllowed:     ki.TTYAllowed,
 		Policy:         Policy{AllowSkippedInputs: ki.AllowSkippedInputs},
 	}, nil
+}
+
+// storedScopeProblem refuses a recorded scope the current pattern language cannot
+// express as written. It is a limit of re-observing now, not damage to the record.
+func storedScopeProblem(entry runcache.RunEntry) error {
+	for i, text := range entry.KeyInput.ExcludeScope {
+		if problem := pattern.CarrierProblem(text, false); problem != "" {
+			return fmt.Errorf("cannot re-observe the scope of stored run %s: its exclude[%d] %q %s; the stored run itself is intact and stays readable", entry.ID, i, text, problem)
+		}
+	}
+	return nil
 }
 
 // SkippedLatest reports the newer records a "--last" selection passed over before it

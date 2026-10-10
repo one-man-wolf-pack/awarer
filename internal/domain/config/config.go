@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"awarer/internal/domain/pattern"
 )
 
 // Config is the validated, domain-safe configuration for a project. Each
@@ -189,6 +191,11 @@ type ScanScope struct {
 	FollowSymlinks         bool
 	SymlinkMaxDepth        int
 	AllowSymlinkRootEscape bool
+
+	// ExcludeOrigins is diagnostic attribution for Exclude, parallel to it when
+	// present. It must stay out of every scope identity: two scopes excluding the
+	// same text are the same policy wherever the text was written.
+	ExcludeOrigins []pattern.Origin
 }
 
 // CanonicalInclude returns the scope's canonical include list (see the package
@@ -200,15 +207,44 @@ func (s ScanScope) CanonicalInclude() []string { return CanonicalInclude(s.Inclu
 // excludes (protected + baseline + history defaults + the common and history-only
 // additive excludes), and the scope's ignore-source and symlink policy.
 func (c Config) HistoryScanScope() ScanScope {
+	exclude := EffectiveHistoryExcludes(c.Scope.ExtraExcludes, c.History.ExtraExcludes)
 	return ScanScope{
 		Include:                c.Scope.Include,
-		Exclude:                EffectiveHistoryExcludes(c.Scope.ExtraExcludes, c.History.ExtraExcludes),
+		Exclude:                exclude,
+		ExcludeOrigins:         ExcludeOrigins(exclude, c.Scope.ExtraExcludes, "history.extra_excludes", c.History.ExtraExcludes),
 		UseGitignore:           c.Scope.UseGitignore,
 		UseAwaignore:           c.Scope.UseAwaignore,
 		FollowSymlinks:         c.Scope.FollowSymlinks,
 		SymlinkMaxDepth:        c.Scope.SymlinkMaxDepth,
 		AllowSymlinkRootEscape: c.Scope.AllowSymlinkRootEscape,
 	}
+}
+
+func (s ScanScope) ExcludeRules() []pattern.Rule {
+	rules := pattern.KeyRules("exclude", s.Exclude)
+	if len(s.ExcludeOrigins) == len(rules) {
+		for i := range rules {
+			rules[i].Origin = s.ExcludeOrigins[i]
+		}
+	}
+	return rules
+}
+
+// ExcludeOrigins attributes an effective exclude list by position: it must end
+// with scopeExtra followed by familyExtra, as the Effective*Excludes helpers build it.
+func ExcludeOrigins(effective, scopeExtra []string, familyKey string, familyExtra []string) []pattern.Origin {
+	origins := make([]pattern.Origin, 0, len(effective))
+	defaults := len(effective) - len(scopeExtra) - len(familyExtra)
+	for i := range defaults {
+		origins = append(origins, pattern.KeyElement("built-in exclude", i))
+	}
+	for i := range scopeExtra {
+		origins = append(origins, pattern.KeyElement("scope.extra_excludes", i))
+	}
+	for i := range familyExtra {
+		origins = append(origins, pattern.KeyElement(familyKey, i))
+	}
+	return origins
 }
 
 // Validate checks a resolved scan scope: a non-empty include whose entries stay
@@ -635,6 +671,10 @@ func (c Config) Validate() error {
 	p = append(p, pathProblems("history.extra_excludes", c.History.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("run.extra_excludes", c.Run.ExtraExcludes, nonEmptyOnly)...)
 	p = append(p, pathProblems("checkpoint.hash_only_patterns", c.Checkpoint.HashOnlyPatterns, nonEmptyOnly)...)
+	p = append(p, carrierProblems("scope.extra_excludes", c.Scope.ExtraExcludes, false)...)
+	p = append(p, carrierProblems("history.extra_excludes", c.History.ExtraExcludes, false)...)
+	p = append(p, carrierProblems("run.extra_excludes", c.Run.ExtraExcludes, false)...)
+	p = append(p, carrierProblems("checkpoint.hash_only_patterns", c.Checkpoint.HashOnlyPatterns, true)...)
 	p = append(p, effectRootSelectorProblems(c.Run.WatchedEffectRoots)...)
 	p = append(p, envAllowlistProblems(c.Run.EnvAllowlist)...)
 	if !c.Hashing.TrustMode.Valid() {
@@ -722,6 +762,29 @@ func pathProblems(field string, items []string, rule pathRule) []string {
 		}
 		if escapesRoot(it) {
 			probs = append(probs, fmt.Sprintf("%s[%d] %q must not escape the project root", field, i, it))
+		}
+	}
+	return probs
+}
+
+// NeverMatchingError refuses a pattern list in which a never-matching rule is a
+// configuration error rather than a warning. It is nil for no diagnostics.
+func NeverMatchingError(diags []pattern.Diagnostic) error {
+	if len(diags) == 0 {
+		return nil
+	}
+	problems := make([]string, len(diags))
+	for i, d := range diags {
+		problems[i] = d.String()
+	}
+	return &ValidationError{Problems: problems}
+}
+
+func carrierProblems(field string, items []string, strict bool) []string {
+	var probs []string
+	for i, it := range items {
+		if problem := pattern.CarrierProblem(it, strict); problem != "" {
+			probs = append(probs, fmt.Sprintf("%s[%d] %s", field, i, problem))
 		}
 	}
 	return probs

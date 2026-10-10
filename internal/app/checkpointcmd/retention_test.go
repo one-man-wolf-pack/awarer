@@ -2,11 +2,14 @@ package checkpointcmd
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
 	"awarer/internal/infra/worktreefs"
@@ -227,7 +230,7 @@ func TestRetentionIsAppliedIdenticallyOnEveryReopen(t *testing.T) {
 	h.writeFile(t, ".env", dummyEnv)
 	h.writeFile(t, "a.txt", "a")
 	cfg := config.Defaults()
-	src := &manifestSource{svc: h.svc, retention: NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns), scan: h.scan(t, cfg)}
+	src := &manifestSource{svc: h.svc, retention: mustRetention(t, cfg.Checkpoint), scan: h.scan(t, cfg)}
 	for pass := 0; pass < 2; pass++ {
 		cur, err := src.Open(context.Background())
 		if err != nil {
@@ -290,4 +293,60 @@ func TestHashOnlyPatternsEnterOnlyTheCheckpointPolicyHash(t *testing.T) {
 			t.Errorf("%s changed the tree hash", name)
 		}
 	}
+}
+
+func TestCheckpointPolicyHashSeparatesMatchingGenerations(t *testing.T) {
+	h := blake3hash.New()
+	empty := config.Defaults()
+	empty.Checkpoint.HashOnlyPatterns = []string{}
+	if checkpointPolicyHashAt(pattern.Generation, empty, h) != checkpointPolicyHashAt(pattern.Generation+1, empty, h) {
+		t.Error("an empty selection has no patterns to reinterpret; its policy hash must not depend on the generation")
+	}
+	def := config.Defaults()
+	if checkpointPolicyHashAt(pattern.Generation, def, h) != checkpointPolicyHash(def, h) {
+		t.Error("the checkpoint policy hash does not carry the current matching generation")
+	}
+	if checkpointPolicyHashAt(pattern.Generation, def, h) == checkpointPolicyHashAt(pattern.Generation+1, def, h) {
+		t.Error("an identical selection under another matching generation shares a checkpoint policy hash")
+	}
+}
+
+func TestNeverMatchingRetentionPatternRefusesBeforePublication(t *testing.T) {
+	h := setup(t)
+	h.writeFile(t, "a.env", dummyEnv)
+	cfg := config.Defaults()
+	cfg.Checkpoint.HashOnlyPatterns = []string{"*.env", "x["}
+
+	_, err := h.svc.Run(context.Background(), Request{Project: h.project, Config: cfg, CommandCwd: h.root})
+	var invalid *config.ValidationError
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "checkpoint.hash_only_patterns[1]") {
+		t.Fatalf("Checkpoint() error = %v, want a located configuration refusal", err)
+	}
+	layout, err := h.project.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published, _ := os.ReadDir(layout.CheckpointsDir()); len(published) != 0 {
+		t.Errorf("a refused retention list still published %d checkpoint entries", len(published))
+	}
+	h.requireNoStoredBlobs(t)
+}
+
+func TestRetentionCompilerFailureFailsTheCheckpoint(t *testing.T) {
+	boom := errors.New("compiler failure")
+	_, err := NewRetention(config.Defaults().Checkpoint, func([]pattern.Rule) (worktree.PathSelector, []pattern.Diagnostic, error) {
+		return nil, nil, boom
+	})
+	if !errors.Is(err, boom) {
+		t.Errorf("NewRetention() error = %v, want the compiler failure", err)
+	}
+}
+
+func mustRetention(t *testing.T, cfg config.Checkpoint) Retention {
+	t.Helper()
+	r, err := NewRetention(cfg, worktreefs.CompilePatterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

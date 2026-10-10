@@ -359,6 +359,7 @@ func TestNoDocumentMakesAForbiddenClaim(t *testing.T) {
 // own test, so it is deliberately not restated here.)
 var reviewedDoctorCodePrefixes = map[string]string{
 	"required-dir-":     "missing and not-a-directory are the same finding about the same path",
+	"pattern-":          "a never-matching exclusion rule, or the check for one that could not run",
 	"checkpoint-":       "five ways one checkpoint record can be unreadable; the reader acts on all of them the same way",
 	"run-":              "four ways one stored run can be unreadable",
 	"restore-recovery-": "the two ways a restore's undo evidence stops being usable: the record itself, or the content it captured",

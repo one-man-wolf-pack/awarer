@@ -322,8 +322,8 @@ func TestPredecessorStoreKeepsPositiveEvidenceAndBlocksOnlyAbsence(t *testing.T)
 	}
 
 	_, deletion := restoreJSON(t, root, predecessorCheckpoint, "--", "run-made.txt")
-	if got := failureReasons(deletion, "run-made.txt"); !slices.Equal(got, []string{"absence-unproved"}) {
-		t.Errorf("deletion from a predecessor: reasons = %v, want absence-unproved", got)
+	if got := failureReasons(deletion, "run-made.txt"); !slices.Equal(got, []string{"policy-incompatible"}) {
+		t.Errorf("deletion from a predecessor: reasons = %v, want policy-incompatible", got)
 	}
 	_, all := restoreJSON(t, root, "--all", predecessorCheckpoint)
 	if all.Data.Complete || all.Data.Counts.DeleteFile != 0 {
@@ -335,8 +335,8 @@ func TestPredecessorStoreKeepsPositiveEvidenceAndBlocksOnlyAbsence(t *testing.T)
 	// covered-but-unproved path a deletion.
 	writeAt(t, root, ".awaignore", "/kind-boundary/\n")
 	_, undo := restoreJSON(t, root, predecessorRecovery, "--", "z-hidden.txt")
-	if got := failureReasons(undo, "z-hidden.txt"); !slices.Equal(got, []string{"absence-unproved"}) {
-		t.Errorf("predecessor undo reasons = %v (counts %+v), want absence-unproved", got, undo.Data.Counts)
+	if got := failureReasons(undo, "z-hidden.txt"); !slices.Equal(got, []string{"policy-incompatible"}) {
+		t.Errorf("predecessor undo reasons = %v (counts %+v), want policy-incompatible", got, undo.Data.Counts)
 	}
 	if !existsAt(root, "z-hidden.txt") {
 		t.Error("a preview removed a file")
@@ -349,8 +349,10 @@ func TestPredecessorStoreKeepsPositiveEvidenceAndBlocksOnlyAbsence(t *testing.T)
 	if d := compareJSON(t, root, predecessorCheckpoint+".."+predecessorCheckpoint); d.Outcome != "equal" {
 		t.Errorf("same predecessor record compares %q, want equal", d.Outcome)
 	}
-	if d := compareJSON(t, root, predecessorCheckpoint+"..now"); d.Outcome != "incomparable" || d.Reason != "absence-unproved" {
-		t.Errorf("predecessor..now = %q reason %q, want incomparable absence-unproved", d.Outcome, d.Reason)
+	// The predecessor matched its exclusion text under other pattern semantics, so
+	// its scan policy is not this binary's even where the text is identical.
+	if d := compareJSON(t, root, predecessorCheckpoint+"..now"); d.Outcome != "incomparable" || d.Reason != "incompatible-identity-policy" {
+		t.Errorf("predecessor..now = %q reason %q, want incomparable incompatible-identity-policy", d.Outcome, d.Reason)
 	}
 	for _, rng := range []string{
 		predecessorCheckpoint + ".." + predecessorRepeat,

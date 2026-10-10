@@ -157,7 +157,7 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 	// file content, never standing an indexed hash in for it. No index is wired, because
 	// its lookups would be skipped, and none is needed — nothing here writes, so no
 	// presence lock is taken either.
-	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexNone)
+	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexNone, warnPatterns(w))
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaults(t *testing.T) {
 	c := Defaults()
@@ -280,5 +283,57 @@ func TestScopeCanonicalInclude(t *testing.T) {
 		if !eq(got, c.want) {
 			t.Errorf("CanonicalInclude(%v) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestPatternListCarrierValidation(t *testing.T) {
+	oldLists := map[string]func(*Config, []string){
+		"scope.extra_excludes":   func(c *Config, v []string) { c.Scope.ExtraExcludes = v },
+		"history.extra_excludes": func(c *Config, v []string) { c.History.ExtraExcludes = v },
+		"run.extra_excludes":     func(c *Config, v []string) { c.Run.ExtraExcludes = v },
+	}
+	for key, set := range oldLists {
+		for _, lf := range []string{"a\nb", "a\n", "a\r\n", "#comment\n"} {
+			c := Defaults()
+			set(&c, []string{"ok", lf})
+			err := c.Validate()
+			if err == nil || !strings.Contains(err.Error(), key+"[1] must not contain a line feed") {
+				t.Errorf("%s = %q: Validate() = %v, want a located line-feed refusal", key, lf, err)
+			}
+		}
+		for _, cr := range []string{"a\r", "a\rb", "a\r\r ", "#comment\r"} {
+			c := Defaults()
+			set(&c, []string{cr})
+			if err := c.Validate(); err != nil {
+				t.Errorf("%s = %q: Validate() = %v, want the predecessor's CR values still accepted", key, cr, err)
+			}
+		}
+	}
+	for _, v := range []string{"a\nb", "a\r\n", "a\r", "a\rb", "#comment\r"} {
+		c := Defaults()
+		c.Checkpoint.HashOnlyPatterns = []string{"*.env", "ok", v}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "checkpoint.hash_only_patterns[2] must not contain") {
+			t.Errorf("hash_only_patterns = %q: Validate() = %v, want a located CR/LF refusal", v, err)
+		}
+	}
+}
+
+func TestScanScopeAttributesConfiguredExcludes(t *testing.T) {
+	c := Defaults()
+	c.Scope.ExtraExcludes = []string{"s0", "s1"}
+	c.History.ExtraExcludes = []string{"h0"}
+	rules := c.HistoryScanScope().ExcludeRules()
+	got := map[string]string{}
+	for _, r := range rules {
+		got[r.Text] = r.Origin.String()
+	}
+	for text, want := range map[string]string{"s0": "scope.extra_excludes[0]", "s1": "scope.extra_excludes[1]", "h0": "history.extra_excludes[0]", ".git": "built-in exclude[0]"} {
+		if got[text] != want {
+			t.Errorf("origin of %q = %q, want %q", text, got[text], want)
+		}
+	}
+	if bare := (ScanScope{Exclude: []string{"x"}}).ExcludeRules(); bare[0].Origin.String() != "exclude[0]" {
+		t.Errorf("unattributed scope origin = %q", bare[0].Origin)
 	}
 }

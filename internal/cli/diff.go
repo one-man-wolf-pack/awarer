@@ -56,7 +56,7 @@ func runDiff(w *output.Writer, inv invocation) error {
 		algorithm = da.algorithm
 	}
 
-	resolver, cleanup, err := buildStateResolver(layout, cfg)
+	resolver, cleanup, err := buildStateResolver(layout, cfg, warnPatterns(w))
 	if err != nil {
 		return err
 	}

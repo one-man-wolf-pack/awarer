@@ -24,6 +24,7 @@ import (
 
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/paths"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/fsx"
 )
@@ -41,10 +42,14 @@ func protectedNames() map[string]bool {
 
 // Walker walks a project worktree. It is stateless and safe to reuse across
 // scans; per-scan state lives in the walk it creates.
-type Walker struct{}
+type Walker struct {
+	warn func(pattern.Diagnostic)
+}
 
 // New returns a Walker.
 func New() *Walker { return &Walker{} }
+
+func NewReporting(warn func(pattern.Diagnostic)) *Walker { return &Walker{warn: warn} }
 
 // walk holds the state of a single Walk invocation.
 type walk struct {
@@ -70,11 +75,15 @@ func (w *Walker) Walk(ctx context.Context, layout paths.Layout, scope config.Sca
 	if err != nil {
 		realRoot = root // best effort; escape checks fall back to the literal root
 	}
+	eng, err := newIgnoreEngine(scope.ExcludeRules(), scope.UseGitignore, scope.UseAwaignore, w.warn)
+	if err != nil {
+		return err
+	}
 	st := &walk{
 		ctx:       ctx,
 		root:      root,
 		realRoot:  realRoot,
-		eng:       newIgnoreEngine(scope.Exclude, scope.UseGitignore, scope.UseAwaignore),
+		eng:       eng,
 		inc:       newIncludeFilter(scope.CanonicalInclude()),
 		protected: protectedNames(),
 		scope:     scope,
@@ -162,7 +171,11 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 	// scoped to is scanned even if a default/baseline/ignore-file rule would drop
 	// it. Protected paths were already handled above and stay excluded regardless.
 	if !w.inc.overridesExcludes() {
-		if w.eng.ignores(rel, isDir) {
+		ignored, err := w.eng.ignores(rel, isDir)
+		if err != nil {
+			return err
+		}
+		if ignored {
 			if err := w.omitNode(rel, isDir, isSymlink); err != nil {
 				return err
 			}
@@ -567,10 +580,13 @@ func (w *walk) walkRealChildren(realDir, virtualDir string, depth int, chain map
 
 		// Protected names are a hard boundary inside followed subtrees too, so an
 		// ignore-file negation cannot re-include VCS or awa state reached via a symlink.
-		omitted := w.protected[e.Name()] ||
-			!w.inc.allows(childVirtual, dirLike) ||
-			// As in base(), an explicit narrowed scope outranks the ignore engine.
-			(!w.inc.overridesExcludes() && w.eng.ignores(childVirtual, isDir))
+		omitted := w.protected[e.Name()] || !w.inc.allows(childVirtual, dirLike)
+		// As in base(), an explicit narrowed scope outranks the ignore engine.
+		if !omitted && !w.inc.overridesExcludes() {
+			if omitted, err = w.eng.ignores(childVirtual, isDir); err != nil {
+				return err
+			}
+		}
 		if omitted {
 			if err := w.omitNode(childVirtual, isDir, isSymlink); err != nil {
 				return err

@@ -32,12 +32,12 @@ import (
 // mutates the store, holds no presence lock, and any open/read failure quietly
 // degrades to re-hashing (correctness over acceleration). It returns a cleanup that
 // closes the index, which the caller must defer.
-func buildStateResolver(layout paths.Layout, cfg domainconfig.Config) (*state.Resolver, func(), error) {
+func buildStateResolver(layout paths.Layout, cfg domainconfig.Config, warn patternWarner) (*state.Resolver, func(), error) {
 	hasher := blake3hash.New()
 	idx := &lazyReadOnlyIndex{dir: layout.IndexesDir()}
 	res := state.NewResolver(state.Deps{
 		Checkpoints: checkpointjson.NewRepo(layout),
-		Scanner:     scanner.NewReadOnly(worktreefs.New(), hasher, idx),
+		Scanner:     scanner.NewReadOnly(worktreefs.NewReporting(warn), hasher, idx),
 		Blobs:       blobstore.New(layout, hasher),
 		Hasher:      hasher,
 		Runs:        runstore.New(layout, hasher),

@@ -2,13 +2,14 @@ package checkpointcmd
 
 import (
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/worktree"
 )
 
 // PatternCompiler compiles an ordered pattern list into a path selector. The
 // composition root supplies the worktree filesystem's compiler, so the checkpoint
 // policy reuses the existing ignore-pattern language rather than owning one.
-type PatternCompiler func(patterns []string) worktree.PathSelector
+type PatternCompiler func(rules []pattern.Rule) (worktree.PathSelector, []pattern.Diagnostic, error)
 
 // Retention is one checkpoint operation's byte-retention policy: the global
 // store_file_contents switch plus the compiled hash_only_patterns selection. It is
@@ -22,8 +23,19 @@ type Retention struct {
 // NewRetention compiles the effective checkpoint policy. The pattern list arrives
 // already resolved by the configuration layers — unspecified lists hold the
 // product default — so nothing here depends on where the list came from.
-func NewRetention(cfg config.Checkpoint, compile PatternCompiler) Retention {
-	return Retention{store: cfg.StoreFileContents, hashOnly: compile(cfg.HashOnlyPatterns)}
+//
+// A never-matching rule is refused rather than reported: an operator who wrote it
+// expected those files to keep no bytes, and publishing a checkpoint without the
+// rule would store them.
+func NewRetention(cfg config.Checkpoint, compile PatternCompiler) (Retention, error) {
+	hashOnly, diags, err := compile(pattern.KeyRules("checkpoint.hash_only_patterns", cfg.HashOnlyPatterns))
+	if err != nil {
+		return Retention{}, err
+	}
+	if err := config.NeverMatchingError(diags); err != nil {
+		return Retention{}, err
+	}
+	return Retention{store: cfg.StoreFileContents, hashOnly: hashOnly}, nil
 }
 
 // Storage is the persisted storage class a checkpoint gives a regular file at path

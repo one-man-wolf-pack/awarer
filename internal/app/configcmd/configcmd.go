@@ -5,8 +5,10 @@ package configcmd
 
 import (
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/infra/configfile"
 	"awarer/internal/infra/projfs"
+	"awarer/internal/infra/worktreefs"
 )
 
 // LayerFiles names the config files that may participate in a layered load, in
@@ -50,6 +52,13 @@ func LoadLayered(files LayerFiles, ov Overrides) (config.ResolvedConfig, error) 
 	if err != nil {
 		return config.ResolvedConfig{}, err
 	}
+	diags, err := worktreefs.CheckPatterns(pattern.KeyRules("checkpoint.hash_only_patterns", cfg.Checkpoint.HashOnlyPatterns))
+	if err != nil {
+		return config.ResolvedConfig{}, err
+	}
+	if err := config.NeverMatchingError(diags); err != nil {
+		return config.ResolvedConfig{}, err
+	}
 	if ov.TrustMode != nil {
 		cfg.Hashing.TrustMode = *ov.TrustMode
 		origins["hashing.trust_mode"] = config.LayerFlag
@@ -63,6 +72,13 @@ func LoadLayered(files LayerFiles, ov Overrides) (config.ResolvedConfig, error) 
 		return config.ResolvedConfig{}, err
 	}
 	return resolved, nil
+}
+
+func PatternWarnings(cfg config.Config) ([]pattern.Diagnostic, error) {
+	rules := pattern.KeyRules("scope.extra_excludes", cfg.Scope.ExtraExcludes)
+	rules = append(rules, pattern.KeyRules("history.extra_excludes", cfg.History.ExtraExcludes)...)
+	rules = append(rules, pattern.KeyRules("run.extra_excludes", cfg.Run.ExtraExcludes)...)
+	return worktreefs.CheckPatterns(rules)
 }
 
 // layerFacts derives each configured layer's existence from the overlays actually

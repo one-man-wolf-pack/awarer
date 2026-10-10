@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ignore "github.com/sabhiram/go-gitignore"
+	gi "github.com/git-pkgs/gitignore"
 )
 
 // loadDirs loads the ignore files of dirs (given shallow-to-deep, as a walk visits
@@ -26,12 +26,12 @@ func loadDirs(t *testing.T, e *ignoreEngine, root string, dirs []string) {
 }
 
 // uniqueCompiled counts the distinct compiled matchers deciding for dirs. It is the
-// structural claim this packet makes: the expensive regexp state lives in these
+// structural claim this packet makes: the compiled rule state lives in these
 // instances, so their count — not the number of directories — is what a walk retains.
 func uniqueCompiled(e *ignoreEngine, dirs []string) int {
-	seen := map[*ignore.GitIgnore]bool{}
+	seen := map[*gi.Matcher]bool{}
 	for _, d := range dirs {
-		seen[e.combinedFor(d)] = true
+		seen[e.mustCombined(d)] = true
 	}
 	return len(seen)
 }
@@ -54,12 +54,12 @@ func TestNoRuleChainSharesOneCompiledMatcher(t *testing.T) {
 		dirs = append(dirs, cur)
 	}
 
-	e := newIgnoreEngine([]string{"node_modules/"}, true, true)
+	e := mustEngine(t, []string{"node_modules/"}, true, true)
 	loadDirs(t, e, root, dirs)
 
-	want := e.combinedFor("")
+	want := e.mustCombined("")
 	for _, d := range dirs {
-		if got := e.combinedFor(d); got != want {
+		if got := e.mustCombined(d); got != want {
 			t.Errorf("directory %q compiled its own matcher; want the root boundary's instance", d)
 		}
 	}
@@ -68,10 +68,10 @@ func TestNoRuleChainSharesOneCompiledMatcher(t *testing.T) {
 	}
 	// The shared matcher still decides: the root rule reaches the deepest directory.
 	deep := dirs[len(dirs)-1]
-	if !e.ignores(deep+"/app.log", false) {
+	if !e.mustIgnore(deep+"/app.log", false) {
 		t.Errorf("%s/app.log should be ignored by the root rule through the shared matcher", deep)
 	}
-	if e.ignores(deep+"/main.go", false) {
+	if e.mustIgnore(deep+"/main.go", false) {
 		t.Errorf("%s/main.go should not be ignored", deep)
 	}
 }
@@ -86,21 +86,21 @@ func TestNestedRuleCreatesOneSharedBoundary(t *testing.T) {
 	writeRaw(t, root, "a/b/.gitignore", "*.tmp\n")
 
 	dirs := []string{"", "a", "a/b", "a/b/c", "a/b/c/d", "a/x", "a/x/y"}
-	e := newIgnoreEngine(nil, true, true)
+	e := mustEngine(t, nil, true, true)
 	loadDirs(t, e, root, dirs)
 
-	rootM := e.combinedFor("")
-	boundary := e.combinedFor("a/b")
+	rootM := e.mustCombined("")
+	boundary := e.mustCombined("a/b")
 	if boundary == rootM {
 		t.Fatalf("a/b contributes a pattern and must compile its own matcher")
 	}
 	for _, d := range []string{"a/b/c", "a/b/c/d"} {
-		if got := e.combinedFor(d); got != boundary {
+		if got := e.mustCombined(d); got != boundary {
 			t.Errorf("descendant %q does not reuse the a/b boundary matcher", d)
 		}
 	}
 	for _, d := range []string{"a", "a/x", "a/x/y"} {
-		if got := e.combinedFor(d); got != rootM {
+		if got := e.mustCombined(d); got != rootM {
 			t.Errorf("rule-free %q left the root boundary; a sibling's rule must not move it", d)
 		}
 	}
@@ -110,13 +110,13 @@ func TestNestedRuleCreatesOneSharedBoundary(t *testing.T) {
 
 	// Sharing routes the decision, it does not widen it: the nested rule applies below
 	// a/b and nowhere else, while the root rule still reaches both subtrees.
-	if !e.ignores("a/b/c/d/scratch.tmp", false) {
+	if !e.mustIgnore("a/b/c/d/scratch.tmp", false) {
 		t.Errorf("a/b/c/d/scratch.tmp should be ignored by a/b's rule")
 	}
-	if e.ignores("a/x/y/scratch.tmp", false) {
+	if e.mustIgnore("a/x/y/scratch.tmp", false) {
 		t.Errorf("a/x/y/scratch.tmp should not be ignored by a sibling subtree's rule")
 	}
-	if !e.ignores("a/x/y/app.log", false) {
+	if !e.mustIgnore("a/x/y/app.log", false) {
 		t.Errorf("a/x/y/app.log should still be ignored by the root rule")
 	}
 }
@@ -129,23 +129,23 @@ func TestLoadingRuleLeavesLoadedSubtreeMatchersIntact(t *testing.T) {
 	writeRaw(t, root, ".gitignore", "*.log\n")
 	writeRaw(t, root, "c/.gitignore", "*.tmp\n")
 
-	e := newIgnoreEngine(nil, true, true)
+	e := mustEngine(t, nil, true, true)
 	loadDirs(t, e, root, []string{"", "a", "a/b"})
-	before := e.combinedFor("a/b")
+	before := e.mustCombined("a/b")
 
 	// A later subtree contributes a rule, exactly as a walk would find it.
 	loadDirs(t, e, root, []string{"c", "c/d"})
 
-	if after := e.combinedFor("a/b"); after != before {
+	if after := e.mustCombined("a/b"); after != before {
 		t.Errorf("a/b's matcher was rebuilt after an unrelated subtree loaded a rule")
 	}
-	if e.combinedFor("c") == e.combinedFor("") {
+	if e.mustCombined("c") == e.mustCombined("") {
 		t.Errorf("c contributes a pattern and must compile its own matcher")
 	}
-	if e.ignores("a/b/scratch.tmp", false) {
+	if e.mustIgnore("a/b/scratch.tmp", false) {
 		t.Errorf("c's rule must not reach the unrelated a/b subtree")
 	}
-	if !e.ignores("c/d/scratch.tmp", false) {
+	if !e.mustIgnore("c/d/scratch.tmp", false) {
 		t.Errorf("c/d/scratch.tmp should be ignored by c's rule")
 	}
 }
@@ -159,13 +159,13 @@ func TestNonPatternIgnoreFilesCreateNoBoundary(t *testing.T) {
 	writeRaw(t, root, "a/.gitignore", "# nothing to ignore here yet\n\n   \n")
 	writeRaw(t, root, "a/.awaignore", "")
 
-	e := newIgnoreEngine(nil, true, true)
+	e := mustEngine(t, nil, true, true)
 	loadDirs(t, e, root, []string{"", "a"})
 
-	if e.combinedFor("a") != e.combinedFor("") {
+	if e.mustCombined("a") != e.mustCombined("") {
 		t.Errorf("a has only comment/empty ignore files and must not become a boundary")
 	}
-	if !e.ignores("a/app.log", false) {
+	if !e.mustIgnore("a/app.log", false) {
 		t.Errorf("a/app.log should still be ignored by the root rule")
 	}
 }
@@ -183,7 +183,7 @@ func TestVirtualDirectoryRuleOwnsItsBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := newIgnoreEngine(nil, true, true)
+	e := mustEngine(t, nil, true, true)
 	loadDirs(t, e, root, []string{""})
 	if err := e.loadDirAt(filepath.Join(root, "real"), "link"); err != nil {
 		t.Fatal(err)
@@ -192,19 +192,19 @@ func TestVirtualDirectoryRuleOwnsItsBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	boundary := e.combinedFor("link")
-	if boundary == e.combinedFor("") {
+	boundary := e.mustCombined("link")
+	if boundary == e.mustCombined("") {
 		t.Fatalf("the virtual directory contributes a pattern and must compile its own matcher")
 	}
-	if got := e.combinedFor("link/inner"); got != boundary {
+	if got := e.mustCombined("link/inner"); got != boundary {
 		t.Errorf("a virtual descendant does not reuse its virtual ancestor's matcher")
 	}
-	if !e.ignores("link/inner/x.tmp", false) {
+	if !e.mustIgnore("link/inner/x.tmp", false) {
 		t.Errorf("link/inner/x.tmp should be ignored under the virtual boundary")
 	}
 	// The rule is owned by the virtual path it was attributed to, not by the real
 	// directory the file was physically read from.
-	if e.ignores("real/x.tmp", false) {
+	if e.mustIgnore("real/x.tmp", false) {
 		t.Errorf("real/x.tmp must not be ignored; the rule applies at the virtual path only")
 	}
 }
@@ -217,20 +217,20 @@ func TestAwaignoreOnlyRuleCreatesItsOwnBoundary(t *testing.T) {
 	writeRaw(t, root, ".gitignore", "*.log\n")
 	writeRaw(t, root, "a/.awaignore", "*.tmp\n")
 
-	e := newIgnoreEngine(nil, true, true)
+	e := mustEngine(t, nil, true, true)
 	loadDirs(t, e, root, []string{"", "a", "a/b"})
 
-	boundary := e.combinedFor("a")
-	if boundary == e.combinedFor("") {
+	boundary := e.mustCombined("a")
+	if boundary == e.mustCombined("") {
 		t.Fatalf("a contributes an .awaignore pattern and must compile its own matcher")
 	}
-	if got := e.combinedFor("a/b"); got != boundary {
+	if got := e.mustCombined("a/b"); got != boundary {
 		t.Errorf("a/b does not reuse the a boundary matcher")
 	}
-	if !e.ignores("a/b/scratch.tmp", false) {
+	if !e.mustIgnore("a/b/scratch.tmp", false) {
 		t.Errorf("a/b/scratch.tmp should be ignored by a's .awaignore")
 	}
-	if e.ignores("scratch.tmp", false) {
+	if e.mustIgnore("scratch.tmp", false) {
 		t.Errorf("the root must not inherit a's .awaignore rule")
 	}
 }

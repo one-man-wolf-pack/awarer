@@ -19,6 +19,7 @@ import (
 	"awarer/internal/app/scanner"
 	domainconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/paths"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/domain/runcache"
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
@@ -45,7 +46,7 @@ var runCmdHelp = commandHelp{
 		{"--no-cache-failures", "do not cache a failing command", ""},
 		{"--scope <path>", "replace the run input scope", ""},
 		{"--include <path>", "add an input path to the scope", ""},
-		{"--exclude <path>", "remove an input path from the scope", ""},
+		{"--exclude <pattern>", "exclude inputs matching a pattern (see: awa help ignores)", ""},
 		{"--cwd <path>", "run the command in this directory (inside the root)", ""},
 		{"--allow-skipped-inputs", "allow a cache hit when some inputs were skipped", ""},
 		{"--allow-tty", "attach the terminal to the child; forces non-cacheable", ""},
@@ -139,7 +140,7 @@ var runSubcommands = []subcommand{
 			{"--to-now", "compare the selected run's inputs to the current state", ""},
 			{"--scope <path>", "replace the run input scope (command mode)", ""},
 			{"--include <path>", "add an input path to the scope (command mode)", ""},
-			{"--exclude <path>", "remove an input path from the scope (command mode)", ""},
+			{"--exclude <pattern>", "exclude inputs matching a pattern (command mode)", ""},
 			{"--cwd <path>", "resolve the key as if run in this directory (command mode)", ""},
 			{"--refresh", "model run's --refresh policy (command mode)", ""},
 			{"--no-cache", "model run's --no-cache policy (command mode)", ""},
@@ -498,7 +499,7 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 
 	stdinMode, ttyAllowed := effectiveStdin(flags)
 
-	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexMutable)
+	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexMutable, warnPatterns(w))
 	if err != nil {
 		return err
 	}
@@ -1043,7 +1044,10 @@ func resolveScopeOverrides(rootAbs, cwd string, flags runFlags) (apprun.ScopeOve
 		}
 		ov.Include = append(ov.Include, rel)
 	}
-	for _, p := range flags.exclude {
+	for i, p := range flags.exclude {
+		if problem := pattern.CarrierProblem(p, false); problem != "" {
+			return apprun.ScopeOverrides{}, usageErrorf("--exclude[%d] %q %s", i, p, problem)
+		}
 		rel, err := projectRelPath(rootAbs, cwd, p)
 		if err != nil {
 			return apprun.ScopeOverrides{}, usageErrorf("--exclude %q is outside the project root", p)
@@ -1122,7 +1126,7 @@ const (
 // worktree index for hash reuse), the run store, the process runner and
 // executable resolver, and the clock and environment reader. It returns a cleanup
 // that closes the index, which the caller must defer.
-func buildRunService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config, mode indexMode) (*apprun.Service, func(), error) {
+func buildRunService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config, mode indexMode, warn patternWarner) (*apprun.Service, func(), error) {
 	hasher := blake3hash.New()
 	// Opening the mutable worktree index mutates it (creates the database, switches
 	// journal mode, may rebuild the schema, clears incomplete-scan markers), so it must
@@ -1137,11 +1141,11 @@ func buildRunService(ctx context.Context, layout paths.Layout, cfg domainconfig.
 	switch mode {
 	case indexMutable:
 		li := &lazyIndex{dir: layout.IndexesDir()}
-		scn = scanner.New(worktreefs.New(), hasher, li)
+		scn = scanner.New(worktreefs.NewReporting(warn), hasher, li)
 		cleanup = func() { _ = li.Close() }
 	case indexNone:
 		// No index: the scanner always re-hashes and never persists.
-		scn = scanner.New(worktreefs.New(), hasher, nil)
+		scn = scanner.New(worktreefs.NewReporting(warn), hasher, nil)
 	default:
 		panic(fmt.Sprintf("buildRunService: unhandled index mode %d", mode))
 	}

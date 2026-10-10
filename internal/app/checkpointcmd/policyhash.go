@@ -6,6 +6,7 @@ import (
 
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/pattern"
 )
 
 // policyHashVersion leads the canonical encoding so future policy fields can be
@@ -13,8 +14,9 @@ import (
 const policyHashVersion byte = 0x01
 
 // hashOnlyPatternsField tags the hash_only_patterns field appended after the
-// fixed-length predecessor encoding.
-const hashOnlyPatternsField byte = 0x01
+// fixed-length predecessor encoding. 0x01 tagged the same list without a matching
+// generation and must not be reused.
+const hashOnlyPatternsField byte = 0x02
 
 // checkpointPolicyHash computes a stable identifier for the checkpoint
 // persistence policy: the configuration that affects how a checkpoint stores
@@ -23,14 +25,19 @@ const hashOnlyPatternsField byte = 0x01
 //
 // The predecessor encoding is exactly two bytes (version, store flag). An empty
 // selection appends nothing, so it keeps that encoding and hash; a non-empty one
-// appends a field tag and the length-prefixed list in configured order (order is
-// meaning: a later "!" exception un-selects). Because the predecessor encoding is
+// appends a field tag, the matching generation its patterns are read under, and
+// the length-prefixed list in configured order (order is meaning: a later "!"
+// exception un-selects). Because the predecessor encoding is
 // fixed-length, the extended form can never collide with it.
 //
 // It is deliberately distinct from the scan config hash (scope + hashing) and
 // from the tree hash (observed worktree). Changing a storage policy therefore
 // changes this hash alone, leaving tree_hash and scan_config_hash stable.
 func checkpointPolicyHash(cfg config.Config, h hashing.Hasher) hashing.ConfigHash {
+	return checkpointPolicyHashAt(pattern.Generation, cfg, h)
+}
+
+func checkpointPolicyHashAt(generation uint64, cfg config.Config, h hashing.Hasher) hashing.ConfigHash {
 	var b bytes.Buffer
 	b.WriteByte(policyHashVersion)
 	if cfg.Checkpoint.StoreFileContents {
@@ -40,6 +47,7 @@ func checkpointPolicyHash(cfg config.Config, h hashing.Hasher) hashing.ConfigHas
 	}
 	if patterns := cfg.Checkpoint.HashOnlyPatterns; len(patterns) > 0 {
 		b.WriteByte(hashOnlyPatternsField)
+		putUint(&b, generation)
 		putUint(&b, uint64(len(patterns)))
 		for _, p := range patterns {
 			putUint(&b, uint64(len(p)))

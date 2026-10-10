@@ -467,6 +467,7 @@ type reviewRunsDoc struct {
 // never disagree about what degraded.
 type reviewDiag struct {
 	w        *output.Writer
+	patterns patternWarner
 	warnings []reviewWarningDoc
 }
 
@@ -480,7 +481,7 @@ func (d *reviewDiag) warn(section, code, message string) {
 // (structured in the payload, mirrored to stderr) and an empty/absent section,
 // never a failed status. The returned doc drives both the human dashboard and JSON.
 func computeStatusReview(ctx context.Context, w *output.Writer, proj projfs.Project, layout paths.Layout, cfg domainconfig.Config, res status.Result) reviewDoc {
-	diag := &reviewDiag{w: w}
+	diag := &reviewDiag{w: w, patterns: warnPatterns(w)}
 	// A degraded checkpoint store is evidence the review must not bury: surface it as a
 	// structured warning (which also flips Partial), so an agent reading the dashboard
 	// cannot miss that the store is incompatible, corrupt, or otherwise unreadable. Gating
@@ -555,7 +556,7 @@ func computeStatusChanges(diag *reviewDiag, ctx context.Context, layout paths.La
 	if !res.Checkpoints.Populated {
 		return reviewCheckpointDoc{Present: false}, reviewDirtyDoc{Computed: false}, state.StateEndpoint{}
 	}
-	resolver, cleanup, err := buildStateResolver(layout, cfg)
+	resolver, cleanup, err := buildStateResolver(layout, cfg, diag.patterns)
 	if err != nil {
 		diag.warn("dirty", "state-resolver-failed", "cannot build state resolver: "+err.Error())
 		return reviewCheckpointDoc{Present: false}, reviewDirtyDoc{Computed: false}, state.StateEndpoint{}
@@ -624,7 +625,7 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 	if !res.RunCache.Populated {
 		return reviewRunsDoc{}, nil
 	}
-	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone)
+	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone, diag.patterns)
 	if err != nil {
 		diag.warn("runs", "run-service-failed", "cannot build run service: "+err.Error())
 		return reviewRunsDoc{}, nil
@@ -1147,8 +1148,16 @@ func runConfigValidate(w *output.Writer, inv invocation) error {
 	if err != nil {
 		return err
 	}
-	if _, err := configcmd.LoadLayered(files, trustModeOverride(opts)); err != nil {
+	loaded, err := configcmd.LoadLayered(files, trustModeOverride(opts))
+	if err != nil {
 		return classifyConfigLoad(err)
+	}
+	warnings, err := configcmd.PatternWarnings(loaded.Config())
+	if err != nil {
+		return genericErrorf("checking exclusion patterns: %v", err)
+	}
+	for _, d := range warnings {
+		w.Diagnostic("warning: " + d.String())
 	}
 	active := configLayerDocs(files, true)
 	if opts.JSON {

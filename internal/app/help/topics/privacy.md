@@ -43,6 +43,9 @@ of your own.
   of positive evidence altogether.
 - The price is capability: a newer checkpoint has no text diff and no restorable
   bytes for a selected file. Checkpoints are not backups of your env files.
+- Patterns follow the shared rules in [awa help ignores](ignores.md). One with an
+  inner slash is anchored to the project root, so `config/*.env` does not select
+  `svc/config/a.env`; a malformed one is refused rather than ignored.
 - Setting the key replaces the whole list; restate the defaults to keep them, or
   set `[]` to store env bytes again. The key and its default are introduced in
   this release — older binaries reject the key as unknown — and the default also

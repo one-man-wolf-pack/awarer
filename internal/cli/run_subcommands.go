@@ -197,7 +197,7 @@ func runRunLs(w *output.Writer, inv invocation) error {
 	// hit the cache would not serve is worse than no listing. No index is wired — its
 	// lookups would be skipped — and no presence lock is taken, since nothing here
 	// writes.
-	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexNone)
+	svc, cleanup, err := buildRunService(inv.invCtx(), layout, cfg, indexNone, warnPatterns(w))
 	if err != nil {
 		return err
 	}
@@ -805,7 +805,7 @@ func buildRunService2(ctx context.Context, opts GlobalOptions) (*apprun.Service,
 	}
 	// buildRunService2 backs the non-scanning subcommands (run log/show/rm); they list
 	// or mutate stored runs and never look a worktree path up, so they need no index.
-	return buildRunService(ctx, layout, cfg, indexNone)
+	return buildRunService(ctx, layout, cfg, indexNone, nil)
 }
 
 // dumpStream copies a verified stored output stream to out.

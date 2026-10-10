@@ -82,7 +82,7 @@ func runRestore(w *output.Writer, inv invocation) error {
 		return err
 	}
 
-	svc, cleanup, err := buildRestoreService(inv.invCtx(), layout, cfg)
+	svc, cleanup, err := buildRestoreService(inv.invCtx(), layout, cfg, warnPatterns(w))
 	if err != nil {
 		return err
 	}
@@ -190,9 +190,9 @@ func buildRestoreSelection(root string, ra restoreArgs) (domrestore.Selection, e
 // it. Two locks are taken on an apply: an exclusive restore lock (restore against
 // restore) and a writer presence lock (so a collector cannot reclaim the blobs
 // this operation is about to read).
-func buildRestoreService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config) (*apprestore.Service, func(), error) {
+func buildRestoreService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config, warn patternWarner) (*apprestore.Service, func(), error) {
 	hasher := blake3hash.New()
-	resolver, cleanup, err := buildStateResolver(layout, cfg)
+	resolver, cleanup, err := buildStateResolver(layout, cfg, warn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -200,7 +200,7 @@ func buildRestoreService(ctx context.Context, layout paths.Layout, cfg domaincon
 	timeout := cfg.Locks.Timeout.Duration()
 	svc := apprestore.New(apprestore.Deps{
 		Resolver: resolver,
-		Scanner:  scanner.NewReadOnly(worktreefs.New(), hasher, idx),
+		Scanner:  scanner.NewReadOnly(worktreefs.NewReporting(warn), hasher, idx),
 		Blobs:    blobstore.New(layout, hasher),
 		Recovery: restorestore.New(layout, hasher),
 		Current:  worktreefs.NewContentReader(layout.Root()),

@@ -34,11 +34,15 @@ func (w *Walker) ClassifyRootFile(ctx context.Context, layout paths.Layout, scop
 	if err != nil {
 		realRoot = root
 	}
+	eng, err := newIgnoreEngine(scope.ExcludeRules(), scope.UseGitignore, scope.UseAwaignore, w.warn)
+	if err != nil {
+		return err
+	}
 	st := &walk{
 		ctx:        ctx,
 		root:       root,
 		realRoot:   realRoot,
-		eng:        newIgnoreEngine(scope.Exclude, scope.UseGitignore, scope.UseAwaignore),
+		eng:        eng,
 		inc:        newIncludeFilter(scope.CanonicalInclude()),
 		protected:  protectedNames(),
 		scope:      scope,

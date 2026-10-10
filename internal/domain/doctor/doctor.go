@@ -168,6 +168,8 @@ const (
 	// check could not inspect a candidate or the root's ignore rules. It is never folded
 	// into a pass: an unreadable answer is not evidence that nothing is captured.
 	CodeContentCaptureCheckIncomplete FindingCode = "content-capture-check-incomplete"
+	CodePatternNeverMatches           FindingCode = "pattern-never-matches"
+	CodePatternCheckIncomplete        FindingCode = "pattern-check-incomplete"
 	CodeNestedProjectMarker           FindingCode = "nested-project-marker"
 	CodeNestedMarkerScanIncomplete    FindingCode = "nested-marker-scan-incomplete"
 	CodeAncestorProjectMarker         FindingCode = "ancestor-project-marker"
@@ -197,6 +199,8 @@ const (
 var findingCodes = []FindingCode{
 	// configuration
 	CodeConfigInvalid,
+	CodePatternNeverMatches,
+	CodePatternCheckIncomplete,
 	// the store's own shape
 	CodeRequiredDirMissing,
 	CodeRequiredDirNotDir,

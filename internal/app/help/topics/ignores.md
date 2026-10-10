@@ -21,18 +21,27 @@ an awa rule (protected path, baseline exclude, or `.awaignore`) excludes them.
 
 ## Which layer am I looking at
 
-The layers apply in this order, and later ones cannot re-include what an earlier
-one protects:
+`.awa/` and `.git/` are a hard boundary: no rule or scope re-includes them.
+Every other exclusion is an ordinary rule, applied from lowest to highest
+priority, and the last matching rule decides:
 
-1. **Protected** — `.awa/` and `.git/`. A hard boundary; no configuration
-   overrides it.
-2. **Baseline excludes** — dependency and cache directories, for both history
+1. **Baseline excludes** — dependency and cache directories, for both history
    and run input.
-3. **History-only excludes** — `dist`, `build`, `coverage`. Hidden from
+2. **History-only excludes** — `dist`, `build`, `coverage`. Hidden from
    checkpoints, changes, and diff; never hidden from run input, because a build
    or test must still see them.
-4. **User rules** — `.awaignore`, plus `extra_excludes` in the `[scope]`,
-   `[history]`, and `[run]` config sections, which are additive per family.
+3. **Config excludes** — `extra_excludes` in `[scope]`, then in `[history]` or
+   `[run]` for that family.
+4. **`.gitignore`**, when enabled — from the project root down to deeper
+   directories.
+5. **`.awaignore`** — from the project root down to deeper directories.
+
+A higher source wins whatever its depth: a root `.awaignore` rule overrides a
+nested `.gitignore`. Within one source a deeper file overrides a shallower one
+and a later line an earlier one. Baseline and config excludes are therefore
+defaults, not a privacy boundary: `!keep.log` in `.awaignore` re-includes a file
+that `extra_excludes = ["*.log"]` excluded. To keep a file's bytes out of
+checkpoints whatever the scope, see [awa help privacy](privacy.md).
 
 An explicitly narrowed scope outranks excludes for the narrowed subtree: if you
 ask for a specific path with `scope.include` or `--scope`, you get it. The
@@ -59,16 +68,20 @@ deliberate decision to stop keying on those files, not a tidiness setting.
 
 ## Ignored paths are outside the evidence
 
-An excluded path is not scanned, so it is not observed. Nothing awa records
-describes it: it is absent from checkpoints, from changes and diff output, from
-run input keys, and from a recorded run's before/after states. `awa` makes no
-claim about it and cannot restore it.
+An excluded path is not scanned, so its content is not observed: it has no
+entry in a checkpoint or in a recorded run's before/after states, it is not in
+changes or diff output or a run input key, and `awa` cannot restore it. What a
+record does keep is the name of each excluded entry the scan met, as the
+boundary where observation stopped. Nothing below a pruned directory is listed,
+but those names can themselves be sensitive (see
+[awa help privacy](privacy.md)).
 
 That is the intended trade, but it has a consequence worth stating plainly: a
-change confined to ignored paths looks like "no changes" in every awa surface.
+change confined to ignored paths is no change in `awa changes` and `awa diff`.
 When that matters — reviewing generated output, or checking what a formatter
 touched — either narrow the scope explicitly to include those paths, or use the
-project's own tooling instead of a checkpoint delta.
+project's own tooling instead of a checkpoint delta. Watched effect roots are
+observed separately for run reuse, as described below.
 
 <!-- awa:include effect-vs-exclude -->
 

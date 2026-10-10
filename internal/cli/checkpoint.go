@@ -35,14 +35,14 @@ import (
 // The direct content reader is anchored at the same root the walker walks, so an
 // ordinary entry reopened from its recorded path at materialization time travels the
 // identical verified traversal the walk's own opener would have.
-func buildCheckpointService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config) (*checkpointcmd.Service, func(), error) {
+func buildCheckpointService(ctx context.Context, layout paths.Layout, cfg domainconfig.Config, warn patternWarner) (*checkpointcmd.Service, func(), error) {
 	hasher := blake3hash.New()
 	idx, err := sqliteindex.Open(layout.IndexesDir())
 	if err != nil {
 		return nil, nil, stateActionErrorf("opening worktree index: %v", err)
 	}
 	svc := checkpointcmd.New(checkpointcmd.Deps{
-		Scanner:     scanner.New(worktreefs.New(), hasher, idx),
+		Scanner:     scanner.New(worktreefs.NewReporting(warn), hasher, idx),
 		Index:       idx,
 		Hasher:      hasher,
 		Blobs:       blobstore.New(layout, hasher),
@@ -116,7 +116,7 @@ func runCheckpoint(w *output.Writer, inv invocation) error {
 	}
 	cfg := loaded.Config()
 
-	svc, cleanup, err := buildCheckpointService(inv.invCtx(), layout, cfg)
+	svc, cleanup, err := buildCheckpointService(inv.invCtx(), layout, cfg, warnPatterns(w))
 	if err != nil {
 		return err
 	}

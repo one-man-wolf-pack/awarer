@@ -3,14 +3,21 @@ package run_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	apprun "awarer/internal/app/run"
+	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/runcache"
+	"awarer/internal/domain/worktree"
+	"awarer/internal/infra/blake3hash"
+	"awarer/internal/scantest"
 )
 
 // lsEntries runs Ls and returns just the reusable-now rows, so tests that predate
@@ -416,5 +423,152 @@ func TestLsCommandFilterStaysWithinWindow(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("rare command within the window yielded %d rows, want 1", len(entries))
+	}
+}
+
+// commitLineFeedScopeRun publishes, through the store's own writer, a reusable run
+// whose recorded exclude scope holds a line feed, recorded under runConfig. Its key
+// is computed from the full key input, so the record passes the store's integrity
+// checks on read.
+func (h *harness) commitLineFeedScopeRun(t *testing.T, current runcache.RunEntry, runConfig hashing.ConfigHash) runcache.RunID {
+	t.Helper()
+	hasher := blake3hash.New()
+	pending, err := h.store.Begin(runcache.CaptureLimits{MaxStdout: 1 << 20, MaxStderr: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	so, se, err := pending.Finalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := current.StartedAt.Add(-time.Hour)
+	id, err := runcache.NewRunID(started.UnixNano(), strings.NewReader("predecessor-run-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := worktree.ReduceCursor(hasher, scantest.CanonicalCursor(nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ki := current.KeyInput
+	ki.Command.Argv = []string{"echo", "predecessor"}
+	ki.InputTreeHash = empty.Hash
+	ki.ExcludeScope = append(append([]string(nil), ki.ExcludeScope...), "gen\nout")
+	ki.RunConfigHash = runConfig
+	entry := runcache.RunEntry{
+		ID:          id,
+		Key:         ki.Compute(hasher),
+		KeyInput:    ki,
+		StartedAt:   started,
+		FinishedAt:  started.Add(time.Second),
+		Exit:        runcache.ExitStatus{Kind: runcache.ExitNormal, Code: 0},
+		Stdout:      so,
+		Stderr:      se,
+		Decision:    runcache.CacheDecision{Cacheable: true},
+		Reuse:       runcache.ReusableCacheEntry(),
+		Mutation:    current.Mutation,
+		EffectGuard: current.EffectGuard,
+	}
+	scanCfg := hashing.ConfigHashFromTree(hasher.HashBytes([]byte("predecessor scan config")))
+	obs := runcache.RunObservations{
+		Before:               scantest.CanonicalStream(nil, nil),
+		After:                scantest.CanonicalStream(nil, nil),
+		BeforeScanConfigHash: scanCfg,
+		AfterScanConfigHash:  scanCfg,
+		BeforeFrontier:       scantest.FrontierStream(),
+		AfterFrontier:        scantest.FrontierStream(),
+	}
+	if err := pending.Commit(context.Background(), entry, obs); err != nil {
+		t.Fatalf("committing the predecessor fixture: %v", err)
+	}
+	return id
+}
+
+func TestLsKeepsTheWindowWhenAPredecessorScopeCannotBeReobserved(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	h.write(t, "a.txt", "v1")
+	res, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := h.store.Get(res.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConfig := hashing.ConfigHashFromTree(blake3hash.New().HashBytes([]byte("predecessor run config")))
+	oldID := h.commitLineFeedScopeRun(t, current, otherConfig)
+
+	stored, err := h.store.Get(oldID)
+	if err != nil {
+		t.Fatalf("the predecessor fixture is not readable through the repository: %v", err)
+	}
+	if stored.Reuse.Kind() != runcache.ReuseReusable || !slices.Contains(stored.KeyInput.ExcludeScope, "gen\nout") {
+		t.Fatalf("fixture = reuse %v scope %q, want a recorded-reusable run with the line-feed element", stored.Reuse.Kind(), stored.KeyInput.ExcludeScope)
+	}
+
+	plain, err := lsEntries(h.svc, h.lsRequest())
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if e := onlyEntry(t, plain); e.ID != res.RunID || !e.Reusability.IsReusable() {
+		t.Errorf("ls = %v reusable %v, want only the current reusable run", e.ID, e.Reusability.IsReusable())
+	}
+
+	rows := map[runcache.RunID]apprun.LsEntry{}
+	for _, e := range h.lsAll(t) {
+		rows[e.ID] = e
+	}
+	if len(rows) != 2 || !rows[res.RunID].Reusability.IsReusable() {
+		t.Fatalf("ls --all rows = %d current reusable = %v, want both runs with the current one reusable", len(rows), rows[res.RunID].Reusability.IsReusable())
+	}
+	if old := rows[oldID]; old.Corrupt || old.Reusability.IsReusable() || old.Reusability.Reason() != runcache.ReasonConfigMismatch {
+		t.Errorf("ls --all predecessor = corrupt %v reusable %v reason %q, want a readable config-mismatch row", old.Corrupt, old.Reusability.IsReusable(), old.Reusability.Reason())
+	}
+
+	nearReq := h.lsRequest()
+	nearReq.Near = true
+	near, err := h.svc.Ls(context.Background(), nearReq)
+	if err != nil {
+		t.Fatalf("ls --near: %v", err)
+	}
+	if near.Corrupt != 0 || len(near.Reusable) != 1 || near.Reusable[0].ID != res.RunID {
+		t.Errorf("ls --near = corrupt %d reusable %d, want the healthy candidate still listed", near.Corrupt, len(near.Reusable))
+	}
+	if len(near.NearMisses) != 1 {
+		t.Fatalf("ls --near candidates = %d, want the predecessor alone", len(near.NearMisses))
+	}
+	c := near.NearMisses[0]
+	if c.Entry.ID != oldID || c.Reason != runcache.ReasonConfigMismatch {
+		t.Errorf("near candidate = %v reason %q, want the predecessor with config-mismatch", c.Entry.ID, c.Reason)
+	}
+	if len(c.Score.Matched) != 0 || len(c.Score.Different) != 0 || !c.Comparison.Equal() || c.Changed != nil || len(c.Hints) != 0 {
+		t.Errorf("near candidate claims an uncomputed comparison: score %+v changed %v hints %v", c.Score, c.Changed, c.Hints)
+	}
+}
+
+func TestLsStillRefusesAnUnobservableScopeWithoutAProvenMismatch(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	h.write(t, "a.txt", "v1")
+	res, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := h.store.Get(res.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameID := h.commitLineFeedScopeRun(t, current, current.KeyInput.RunConfigHash)
+	if _, err := h.store.Get(sameID); err != nil {
+		t.Fatalf("the fixture is not readable through the repository: %v", err)
+	}
+
+	_, err = h.svc.Ls(context.Background(), h.lsRequest())
+	if err == nil || errors.Is(err, runcache.ErrCorruptStore) {
+		t.Fatalf("Ls() error = %v, want the located re-observation refusal, not corruption", err)
+	}
+	if !strings.Contains(err.Error(), sameID.String()) || !strings.Contains(err.Error(), "exclude[") {
+		t.Errorf("error %q does not name the stored run and element", err)
 	}
 }

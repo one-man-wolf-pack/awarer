@@ -12,7 +12,7 @@ import (
 // vocabulary — notably the documentation coverage matrix — sees.
 func TestFindingCodesIsTheClosedVocabulary(t *testing.T) {
 	codes := FindingCodes()
-	if len(codes) != 39 {
+	if len(codes) != 41 {
 		t.Errorf("FindingCodes() has %d entries, want 39 — update the documentation coverage matrix too", len(codes))
 	}
 	seen := map[FindingCode]bool{}

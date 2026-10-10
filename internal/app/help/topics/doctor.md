@@ -41,6 +41,9 @@ branch on the code rather than on the message. They group by subsystem:
 
 ```text
 config-invalid                a config layer is present but not valid
+pattern-*                     an exclusion pattern in config or a root ignore file
+                              can never match (a warning), or that check could
+                              not run; nested ignore files warn when scanned
 required-dir-*                a required .awa/ directory is missing or wrong
 checkpoint-*                  a checkpoint record, manifest, exclusion frontier,
                               or blob is corrupt, missing, or in a schema this

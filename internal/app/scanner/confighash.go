@@ -6,6 +6,7 @@ import (
 
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/pattern"
 )
 
 // configHash computes a stable identifier for the configuration fields that
@@ -20,6 +21,10 @@ import (
 // ["a", "b"] and ["a,b"] can never collide, and a value containing a separator
 // byte cannot be confused for a field boundary.
 func configHash(cfg config.Config, scope config.ScanScope, h hashing.Hasher) hashing.ConfigHash {
+	return configHashAt(pattern.Generation, cfg, scope, h)
+}
+
+func configHashAt(generation uint64, cfg config.Config, scope config.ScanScope, h hashing.Hasher) hashing.ConfigHash {
 	var b bytes.Buffer
 	// Scope inputs come from the resolved ScanScope the walker actually used.
 	// Include is canonicalized so semantically identical scopes (["src"] vs
@@ -38,6 +43,9 @@ func configHash(cfg config.Config, scope config.ScanScope, h hashing.Hasher) has
 	putString(&b, cfg.Hashing.TrustMode.String())
 	putUint(&b, uint64(cfg.Hashing.MaxFileSize.Bytes()))
 	putString(&b, cfg.Hashing.LargeFilePolicy.String())
+	// The exclude text and ignore flags above mean what the matching generation
+	// says they mean, so the same scope under other semantics is another policy.
+	putUint(&b, generation)
 	return hashing.ConfigHashFromTree(h.HashBytes(b.Bytes()))
 }
 

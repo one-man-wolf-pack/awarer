@@ -166,23 +166,47 @@ func EffectVsExcludeMarkdown() string {
 func PatternSemanticsMarkdown() string {
 	return "## Pattern semantics\n" +
 		"\n" +
-		"- `.awaignore` — gitignore-like: globs, a trailing slash matches a\n" +
-		"  directory, a leading slash anchors to the project root, and later rules\n" +
-		"  override earlier ones. It is on by default; `.gitignore` is off by\n" +
-		"  default.\n" +
-		"- `[scope].extra_excludes` and `[run].extra_excludes` — gitignore-style\n" +
-		"  patterns, additive on top of the built-in baseline excludes.\n" +
-		"- `[checkpoint].hash_only_patterns` — the same matcher as `.awaignore`,\n" +
-		"  applied case-sensitively to the project-relative path (the path a followed\n" +
-		"  symlink is reached by, not its target), in order, so a later `!` exception\n" +
-		"  un-selects. A slash-free pattern such as `*.env` matches at any depth and a\n" +
-		"  leading slash anchors to the root; other patterns containing a slash anchor\n" +
-		"  according to their syntax (`foo/*.env` matches only at the root), so prefer\n" +
-		"  those two forms. A pattern matching a directory selects every file below it.\n" +
-		"  The matcher is not fully Git-compatible: `?` is a literal character, not a\n" +
-		"  wildcard, and some malformed patterns are dropped without an error. It\n" +
-		"  selects files for hash-only checkpoint retention and never changes what is\n" +
-		"  scanned.\n" +
+		"`.awaignore`, an enabled `.gitignore`, the `extra_excludes` lists, and\n" +
+		"`[checkpoint].hash_only_patterns` share one case-sensitive pattern language,\n" +
+		"Git's own ignore pattern format:\n" +
+		"\n" +
+		"- A name without a slash (`*.log`, `cache`) matches at any depth. A leading\n" +
+		"  or inner slash anchors the pattern to the directory that declares it:\n" +
+		"  `foo/bar` and `/foo/bar` both match only there, never `deep/foo/bar`.\n" +
+		"  Config lists are declared at the project root; a nested ignore file\n" +
+		"  declares at its own directory.\n" +
+		"- `*` and `?` never match a slash and `?` matches exactly one character.\n" +
+		"  `**`, character classes, and backslash escapes work as in Git. A trailing\n" +
+		"  slash matches directories only. Blank lines and lines starting with `#`\n" +
+		"  are ignored, as are trailing spaces not escaped with a backslash.\n" +
+		"- The last matching rule decides, and a leading `!` reverses it.\n" +
+		"- Scanning prunes an excluded directory, so a `!` rule for something inside\n" +
+		"  it cannot bring that back; re-include the directory itself.\n" +
+		"  `hash_only_patterns` never prunes: it selects among files already scanned,\n" +
+		"  a matching directory selects every file below it, and a later `!` rule\n" +
+		"  un-selects one file or a whole directory (`*.env` then `!fixtures/`). It is\n" +
+		"  matched against the project-relative path a followed symlink is reached\n" +
+		"  by, and never changes what is scanned.\n" +
+		"- A pattern Git would never match (an unclosed `[`, a lone trailing\n" +
+		"  backslash, a bare `!` or `/`) matches nothing. In an ignore file or an\n" +
+		"  `extra_excludes` list awa keeps running and warns on stderr with the file\n" +
+		"  and line or the key and element index, from every command that scans.\n" +
+		"  `awa config validate` warns about the config lists; `awa doctor` reports\n" +
+		"  those and the root ignore files (see `awa help doctor`). In\n" +
+		"  `hash_only_patterns` it is a configuration error: a rule that silently\n" +
+		"  selected nothing would store the bytes it was written to keep out.\n" +
+		"- Each config list element is one pattern. An element containing a line\n" +
+		"  feed is a configuration error in every list; write it as separate\n" +
+		"  elements. Trailing carriage returns of an `extra_excludes` element are\n" +
+		"  dropped and one inside the pattern is literal; `hash_only_patterns`\n" +
+		"  refuses carriage returns too. Line endings of the TOML file do not matter.\n" +
+		"- `awa run --exclude` takes such a pattern too, not a literal path. From the\n" +
+		"  project root, `--exclude name` matches `name` at any depth and\n" +
+		"  `--exclude dir/name` only at the root; `*`, `?`, `[`, and a leading `#` or\n" +
+		"  `!` keep their meaning. Quote the pattern so the shell does not expand it.\n" +
+		"\n" +
+		"Other lists are not patterns:\n" +
+		"\n" +
 		"- `[run].extra_effect_roots` — literal selectors, never globs, in one of two\n" +
 		"  forms. A single segment is a directory NAME matched by basename wherever it\n" +
 		"  appears: `\"target\"` watches every `target/`. A slash-separated\n" +

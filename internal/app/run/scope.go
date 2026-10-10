@@ -6,6 +6,7 @@ import (
 
 	"awarer/internal/domain/config"
 	"awarer/internal/domain/hashing"
+	"awarer/internal/domain/pattern"
 )
 
 // ScopeOverrides are the CLI overrides for the run input scan, already resolved
@@ -40,10 +41,15 @@ func effectiveScanScope(cfg config.Config, ov ScopeOverrides) config.ScanScope {
 	exclude := make([]string, 0, len(runExcludes)+len(ov.Exclude))
 	exclude = append(exclude, runExcludes...)
 	exclude = append(exclude, ov.Exclude...)
+	origins := config.ExcludeOrigins(runExcludes, cfg.Scope.ExtraExcludes, "run.extra_excludes", cfg.Run.ExtraExcludes)
+	for i := range ov.Exclude {
+		origins = append(origins, pattern.KeyElement("--exclude", i))
+	}
 
 	return config.ScanScope{
 		Include:                merged,
 		Exclude:                exclude,
+		ExcludeOrigins:         origins,
 		UseGitignore:           cfg.Run.UseGitignore,
 		UseAwaignore:           cfg.Run.UseAwaignore,
 		FollowSymlinks:         cfg.Scope.FollowSymlinks,
@@ -59,7 +65,12 @@ func effectiveScanScope(cfg config.Config, ov ScopeOverrides) config.ScanScope {
 // config hash, so two semantically identical policies hash identically and any
 // meaningful change produces a distinct key.
 //
-// Scope, ignore flags, and the env allowlist are deliberately excluded: they are
+// It also carries the pattern-matching generation: the key holds the scope's
+// pattern text, which selects different inputs under different matching semantics,
+// and this hash is the key field that can absorb the distinction without a new
+// persisted key input.
+//
+// Scope, ignore flags, and the env allowlist are otherwise excluded: they are
 // already keyed in their effective form by KeyInput (IncludeScope, ExcludeScope,
 // UseGitignore, UseAwaignore, and the env checkpoint). Hashing the raw run-section
 // copies here too would both duplicate that identity and, because --scope replaces
@@ -68,12 +79,17 @@ func effectiveScanScope(cfg config.Config, ov ScopeOverrides) config.ScanScope {
 // applied at lookup, not part of a result's identity, so changing it must not
 // orphan otherwise-valid entries.
 func runConfigHash(cfg config.Config, h hashing.Hasher) hashing.ConfigHash {
+	return runConfigHashAt(pattern.Generation, cfg, h)
+}
+
+func runConfigHashAt(generation uint64, cfg config.Config, h hashing.Hasher) hashing.ConfigHash {
 	var b bytes.Buffer
 	r := cfg.Run
 	putHashUint(&b, uint64(r.MaxStdoutSize.Bytes()))
 	putHashUint(&b, uint64(r.MaxStderrSize.Bytes()))
 	putHashBool(&b, r.CaptureOutput)
 	putHashBool(&b, r.CacheFailedRuns)
+	putHashUint(&b, generation)
 	return hashing.ConfigHashFromTree(h.HashBytes(b.Bytes()))
 }
 

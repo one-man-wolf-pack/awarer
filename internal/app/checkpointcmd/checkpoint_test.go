@@ -173,7 +173,7 @@ func (h *harness) requireNoStoredBlobs(t *testing.T) {
 // a per-entry rejection surfaces.
 func (h *harness) materialize(t *testing.T, cfg config.Config, scan scanner.Result) error {
 	t.Helper()
-	src := &manifestSource{svc: h.svc, retention: NewRetention(cfg.Checkpoint, worktreefs.CompilePatterns), scan: scan}
+	src := &manifestSource{svc: h.svc, retention: mustRetention(t, cfg.Checkpoint), scan: scan}
 	cur, err := src.Open(context.Background())
 	if err != nil {
 		t.Fatalf("open manifest source: %v", err)

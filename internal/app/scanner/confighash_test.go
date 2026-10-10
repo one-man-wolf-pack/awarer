@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/pattern"
 	"awarer/internal/infra/blake3hash"
 )
 
@@ -102,5 +103,17 @@ func TestConfigHashIgnoresDoctorAdvisory(t *testing.T) {
 		if configHash(cfg, cfg.HistoryScanScope(), h) != want {
 			t.Errorf("doctor.watched_root_warning_size = %s changed the scan config hash", th)
 		}
+	}
+}
+
+func TestConfigHashSeparatesMatchingGenerations(t *testing.T) {
+	h := blake3hash.New()
+	cfg := config.Defaults()
+	scope := cfg.HistoryScanScope()
+	if configHashAt(pattern.Generation, cfg, scope, h) != configHash(cfg, scope, h) {
+		t.Error("the scan config hash does not carry the current matching generation")
+	}
+	if configHashAt(pattern.Generation, cfg, scope, h) == configHashAt(pattern.Generation+1, cfg, scope, h) {
+		t.Error("identical scope text under another matching generation shares a scan config hash")
 	}
 }

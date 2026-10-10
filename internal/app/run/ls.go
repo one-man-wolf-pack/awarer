@@ -199,7 +199,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			continue
 		}
 
-		verdict, cmp, err := s.reusability(ctx, base, entry, effect, scanCache)
+		verdict, cmp, compared, err := s.reusability(ctx, base, entry, effect, scanCache)
 		if err != nil {
 			return LsResult{}, err
 		}
@@ -211,7 +211,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			res.Reusable = append(res.Reusable, LsEntry{ID: id, Entry: entry, Reusability: verdict})
 		}
 		if req.Near {
-			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, cmp, verdict.Reason(), effectReport))
+			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, cmp, compared, verdict.Reason(), effectReport))
 		}
 	}
 
@@ -230,9 +230,9 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 // nearCandidate builds a near-miss candidate from a non-reusable entry, its verdict
 // reason, and the key comparison behind that verdict. The score is filled only when
 // the entry was actually re-keyed against current state (a reusable-kind entry whose
-// inputs/env/config drifted): a short-circuited record-only or mutating run was never
-// compared, so claiming its categories "matched" would be dishonest — its reason
-// alone explains it.
+// inputs/env/config drifted): a short-circuited run — record-only, mutating, or one
+// whose recorded scope could not be re-observed — was never compared, so claiming
+// its categories "matched" would be dishonest — its reason alone explains it.
 //
 // effectReport is the diagnostic side channel of the one effect observation Ls already
 // performed — the same observation folded into every candidate's current key input — so
@@ -240,10 +240,10 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 // The same re-keyed/short-circuited split that decides the score decides the root: a
 // short-circuited candidate's reason is its stored run's own verdict, which today's
 // observation says nothing about, so it keeps the diagnosis without the root.
-func (s *Service) nearCandidate(entry runcache.RunEntry, cmp runcache.KeyComparison, reason runcache.MismatchReason, effectReport runcache.EffectReport) RunReuseCandidate {
+func (s *Service) nearCandidate(entry runcache.RunEntry, cmp runcache.KeyComparison, compared bool, reason runcache.MismatchReason, effectReport runcache.EffectReport) RunReuseCandidate {
 	cand := RunReuseCandidate{Entry: entry, Comparison: cmp, Reason: reason}
 	origin := reasonFromStoredVerdict
-	if entry.Reuse.Kind() == runcache.ReuseReusable {
+	if compared {
 		cand.Score = scoreFrom(cmp)
 		origin = reasonFromComparison
 	}
@@ -302,8 +302,9 @@ func (s *Service) cachedScanFor(base Request, entry runcache.RunEntry, scanCache
 // It also returns the typed key comparison behind the verdict — the drift the
 // near-miss view ranks and explains — so a stale run is explained without re-deriving
 // its key. The comparison is empty for a clean key match and for a short-circuited
-// non-reusable run (which is never re-keyed).
-func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effect runcache.EffectObservation, scanCache *lsScans) (runcache.RunReusability, runcache.KeyComparison, error) {
+// non-reusable run (which is never re-keyed). compared reports whether the entry was
+// re-keyed against current state at all.
+func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effect runcache.EffectObservation, scanCache *lsScans) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, err error) {
 	// A run the store recorded as non-reusable history — record-only, mutating, or
 	// post-scan-failed — was never a cache candidate, so it can never become reusable
 	// now: short-circuit to its stored reason rather than re-deriving a key for it.
@@ -312,11 +313,19 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	// run stays non-reusable history; only a later no-op run can be reusable).
 	if entry.Reuse.Kind() != runcache.ReuseReusable {
 		v, err := runcache.NotReusable(entry.Reuse.Reason())
-		return v, runcache.KeyComparison{}, err
+		return v, runcache.KeyComparison{}, false, err
+	}
+	// A recorded scope that cannot be re-observed must not abort the whole listing
+	// when the run configuration identity alone already proves the entry stale: that
+	// identity needs no scan. Without that proof the refusal below stands, since
+	// nothing else establishes the entry's state.
+	if storedScopeProblem(entry) != nil && entry.KeyInput.RunConfigHash != runConfigHash(base.Config, s.deps.Hasher) {
+		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(runcache.DiffRunConfigChanged))
+		return v, runcache.KeyComparison{}, false, err
 	}
 	req, err := s.requestFromEntry(base, entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, err
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
 	}
 	scope := *req.EffectiveScope
 
@@ -338,34 +347,34 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 			Now:                s.deps.Clock.Now(),
 		})
 		if err != nil {
-			return runcache.RunReusability{}, runcache.KeyComparison{}, err
+			return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
 		}
 		scanCache.put(sig, scanRes, newInputReport(s.deps.Clock.Now().Sub(scanStart).Milliseconds(), scanRes.Stats().Files))
 	}
 
 	current := s.currentKeyInputFor(req, scope, scanRes.TreeHash(), effect)
-	cmp := runcache.CompareKeyInputs(entry.KeyInput, current)
+	cmp = runcache.CompareKeyInputs(entry.KeyInput, current)
 
 	// A keyed difference means a real run would not hit this entry: name the most
 	// explanatory difference as the reason.
 	if !cmp.Equal() {
 		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(cmp.PrimaryReason()))
-		return v, cmp, err
+		return v, cmp, true, err
 	}
 	// Key matches; apply the same freshness and payload gates the hit path enforces.
 	if s.expired(entry, req.Config.Run.TTL) {
 		v, err := runcache.NotReusable(runcache.ReasonExpired)
-		return v, cmp, err
+		return v, cmp, true, err
 	}
 	healthy, err := s.payloadHealth(entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, err
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
 	}
 	if !healthy {
 		v, err := runcache.NotReusable(runcache.ReasonPayloadMissing)
-		return v, cmp, err
+		return v, cmp, true, err
 	}
-	return runcache.Reusable(), cmp, nil
+	return runcache.Reusable(), cmp, true, nil
 }
 
 // currentKeyInputFor builds the key input a real run of the entry's command would

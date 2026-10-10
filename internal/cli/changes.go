@@ -58,7 +58,7 @@ func runChanges(w *output.Writer, inv invocation) error {
 		return err
 	}
 
-	resolver, cleanup, err := buildStateResolver(layout, cfg)
+	resolver, cleanup, err := buildStateResolver(layout, cfg, warnPatterns(w))
 	if err != nil {
 		return err
 	}

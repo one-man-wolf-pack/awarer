@@ -18,6 +18,16 @@
       "disposition": "must_appear_in_binary_and_source"
     },
     {
+      "module_path": "github.com/git-pkgs/gitignore",
+      "version": "v1.3.0",
+      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
+      "spdx": "MIT",
+      "texts": [
+        {"path": "LICENSE", "role": "license", "digest": "blake3:8cc02a8dce06d281e950856c5e3e124b671276b7a8d74b35f5085867c69ac0b9", "must_ship": true}
+      ],
+      "disposition": "must_appear_in_binary_and_source"
+    },
+    {
       "module_path": "github.com/google/uuid",
       "version": "v1.6.0",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64"],
@@ -80,17 +90,6 @@
       ],
       "disposition": "must_appear_in_binary_and_source",
       "review_note": "Pseudo-version pin; LICENSE is the Go-authors BSD-3-Clause text at the pinned commit."
-    },
-    {
-      "module_path": "github.com/sabhiram/go-gitignore",
-      "version": "v0.0.0-20210923224102-525f6e181f06",
-      "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
-      "spdx": "MIT",
-      "texts": [
-        {"path": "LICENSE", "role": "license", "digest": "blake3:d41db6fc8a50cb8e4308e5b04603a8501c9e94c24f5ea967f37afc540520c50b", "must_ship": true}
-      ],
-      "disposition": "must_appear_in_binary_and_source",
-      "review_note": "Pseudo-version pin; LICENSE is the MIT text at the pinned commit."
     },
     {
       "module_path": "github.com/zeebo/blake3",

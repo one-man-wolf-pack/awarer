@@ -172,6 +172,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		defer func() { _ = release() }()
 	}
 
+	retention, err := NewRetention(req.Config.Checkpoint, s.deps.Patterns)
+	if err != nil {
+		return Result{}, err
+	}
+
 	// The scan retains only the content openers this checkpoint cannot rebuild (see
 	// contentSource). Its manifest is bounded (it spills past the sorter buffer), and
 	// Close releases those spill files once the checkpoint is persisted; the retained
@@ -212,7 +217,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	// retention policy applied and blobs materialized as each blob-intent
 	// regular entry passes by. The repository consumes it and derives the durable
 	// fields — the use case never holds the whole manifest as a slice.
-	source := &manifestSource{svc: s, retention: NewRetention(req.Config.Checkpoint, s.deps.Patterns), scan: scanResult}
+	source := &manifestSource{svc: s, retention: retention, scan: scanResult}
 	frontier, _, ok := scanResult.Coverage().Frontier()
 	if !ok {
 		return Result{}, fmt.Errorf("checkpoint: the completed scan carries no exclusion frontier")

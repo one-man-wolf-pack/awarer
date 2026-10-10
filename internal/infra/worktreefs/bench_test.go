@@ -35,7 +35,7 @@ func benchEngine(b *testing.B) (*ignoreEngine, []string) {
 		}
 	}
 
-	e := newIgnoreEngine(builtinBenchExcludes, true, true)
+	e := mustEngine(b, builtinBenchExcludes, true, true)
 	for dirRel := range dirs {
 		abs := filepath.Join(root, filepath.FromSlash(dirRel))
 		if err := e.loadDirAt(abs, dirRel); err != nil {
@@ -65,12 +65,12 @@ func BenchmarkIgnoreDecide(b *testing.B) {
 	// Warm the per-directory cache so the benchmark measures matching, not the one-time
 	// combinedFor compile that a real walk amortizes across a directory's children.
 	for _, p := range paths {
-		e.ignores(p, false)
+		e.mustIgnore(p, false)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.ignores(paths[i%len(paths)], false)
+		e.mustIgnore(paths[i%len(paths)], false)
 	}
 }
 
@@ -132,7 +132,7 @@ func BenchmarkIgnoreMatcherConstruction(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				// A fresh engine per iteration: matcher construction is per-scan state, so
 				// reusing one across iterations would measure a warm cache instead.
-				e := newIgnoreEngine(builtinBenchExcludes, true, true)
+				e := mustEngine(b, builtinBenchExcludes, true, true)
 				for _, d := range ruleDirs {
 					if err := e.loadDirAt(filepath.Join(root, filepath.FromSlash(d)), d); err != nil {
 						b.Fatal(err)
@@ -142,7 +142,7 @@ func BenchmarkIgnoreMatcherConstruction(b *testing.B) {
 					if err := e.loadDirAt(filepath.Join(root, filepath.FromSlash(d)), d); err != nil {
 						b.Fatal(err)
 					}
-					e.ignores(d+"/file.go", false)
+					e.mustIgnore(d+"/file.go", false)
 				}
 			}
 		})

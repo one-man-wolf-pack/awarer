@@ -319,9 +319,9 @@
           "spellings": [
             "--exclude"
           ],
-          "desc": "remove an input path from the scope",
+          "desc": "exclude inputs matching a pattern (see: awa help ignores)",
           "takes_value": true,
-          "value": "<path>"
+          "value": "<pattern>"
         },
         {
           "spellings": [
@@ -647,9 +647,9 @@
               "spellings": [
                 "--exclude"
               ],
-              "desc": "remove an input path from the scope (command mode)",
+              "desc": "exclude inputs matching a pattern (command mode)",
               "takes_value": true,
-              "value": "<path>"
+              "value": "<pattern>"
             },
             {
               "spellings": [
