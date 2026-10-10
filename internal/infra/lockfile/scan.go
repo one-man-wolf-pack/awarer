@@ -63,6 +63,10 @@ type ScanEntry struct {
 // interpret (doctor reports that through its layout check). now/staleAfter/hostname/
 // alive are injected so classification is testable without real time or processes.
 func ScanDir(root, locksDir string, now time.Time, staleAfter time.Duration, hostname string, alive func(pid int) bool) ([]ScanEntry, error) {
+	return scanDir(root, locksDir, now, staleAfter, hostname, alive, nil)
+}
+
+func scanDir(root, locksDir string, now time.Time, staleAfter time.Duration, hostname string, alive func(pid int) bool, listed func()) ([]ScanEntry, error) {
 	relDir, err := fsx.RelUnder(root, locksDir)
 	if err != nil {
 		return nil, err
@@ -77,6 +81,9 @@ func ScanDir(root, locksDir string, now time.Time, staleAfter time.Duration, hos
 	// Directory reads are not ordered; sort by name so callers (doctor findings, gc
 	// candidates) see a deterministic, stable listing.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if listed != nil {
+		listed()
+	}
 	out := make([]ScanEntry, 0, len(entries))
 	for _, e := range entries {
 		p := filepath.Join(locksDir, e.Name())
@@ -88,6 +95,9 @@ func ScanDir(root, locksDir string, now time.Time, staleAfter time.Duration, hos
 		}
 		data, err := readLockFile(root, locksDir, e.Name())
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) && leafReleased(root, relDir, e.Name()) {
+				continue
+			}
 			se.Detail = "cannot read lock file: " + err.Error()
 			out = append(out, se)
 			continue
@@ -108,6 +118,20 @@ func ScanDir(root, locksDir string, now time.Time, staleAfter time.Duration, hos
 		out = append(out, se)
 	}
 	return out, nil
+}
+
+// A writer releasing between the listing and the read is ordinary, and calling it
+// unknown protection makes a collector refuse the moment the writer it waited for
+// finishes. A not-exist that cannot be pinned on the leaf — the directory itself is
+// missing or unreachable — stays unknown, because the record may still be there unread.
+func leafReleased(root, relDir, name string) bool {
+	dir, err := fsx.OpenDirNoFollow(root, relDir)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = dir.Close() }()
+	_, _, err = fsx.LstatAt(dir, name)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 // readLockFile reads one lock file no-follow, capped at maxLockFileSize so an

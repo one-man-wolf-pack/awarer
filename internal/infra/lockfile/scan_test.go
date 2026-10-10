@@ -103,3 +103,95 @@ func TestScanDirAbsentIsClean(t *testing.T) {
 		t.Fatalf("entries = %d, want 0", len(entries))
 	}
 }
+
+func scanFixture(t *testing.T) (root, locksDir string, now time.Time) {
+	t.Helper()
+	root = t.TempDir()
+	locksDir = filepath.Join(root, ".awa", "locks")
+	if err := os.MkdirAll(locksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now = time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"released.lock", "held.lock"} {
+		data, err := Encode(Record{Operation: "checkpoint", PID: 4242, Hostname: "other-host", CreatedAt: now.Add(-time.Minute)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(locksDir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, locksDir, now
+}
+
+func scanStates(t *testing.T, root, locksDir string, now time.Time, listed func()) map[string]EntryState {
+	t.Helper()
+	entries, err := scanDir(root, locksDir, now, DefaultStaleAfter, "this-host", func(int) bool { return false }, listed)
+	if err != nil {
+		t.Fatalf("scanDir: %v", err)
+	}
+	got := map[string]EntryState{}
+	for _, e := range entries {
+		got[e.Name] = e.State
+	}
+	return got
+}
+
+func TestScanDirOmitsLockReleasedBetweenListingAndRead(t *testing.T) {
+	root, locksDir, now := scanFixture(t)
+	if err := os.WriteFile(filepath.Join(locksDir, "garbage.lock"), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := scanStates(t, root, locksDir, now, func() {
+		if err := os.Remove(filepath.Join(locksDir, "released.lock")); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, listed := got["released.lock"]; listed {
+		t.Errorf("a released lock was classified %v", got["released.lock"])
+	}
+	if got["held.lock"] != EntryActive || got["garbage.lock"] != EntryUnknown || len(got) != 2 {
+		t.Errorf("states = %v, want held active and garbage unknown only", got)
+	}
+}
+
+func TestScanDirKeepsUnknownWhenTheLeafIsNotConfirmedGone(t *testing.T) {
+	cases := map[string]func(t *testing.T, locksDir string){
+		"locks directory moved away": func(t *testing.T, locksDir string) {
+			if err := os.Rename(locksDir, locksDir+".moved"); err != nil {
+				t.Error(err)
+			}
+		},
+		"locks directory replaced by a file": func(t *testing.T, locksDir string) {
+			if err := os.Rename(locksDir, locksDir+".moved"); err != nil {
+				t.Error(err)
+			}
+			if err := os.WriteFile(locksDir, nil, 0o644); err != nil {
+				t.Error(err)
+			}
+		},
+		"record replaced by malformed bytes": func(t *testing.T, locksDir string) {
+			if err := os.WriteFile(filepath.Join(locksDir, "released.lock"), []byte("not json"), 0o644); err != nil {
+				t.Error(err)
+			}
+		},
+		"record replaced by a directory": func(t *testing.T, locksDir string) {
+			p := filepath.Join(locksDir, "released.lock")
+			if err := os.Remove(p); err != nil {
+				t.Error(err)
+			}
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Error(err)
+			}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			root, locksDir, now := scanFixture(t)
+			got := scanStates(t, root, locksDir, now, func() { mutate(t, locksDir) })
+			if got["released.lock"] != EntryUnknown {
+				t.Errorf("states = %v, want released.lock unknown", got)
+			}
+		})
+	}
+}
