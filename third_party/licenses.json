@@ -155,7 +155,7 @@
     },
     {
       "module_path": "modernc.org/sqlite",
-      "version": "v1.60.0",
+      "version": "v1.60.1",
       "targets": ["darwin/amd64", "darwin/arm64", "freebsd/amd64", "linux/amd64", "linux/arm64", "windows/amd64"],
       "spdx": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
       "texts": [
@@ -164,7 +164,7 @@
         {"path": "AUTHORS", "role": "authors", "digest": "blake3:dfedeb039d06c76470710d1300d3c7d8c646e2c3ff8ee11e21963badaa8337f3", "must_ship": false}
       ],
       "disposition": "must_appear_in_binary_and_source",
-      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (LICENSE-SQLITE, spelled SQLITE-LICENSE before v1.57.0). Both are reproduced verbatim. v1.57.0 also vendors sqlite-vec under MIT (LICENSE-SQLITE_VEC), but modernc.org/sqlite/vec is unreachable from awa on all six release targets, so it is not a production obligation here; re-checked unreachable at v1.60.0 together with modernc.org/sqlite/vfs; re-check both on the next version bump. v1.60.0 adds LICENSE-3RD-PARTY.md, a generated aggregate of the module graph's notices; every component it lists as linked is either already its own manifest entry, carried by modernc.org/libc's LICENSE-3RD-PARTY.md, covered by LICENSE-SQLITE, or only reachable through vec or vfs, so it adds no obligation here and is not reproduced."
+      "review_note": "The Go transpilation is BSD-3-Clause (LICENSE); the SQLite amalgamation it embeds is dedicated to the public domain (LICENSE-SQLITE, spelled SQLITE-LICENSE before v1.57.0). Both are reproduced verbatim. v1.57.0 also vendors sqlite-vec under MIT (LICENSE-SQLITE_VEC), but modernc.org/sqlite/vec is unreachable from awa on all six release targets, so it is not a production obligation here; re-checked unreachable at v1.60.1 together with modernc.org/sqlite/vfs; re-check both on the next version bump. v1.60.0 adds LICENSE-3RD-PARTY.md, a generated aggregate of the module graph's notices; every component it lists as linked is either already its own manifest entry, carried by modernc.org/libc's LICENSE-3RD-PARTY.md, covered by LICENSE-SQLITE, or only reachable through vec or vfs, so it adds no obligation here and is not reproduced."
     }
   ]
 }
