@@ -329,6 +329,7 @@ func TestComparisonJSONNamesARecoveryOperand(t *testing.T) {
 			Right   map[string]any `json:"right"`
 			Changes []any          `json:"changes"`
 			Files   []any          `json:"files"`
+			Scope   map[string]any `json:"scope"`
 		} `json:"data"`
 	}
 	compare := func(t *testing.T, args ...string) comparisonDoc {
@@ -340,6 +341,11 @@ func TestComparisonJSONNamesARecoveryOperand(t *testing.T) {
 		var doc comparisonDoc
 		if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 			t.Fatalf("decode %v: %v\n%s", args, err, stdout)
+		}
+		participation, _ := doc.Data.Scope["ignore_source_participation"].(map[string]any)
+		if doc.Data.Scope["ignore_sources_basis"] != "current-configuration" ||
+			len(participation) != 2 || participation["left"] != "unknown" || participation["right"] != "unknown" {
+			t.Errorf("%v scope = %v, want current-configuration sources with unknown participation", args, doc.Data.Scope)
 		}
 		return doc
 	}

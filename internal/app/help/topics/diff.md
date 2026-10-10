@@ -47,6 +47,10 @@ So matching identities do not prove unchanged ignore rules, equal scope, or
 that a path is absent. Byte-retention settings are not part of the identity:
 they only decide whether a side can show a text diff.
 
+JSON `scope.ignore_sources` names what today's configuration enables, not what
+either side was scanned with: an enabled `.gitignore` may not have existed then,
+or now. Each side's actual ignore sources are reported as `unknown`.
+
 ## Git context
 
 When the project is a git repo, `changes`/`diff` name the current git HEAD and

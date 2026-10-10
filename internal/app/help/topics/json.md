@@ -54,6 +54,14 @@ Before their array they carry `basis`: `token` (`observation-delta`) and
 `scan_config` with each side's recorded identity and `agreement` (`match` or
 `mismatch`). A mismatch is not a failure, and a match is not proof of equal
 ignore rules or scope — see [awa help diff](diff.md).
+After the array, `scope` carries `ignore_sources`: the ignore-source categories
+enabled in the configuration this invocation loaded, as
+`ignore_sources_basis: "current-configuration"` states. It is not a list of
+ignore files read or rules matched on either side.
+`ignore_source_participation` is `unknown` for `left` and `right`: no compared
+observation records which sources took part, and `unknown` is not "none".
+`skipped_in_scope` counts the skipped entries of this delta, not every skipped
+input of either side.
 
 ## Exit origin
 

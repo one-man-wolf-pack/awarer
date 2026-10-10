@@ -1,22 +1,33 @@
 package cli
 
 import (
+	"encoding/json"
 	"testing"
 
 	domainconfig "awarer/internal/domain/config"
 )
 
-// TestScopeIgnoredPathsOutsideEvidenceIsInvariant locks the contract assertion: the
-// ignored_paths_outside_evidence field is always true, regardless of which ignore
-// sources are configured — it is a stable statement that an awa delta says nothing about
-// ignored paths, never a measured value that could be false.
-func TestScopeIgnoredPathsOutsideEvidenceIsInvariant(t *testing.T) {
+func TestScopeViewLabelsCurrentConfigurationAndUnknownParticipation(t *testing.T) {
 	cases := []struct {
-		name string
-		cfg  domainconfig.Config
+		name    string
+		cfg     domainconfig.Config
+		skipped int
+		want    string
 	}{
-		{"defaults", domainconfig.Defaults()},
-		{"no ignore sources", domainconfig.Config{}},
+		{
+			"defaults", domainconfig.Defaults(), 0,
+			`{"skipped_in_scope":0,"ignore_sources":["awaignore","baseline-excludes"],` +
+				`"ignore_sources_basis":"current-configuration",` +
+				`"ignore_source_participation":{"left":"unknown","right":"unknown"},` +
+				`"ignored_paths_outside_evidence":true}`,
+		},
+		{
+			"no ignore sources", domainconfig.Config{}, 3,
+			`{"skipped_in_scope":3,"ignore_sources":["baseline-excludes"],` +
+				`"ignore_sources_basis":"current-configuration",` +
+				`"ignore_source_participation":{"left":"unknown","right":"unknown"},` +
+				`"ignored_paths_outside_evidence":true}`,
+		},
 		{
 			"all ignore sources",
 			domainconfig.Config{Scope: domainconfig.Scope{
@@ -24,13 +35,30 @@ func TestScopeIgnoredPathsOutsideEvidenceIsInvariant(t *testing.T) {
 				UseAwaignore:  true,
 				ExtraExcludes: []string{"vendor"},
 			}},
+			1,
+			`{"skipped_in_scope":1,"ignore_sources":["gitignore","awaignore","config-excludes","baseline-excludes"],` +
+				`"ignore_sources_basis":"current-configuration",` +
+				`"ignore_source_participation":{"left":"unknown","right":"unknown"},` +
+				`"ignored_paths_outside_evidence":true}`,
+		},
+		{
+			"history excludes only",
+			domainconfig.Config{History: domainconfig.History{ExtraExcludes: []string{"vendor"}}},
+			0,
+			`{"skipped_in_scope":0,"ignore_sources":["config-excludes","baseline-excludes"],` +
+				`"ignore_sources_basis":"current-configuration",` +
+				`"ignore_source_participation":{"left":"unknown","right":"unknown"},` +
+				`"ignored_paths_outside_evidence":true}`,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := scopeViewOf(0, tc.cfg)
-			if !v.IgnoredPathsOutsideEvidence {
-				t.Errorf("ignored_paths_outside_evidence must be invariantly true, got false for %s", tc.name)
+			got, err := json.Marshal(scopeViewOf(tc.skipped, tc.cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("scope =\n%s\nwant\n%s", got, tc.want)
 			}
 		})
 	}

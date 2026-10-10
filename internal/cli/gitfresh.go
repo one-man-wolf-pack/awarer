@@ -157,16 +157,30 @@ func reviewCoverageViewOf() reviewCoverageView {
 // than having to know it out-of-band.
 const ignoredPathsOutsideEvidence = true
 
-// scopeView is the machine projection of the comparison's scope honesty. SkippedInScope
-// and IgnoreSources are measured facts (how many scoped-in inputs were unhashable, which
-// ignore sources are active). IgnoredPathsOutsideEvidence is NOT a measured fact: it is
-// a stable contract assertion (see the const) that an awa delta says nothing about
-// ignored paths — the machine form of the human caveat that a deleted path may in fact
-// be one that became ignored.
+// ignoreSourcesBasis and ignoreSourceParticipationUnknown keep ignore_sources from
+// being read as either operand's recorded sources: the categories come from the
+// configuration loaded for this invocation, and no resolved observation carries an
+// inventory of the ignore files it read. Deriving participation from the enabled
+// switches, matching scan identities, or recorded excluded names would present a
+// stored operand as observed under rules it may never have seen.
+const (
+	ignoreSourcesBasis               = "current-configuration"
+	ignoreSourceParticipationUnknown = "unknown"
+)
+
 type scopeView struct {
-	SkippedInScope              int      `json:"skipped_in_scope"`
-	IgnoreSources               []string `json:"ignore_sources"`
-	IgnoredPathsOutsideEvidence bool     `json:"ignored_paths_outside_evidence"`
+	// The skipped changes folded from the selected delta, not the skipped inputs of
+	// either observation: a path filter narrows it.
+	SkippedInScope              int                           `json:"skipped_in_scope"`
+	IgnoreSources               []string                      `json:"ignore_sources"`
+	IgnoreSourcesBasis          string                        `json:"ignore_sources_basis"`
+	IgnoreSourceParticipation   ignoreSourceParticipationView `json:"ignore_source_participation"`
+	IgnoredPathsOutsideEvidence bool                          `json:"ignored_paths_outside_evidence"`
+}
+
+type ignoreSourceParticipationView struct {
+	Left  string `json:"left"`
+	Right string `json:"right"`
 }
 
 func scopeViewOf(skipped int, cfg domainconfig.Config) scopeView {
@@ -184,8 +198,13 @@ func scopeViewOf(skipped int, cfg domainconfig.Config) scopeView {
 	// there are always ignored paths outside the compared scope.
 	sources = append(sources, "baseline-excludes")
 	return scopeView{
-		SkippedInScope:              skipped,
-		IgnoreSources:               sources,
+		SkippedInScope:     skipped,
+		IgnoreSources:      sources,
+		IgnoreSourcesBasis: ignoreSourcesBasis,
+		IgnoreSourceParticipation: ignoreSourceParticipationView{
+			Left:  ignoreSourceParticipationUnknown,
+			Right: ignoreSourceParticipationUnknown,
+		},
 		IgnoredPathsOutsideEvidence: ignoredPathsOutsideEvidence,
 	}
 }
