@@ -270,6 +270,70 @@ func TestPreviewNamesEveryBlockedPathAndReason(t *testing.T) {
 	}
 }
 
+func TestRestoreRefusesADirectoryHoldingAHiddenChildBeforeMutating(t *testing.T) {
+	root := initProject(t)
+	writeFile(t, root, ".awaignore", "*.log\n")
+	writeFile(t, root, "keep.txt", "keep\n")
+	if code, _, stderr := run("checkpoint", "--root", root, "-m", "baseline"); code != int(ExitSuccess) {
+		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
+	}
+	writeFile(t, root, "d/a.log", "hidden\n")
+	writeFile(t, root, "new.txt", "unreviewed\n")
+
+	code, stdout, _ := run("restore", "--root", root, "latest", "--all")
+	if code != int(ExitSuccess) {
+		t.Fatalf("preview exit = %d", code)
+	}
+	if !strings.Contains(stdout, "d: path-conflict") {
+		t.Errorf("preview does not name the blocked directory and its reason:\n%s", stdout)
+	}
+
+	type restoreDoc struct {
+		Data struct {
+			Outcome  string `json:"outcome"`
+			Complete bool   `json:"complete"`
+			Counts   struct {
+				DeleteFile      int `json:"delete_file"`
+				DeleteDirectory int `json:"delete_directory"`
+				Blocked         int `json:"blocked"`
+			} `json:"counts"`
+			Recovery *struct{} `json:"recovery"`
+			Failures []struct {
+				Path    string   `json:"path"`
+				Reasons []string `json:"reasons"`
+			} `json:"failures"`
+		} `json:"data"`
+	}
+	for _, mode := range [][]string{{}, {"--apply"}} {
+		args := append([]string{"restore", "--root", root, "--json"}, mode...)
+		_, jstdout, _ := run(append(args, "latest", "--all")...)
+		var doc restoreDoc
+		if err := json.Unmarshal([]byte(jstdout), &doc); err != nil {
+			t.Fatalf("%v decode: %v\n%s", mode, err, jstdout)
+		}
+		if doc.Data.Complete || doc.Data.Recovery != nil {
+			t.Errorf("%v complete = %v, recovery present = %v", mode, doc.Data.Complete, doc.Data.Recovery != nil)
+		}
+		if c := doc.Data.Counts; c.DeleteFile != 1 || c.DeleteDirectory != 0 || c.Blocked != 1 {
+			t.Errorf("%v counts = %+v, want one ready file deletion and one blocked directory", mode, c)
+		}
+		if len(doc.Data.Failures) != 1 ||
+			doc.Data.Failures[0].Path != "d" ||
+			len(doc.Data.Failures[0].Reasons) != 1 ||
+			doc.Data.Failures[0].Reasons[0] != "path-conflict" {
+			t.Errorf("%v failures = %+v, want the directory with path-conflict", mode, doc.Data.Failures)
+		}
+		if len(mode) > 0 && doc.Data.Outcome != "refused" {
+			t.Errorf("apply outcome = %q, want refused", doc.Data.Outcome)
+		}
+	}
+	for _, kept := range []string{"new.txt", "d/a.log"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(kept))); err != nil {
+			t.Errorf("%s did not survive the refused apply: %v", kept, err)
+		}
+	}
+}
+
 func TestStateProviderRefusesARecoveryObservationReference(t *testing.T) {
 	root, _ := restoreProject(t)
 	// The provider's kind vocabulary deliberately does not name recovery

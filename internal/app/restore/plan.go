@@ -36,6 +36,7 @@ type session struct {
 	root           string
 	absence        *worktree.AbsenceTracker
 	currentCover   *worktree.AbsenceTracker
+	preflight      *removalPreflight
 
 	// scopeStream bounds a recovery-observation source to the exact path set it
 	// proves. It is nil for a checkpoint or run source, whose evidence covers the
@@ -46,8 +47,8 @@ type session struct {
 	counts   restore.Counts
 	boundary restore.Boundary
 	samples  []restore.BlockedSample
-	// mutating counts the ready operations that change the worktree; it is the
-	// spool's population and the commit's denominator.
+	// mutating counts the ready operations that change the worktree; for a complete
+	// plan it is the spool's population and the commit's denominator.
 	mutating int
 	// selectionSeen records which explicit path selections produced at least one
 	// path inside the evidence, so an operand that named nothing awa can see is
@@ -168,9 +169,14 @@ func (sess *session) result(res restore.ApplyResult) Result {
 }
 
 // plan streams the selected inverse comparison and returns the validated plan.
-// Ready mutating operations go to the spool as they are decided; everything else
+// Mutating operations go to the spool as they are decided; everything else
 // contributes to bounded counts and a bounded blocked sample. The operation set is
 // never held in memory.
+//
+// A directory removal is spooled at its canonical position before its descendants
+// are read, so that entry is provisional until the preflight settles it. The spool
+// is executable only for a complete plan: replaying it after a directory settled as
+// blocked would run the other operations and then fail on that directory.
 func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 	sess.boundary = restore.Boundary{
 		SourceSkipped:    sess.source.Skipped(),
@@ -197,6 +203,16 @@ func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 	defer func() {
 		_ = currentCover.Close()
 		sess.currentCover = nil
+	}()
+
+	preflight, err := newRemovalPreflight(ctx, sess.current.Coverage(), sess.settleRemoval)
+	if err != nil {
+		return restore.Plan{}, err
+	}
+	sess.preflight = preflight
+	defer func() {
+		_ = preflight.close()
+		sess.preflight = nil
 	}()
 
 	srcCur, err := sess.source.Manifest(ctx)
@@ -231,11 +247,21 @@ func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 		if err := currentCover.Note(m.current); err != nil {
 			return restore.Plan{}, err
 		}
-		if err := sess.decide(m.path, m.source, m.current, m.inScope); err != nil {
+		if err := preflight.reach(ctx, m.path); err != nil {
 			return restore.Plan{}, err
+		}
+		remains, err := sess.decide(m.path, m.source, m.current, m.inScope)
+		if err != nil {
+			return restore.Plan{}, err
+		}
+		if remains {
+			preflight.hold(m.path, m.current.IsSkipped())
 		}
 	}
 	if err := m.err(); err != nil {
+		return restore.Plan{}, err
+	}
+	if err := preflight.finish(ctx); err != nil {
 		return restore.Plan{}, err
 	}
 	if err := absence.Finish(); err != nil {
@@ -260,9 +286,10 @@ func (sess *session) plan(ctx context.Context) (restore.Plan, error) {
 // decide settles one path and folds it into the plan. It is the single place the
 // inverse comparison's rules live, so preview counts, spooled work, and the reasons
 // output prints all come from one decision.
-func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRecord, inScope bool) error {
+func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRecord, inScope bool) (leavesNode bool, err error) {
+	observed := !cur.IsZero()
 	if !sess.req.Selection.Covers(path) {
-		return nil
+		return observed, nil
 	}
 
 	// A recovery-observation source proves something about exactly the paths it
@@ -273,17 +300,17 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 	// make "this record proves nothing about your path" indistinguishable from "your
 	// path already matches".
 	if sess.scopeStream != nil && !inScope {
-		return nil
+		return observed, nil
 	}
 	sess.markSelectionSeen(path)
 
 	desiredNode, reason, ok := entryNode(src)
 	if !ok {
-		return sess.blocked(path, restore.AbsentNode(), restore.AbsentNode(), reason)
+		return observed, sess.blocked(path, restore.AbsentNode(), restore.AbsentNode(), reason)
 	}
 	currentNode, reason, ok := entryNode(cur)
 	if !ok {
-		return sess.blocked(path, restore.AbsentNode(), desiredNode.state, reason)
+		return observed, sess.blocked(path, restore.AbsentNode(), desiredNode.state, reason)
 	}
 	desired, current := desiredNode.state, currentNode.state
 
@@ -292,20 +319,20 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 		// covered path whose entry was absent at capture time and is absent now: the
 		// desired end state already holds.
 		sess.counts.Equal++
-		return nil
+		return false, nil
 	}
 
 	if !desired.Present() && !sess.compat.allowsDeletion() {
-		return sess.blocked(path, current, desired, restore.ReasonPolicyIncompatible)
+		return observed, sess.blocked(path, current, desired, restore.ReasonPolicyIncompatible)
 	}
 	// The source's nonappearance never proves absence on its own: an excluded path,
 	// even under identical rules, may exist at that spelling, and deleting it would
 	// destroy unobserved data.
 	if !desired.Present() {
 		if r, blocked, err := verdictReason(sess.absence.Absent(path)); err != nil {
-			return err
+			return false, err
 		} else if blocked {
-			return sess.blocked(path, current, desired, r)
+			return observed, sess.blocked(path, current, desired, r)
 		}
 	}
 
@@ -323,27 +350,27 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 	// link was involved. Any disagreement means at least one side is only reachable
 	// through a link, which makes this path a boundary rather than work.
 	if desiredNode.traversal != currentNode.traversal {
-		return sess.blocked(path, current, desired, restore.ReasonSymlinkAncestor)
+		return observed, sess.blocked(path, current, desired, restore.ReasonSymlinkAncestor)
 	}
 
 	if !current.Present() {
 		if r, blocked, err := sess.currentAbsence(path); err != nil {
-			return err
+			return false, err
 		} else if blocked {
-			return sess.blocked(path, current, desired, r)
+			return observed, sess.blocked(path, current, desired, r)
 		}
 		// Physically absent, but below a current boundary — for example under an
 		// excluded file the create would need to replace — it is outside evidence.
 		if r, blocked, err := verdictReason(sess.currentCover.Reachable(path)); err != nil {
-			return err
+			return false, err
 		} else if blocked {
-			return sess.blocked(path, current, desired, r)
+			return observed, sess.blocked(path, current, desired, r)
 		}
 	}
 
 	op, err := restore.NewPlannedOperation(path, current, desired)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if op.Kind() == restore.OpEqual {
 		// Settled before any boundary question is asked, and deliberately so. A path whose
@@ -352,7 +379,7 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 		// unchanged path reached through a symlink into an evidence gap, which under --all
 		// refuses the whole restore over paths nobody asked to change.
 		sess.counts.Add(op)
-		return nil
+		return observed, nil
 	}
 
 	// The states differ, so this path would have to be written or deleted. A record
@@ -365,7 +392,7 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 	// Left ready it would preview as ordinary work and then fail at the descriptor with a
 	// reason that reads like something changed underfoot, when nothing did.
 	if desiredNode.followed() || currentNode.followed() {
-		return sess.blocked(path, current, desired, restore.ReasonSymlinkAncestor)
+		return observed, sess.blocked(path, current, desired, restore.ReasonSymlinkAncestor)
 	}
 
 	// A regular-file write needs bytes, and an entry hash proves identity, not
@@ -374,20 +401,36 @@ func (sess *session) decide(path worktree.RelPath, src, cur worktree.ManifestRec
 	// them exactly as apply would refuse on them.
 	if op.RequiresContent() {
 		if r, blockedNow, err := sess.contentReason(src); err != nil {
-			return err
+			return false, err
 		} else if blockedNow {
-			return sess.blocked(path, current, desired, r)
+			return observed, sess.blocked(path, current, desired, r)
 		}
 	}
 
-	sess.counts.Add(op)
-	sess.mutating++
+	if removesDirectory(op) {
+		sess.preflight.candidate(op)
+	} else {
+		sess.ready(op)
+	}
 	if sess.spool == nil {
 		// A preview counts the work and describes it; only an apply has to be able to
 		// replay it.
-		return nil
+		return desired.Present(), nil
 	}
-	return sess.spool.Add(op)
+	return desired.Present(), sess.spool.Add(op)
+}
+
+func (sess *session) settleRemoval(op restore.PlannedOperation, reasons []restore.Reason) error {
+	if len(reasons) > 0 {
+		return sess.blocked(op.Path(), op.Current(), op.Desired(), reasons...)
+	}
+	sess.ready(op)
+	return nil
+}
+
+func (sess *session) ready(op restore.PlannedOperation) {
+	sess.counts.Add(op)
+	sess.mutating++
 }
 
 func verdictReason(verdict worktree.AbsenceVerdict, err error) (restore.Reason, bool, error) {

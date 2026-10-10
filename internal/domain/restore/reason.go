@@ -62,9 +62,9 @@ const (
 	// ReasonObservationUnstable: the current observation could not be taken as a
 	// consistent point-in-time snapshot, so its preconditions are not trustworthy.
 	ReasonObservationUnstable Reason = "observation-unstable"
-	// ReasonPathConflict: two operations, or an operation and an unobserved child,
-	// contend for the same path — for example a directory that must be removed
-	// while a child it still holds was never observed.
+	// ReasonPathConflict: two operations, or an operation and a node the plan leaves
+	// in place, contend for the same path — for example a directory that must be
+	// removed while it still holds a child the selection does not remove.
 	ReasonPathConflict Reason = "path-conflict"
 	// ReasonRootEscape: the path resolves outside the project root.
 	ReasonRootEscape Reason = "root-escape"

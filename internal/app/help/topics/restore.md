@@ -84,6 +84,14 @@ name excluded was never looked at, so deleting it is blocked as `ignored-boundar
 Directory removal is empty-only and deepest-first; awa never recursively deletes a
 worktree path.
 
+Deleting a directory, or replacing it with a file or symlink, needs the selection
+itself to empty it. A child the plan leaves in place — hidden by an ignore rule,
+outside a recovery observation's covered paths, or itself blocked — blocks the
+directory as `path-conflict` in the preview (`skipped-boundary` below a skipped
+input), and `--apply` then refuses the whole selection before changing anything.
+Remove or move the child yourself, or narrow the selection. A child that appears
+after planning can still stop an apply partway at that directory.
+
 A create checks the destination itself, without following links, while planning:
 a path the current policy hides but that exists on disk, or one below a hidden
 entry, is blocked as `ignored-boundary` in the preview instead of being
