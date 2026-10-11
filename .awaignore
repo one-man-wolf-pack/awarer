@@ -6,3 +6,11 @@
 *.out
 coverage.txt
 .DS_Store
+
+# User-local tool state no command here reads. Left visible, each would be a run input —
+# a provider cache refresh or a newly granted agent permission would discard every
+# reusable check — and its bytes would be stored in every checkpoint, credentials
+# included.
+/.wrangler/
+/.claude/settings.local.json
+/.awa-integrations.local.md

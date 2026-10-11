@@ -1,0 +1,35 @@
+# Shared awa policy for working on awa in this checkout. Only overrides live here; an
+# absent key keeps its product default (`awa config effective` shows both, and the layer
+# each value came from). Personal overrides belong in the private `.awa/config.toml` —
+# and a list set there replaces the list below rather than adding to it.
+
+[run]
+# A wrapped command does not inherit the shell's environment: it receives the built-in
+# baseline plus exactly these names, and each one is part of the cache key. A variable
+# missing from the list is silently dropped, so `AWA_BIN=… awa run -- just site` would
+# build from this tree instead of the selected binary. The list is therefore every
+# variable this repository's own commands read by name:
+#
+#   - CI                          the product default, kept;
+#   - the justfile's `env(...)` values — the paths and identities its recipes take;
+#   - AWA_REQUIRE_SYMLINK_TESTS   turns a skipped symlink test into a failure;
+#   - GOOS, GOARCH, CGO_ENABLED, GOFLAGS
+#                                 a focused cross-target `go vet`/`go build` must
+#                                 analyze the target it names, not the host.
+#
+# NODE_ENV, the other product default, is dropped: nothing here runs Node.
+env_allowlist = [
+    "CI",
+    "REFERENCE_GOLDEN",
+    "LICENSE_MANIFEST",
+    "THIRD_PARTY_NOTICES",
+    "SITE_BASE_URL",
+    "SITE_SERVE_ADDR",
+    "AWA_BIN",
+    "SITE_RELEASE",
+    "AWA_REQUIRE_SYMLINK_TESTS",
+    "GOOS",
+    "GOARCH",
+    "CGO_ENABLED",
+    "GOFLAGS",
+]

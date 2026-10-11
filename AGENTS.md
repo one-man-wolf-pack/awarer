@@ -39,10 +39,15 @@ locally.
 Start with the installed binary; its help describes that exact version:
 
 ```bash
+awa version
 awa help agents
 awa help privacy
 awa status
 ```
+
+`awa status` is the dashboard to read before a review: baseline, drift, Git state,
+reusable and near-miss runs, and the commands to run next. `awa help topics` lists
+every operational page.
 
 Before risky or iterative work, create a checkpoint with a specific message and
 keep the full id it prints:
@@ -54,16 +59,18 @@ awa diff <checkpoint-id>..now
 ```
 
 `latest` is shared project-local state and may move when another user or agent
-creates a checkpoint. Explicit ids keep a review/fix loop anchored. Checkpoint
-deltas are focused memory, not proof that all pending work was reviewed: before
-acceptance, also inspect the complete `git status` and Git diff.
+creates a checkpoint; `awa log -n 5` shows where it went. Explicit ids keep a
+review/fix loop anchored. Checkpoint deltas are focused memory, not proof that all
+pending work was reviewed: before acceptance, also inspect the complete
+`git status` and Git diff.
 
 Use awa to run deterministic validation and retain inspectable output:
 
 ```bash
-awa run --display tail:200 -- just check
-awa run --display tail:200 -- just stress
+awa run --stdin null --display tail:200 -- just check
+awa run --stdin null --display tail:200 -- just stress
 awa run show --last --tail 500
+awa run show --last --grep "<pattern>"
 ```
 
 Discover reusable evidence and diagnose misses before repeating expensive work:
@@ -72,7 +79,19 @@ Discover reusable evidence and diagnose misses before repeating expensive work:
 awa run ls
 awa run ls --near
 awa run explain -- just check
+awa run explain --last
+awa run explain --from-run <id> --to-now
 ```
+
+A near miss carries a reason token (`awa help run` lists them). Read it before
+acting: `input-tree-differs` usually means the inputs really changed, and a real
+input is never excluded to win a hit. `awa run --refresh -- <command>` forces a
+fresh deterministic check.
+
+A piped or redirected stdin is passed to the command and makes the run
+non-reusable (`stdin-not-keyed`), which is what an agent harness usually hands
+awa. The gates above read no input, hence `--stdin null`; never use it to silence
+a command that does read stdin.
 
 For builds, generators, formatters, migrations, deployment work, or any command
 expected to mutate observed state, supervise it without publishing a cache hit:
@@ -85,6 +104,20 @@ awa changes run:<id>:before..run:<id>:after
 
 `awa run` is cwd-sensitive: run from the intended directory or use `--cwd`.
 `--display` changes terminal rendering, not stored output or exit status.
+
+A wrapped command does not inherit the shell's environment. It receives awa's
+built-in baseline plus the names in `[run].env_allowlist`, and every one of them
+is part of the cache key; any other variable is dropped without a message, so
+`FOO=1 awa run -- <command>` runs without `FOO` unless it is listed. The
+committed `awa.toml` is this checkout's shared policy and lists the variables the
+repository's own commands read. A command that starts reading a new one needs it
+added there — a policy change to propose, not a local workaround.
+`.awaignore` is the committed ignore file; `.gitignore` is not scan policy here.
+
+```bash
+awa config effective
+awa config validate
+```
 
 When a build, generator, or formatter rewrites files it should not have, restore
 just those paths from the checkpoint you were working against:
@@ -105,6 +138,26 @@ evidence attributable — awa can observe drift but cannot prove which external
 process caused it.
 
 `.awa/` is private local evidence and must never be committed. Captured
-stdout/stderr is stored verbatim and is not redacted, so wrapped commands must not
-print secrets. Use `awa help privacy` and `awa doctor` when handling, moving, or
-sharing the checkout.
+stdout/stderr and argv are stored verbatim and are not redacted, so wrapped
+commands must not print secrets or take them as arguments. A checkpoint covers
+untracked and gitignored files too: env files are recorded hash-only by default,
+and any other secret-bearing file needs a `[checkpoint].hash_only_patterns` or
+`.awaignore` entry before it is created, because a later config change does not
+remove bytes an older checkpoint already stored. Use `awa help privacy` and
+`awa doctor` when handling, moving, or sharing the checkout.
+
+`awa doctor` exiting 5 means a finding needs an action, not that awa failed: read
+the findings. These only inspect:
+
+```bash
+awa doctor
+awa doctor --capacity
+awa run audit
+awa gc --dry-run
+```
+
+`awa doctor --repair` performs only the mechanical fixes for the findings it marks
+`[repairable]` and never touches the worktree. `awa gc` and `awa run rm` delete
+evidence, and a config change alters what every later run and checkpoint
+observes; propose those with their evidence and leave the decision to the
+maintainer. `awa help maintenance` is the reading path for reviewing this setup.
