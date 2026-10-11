@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -514,6 +515,126 @@ func TestRunLogShowRm(t *testing.T) {
 	}
 	if _, _, stderr := awa(t, root, "run", "--", h, "-out", "second"); isHit(stderr) {
 		t.Error("a run whose entry was removed must not hit")
+	}
+}
+
+func TestRunCommandFilterSearchesArguments(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+	// The helper ignores trailing operands.
+	for _, args := range [][]string{
+		{"-out", "a", "fmt"},
+		{"-out", "b", "xtask", "check"},
+		{"-out", "c", "xtask", "check", "--all"},
+		{"-out", "d", "build"},
+	} {
+		if code, _, stderr := awa(t, root, append([]string{"run", "--"}, append([]string{h}, args...)...)...); code != 0 {
+			t.Fatalf("run %v: exit %d, %s", args, code, stderr)
+		}
+	}
+
+	type row struct {
+		ID      string   `json:"id"`
+		Command []string `json:"command"`
+	}
+	logIDs := func(args ...string) []string {
+		t.Helper()
+		code, stdout, stderr := awa(t, root, append([]string{"run", "log", "--json"}, args...)...)
+		if code != 0 {
+			t.Fatalf("run log %v: exit %d, %s", args, code, stderr)
+		}
+		var env struct {
+			Data []row `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+			t.Fatalf("run log --json: %v\n%s", err, stdout)
+		}
+		ids := make([]string, 0, len(env.Data))
+		for _, r := range env.Data {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+	all := logIDs()
+	if len(all) != 4 {
+		t.Fatalf("run log lists %d runs, want 4", len(all))
+	}
+	fmtID, checkIDs := all[3], []string{all[1], all[2]}
+
+	if got := logIDs("--command", "fmt"); !slices.Equal(got, []string{fmtID}) {
+		t.Errorf("run log --command fmt = %v, want %v", got, []string{fmtID})
+	}
+	if got := logIDs("--command", "xtask check"); !slices.Equal(got, checkIDs) {
+		t.Errorf("run log --command 'xtask check' = %v, want %v", got, checkIDs)
+	}
+	if got := logIDs("--command", "XTASK"); len(got) != 0 {
+		t.Errorf("run log --command XTASK = %v, want no rows (the filter is case-sensitive)", got)
+	}
+	code, human, _ := awa(t, root, "run", "log", "--command", "xtask check")
+	if lines := strings.Split(strings.TrimSpace(human), "\n"); code != 0 || len(lines) != 2 ||
+		!strings.Contains(lines[0], "xtask check --all") || !strings.Contains(lines[1], "xtask check") {
+		t.Errorf("run log --command 'xtask check' (exit %d) =\n%s\nwant the two xtask runs, newest first", code, human)
+	}
+
+	lsIDs := func(args ...string) []string {
+		t.Helper()
+		code, stdout, stderr := awa(t, root, append([]string{"run", "ls", "--all", "--json"}, args...)...)
+		if code != 0 {
+			t.Fatalf("run ls --all %v: exit %d, %s", args, code, stderr)
+		}
+		var env struct {
+			Data struct {
+				Reusable []row `json:"reusable"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+			t.Fatalf("run ls --json: %v\n%s", err, stdout)
+		}
+		ids := make([]string, 0, len(env.Data.Reusable))
+		for _, r := range env.Data.Reusable {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+	if got := lsIDs("--command", "xtask check"); !slices.Equal(got, checkIDs) {
+		t.Errorf("run ls --all --command 'xtask check' = %v, want %v", got, checkIDs)
+	}
+	if got := lsIDs("--command", "fmt", "-n", "3"); len(got) != 0 {
+		t.Errorf("run ls --all -n 3 --command fmt = %v, want no rows (outside the window)", got)
+	}
+	if got := lsIDs("--command", "fmt", "-n", "4"); !slices.Equal(got, []string{fmtID}) {
+		t.Errorf("run ls --all -n 4 --command fmt = %v, want %v", got, []string{fmtID})
+	}
+
+	code, stdout, stderr := awa(t, root, "run", "rm", "--command", "xtask check", "--dry-run", "--json")
+	if code != 0 {
+		t.Fatalf("run rm --dry-run: exit %d, %s", code, stderr)
+	}
+	var rm struct {
+		Data struct {
+			DryRun  bool  `json:"dry_run"`
+			Removed []row `json:"removed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rm); err != nil {
+		t.Fatalf("run rm --json: %v\n%s", err, stdout)
+	}
+	targets := make([]string, 0, len(rm.Data.Removed))
+	for _, r := range rm.Data.Removed {
+		targets = append(targets, r.ID)
+	}
+	if !rm.Data.DryRun || !slices.Equal(targets, checkIDs) {
+		t.Errorf("run rm --dry-run = dry_run %v, targets %v; want a dry run over %v", rm.Data.DryRun, targets, checkIDs)
+	}
+	code, human, _ = awa(t, root, "run", "rm", "--command", "xtask check", "--dry-run")
+	// Each line carries the helper's absolute path, so asserting that another run's
+	// text is absent would depend on the temp directory's name.
+	if lines := strings.Split(strings.TrimSpace(human), "\n"); code != 0 || len(lines) != 2 ||
+		strings.Count(human, "would remove ") != 2 || strings.Count(human, " xtask check") != 2 {
+		t.Errorf("run rm --dry-run (exit %d) =\n%s\nwant two \"would remove\" lines for the xtask runs", code, human)
+	}
+	if got := logIDs(); !slices.Equal(got, all) {
+		t.Errorf("run log after dry-run removals = %v, want the untouched history %v", got, all)
 	}
 }
 

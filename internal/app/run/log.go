@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 
 	"awarer/internal/domain/runcache"
 )
@@ -15,8 +16,7 @@ const defaultLogLimit = 20
 // LogRequest selects which stored runs to list.
 type LogRequest struct {
 	// Limit caps the number of entries returned; zero means defaultLogLimit.
-	Limit int
-	// Command, when non-empty, keeps only runs whose first argv token matches it.
+	Limit   int
 	Command string
 }
 
@@ -84,12 +84,8 @@ func (s *Service) Log(ctx context.Context, req LogRequest) ([]LogEntry, error) {
 	return out, nil
 }
 
-// commandMatches reports whether a run's command matches a "--command" filter.
-// The rule is simple and documented in tests: the run's first argv token (the
-// executable as typed) must equal the filter exactly.
 func commandMatches(e runcache.RunEntry, command string) bool {
-	argv := e.KeyInput.Command.Argv
-	return len(argv) > 0 && argv[0] == command
+	return strings.Contains(strings.Join(e.KeyInput.Command.Argv, " "), command)
 }
 
 // sortNewestFirst orders entries by start time descending, breaking ties by id

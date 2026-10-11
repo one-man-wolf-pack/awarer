@@ -75,10 +75,10 @@ var runSubcommands = []subcommand{
 			{"--all", "also list non-reusable runs, each with a reason", ""},
 			{"--near", "add the nearest near-miss section", ""},
 			{"-n, --limit <count>", "show at most <count> entries", ""},
-			{"--command <substr>", "filter to runs whose command contains <substr>", ""},
+			{"--command <substr>", "keep runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)", ""},
 			{"--time <mode>", "time display: relative|utc|local (human only)", "[ui].time"},
 		},
-		examples: []string{"awa run ls", "awa run ls --near --json"},
+		examples: []string{"awa run ls", "awa run ls --near --json", "awa run ls --all --command \"xtask check\""},
 		topic:    "run",
 	}},
 	{name: "log", run: runRunLog, summary: "list recorded runs, newest first", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
@@ -86,10 +86,10 @@ var runSubcommands = []subcommand{
 		long:  "List recorded runs in chronological order, newest first, including non-reusable and record-only history.",
 		flags: []flagHelp{
 			{"-n, --limit <count>", "show at most <count> entries", ""},
-			{"--command <substr>", "filter to runs whose command contains <substr>", ""},
+			{"--command <substr>", "keep runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)", ""},
 			{"--time <mode>", "time display: relative|utc|local (human only)", "[ui].time"},
 		},
-		examples: []string{"awa run log -n 10"},
+		examples: []string{"awa run log -n 10", "awa run log --command \"xtask check\""},
 		topic:    "inspect",
 	}},
 	{name: "show", run: runRunShow, summary: "show one run's metadata and stored output", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
@@ -113,13 +113,13 @@ var runSubcommands = []subcommand{
 	}},
 	{name: "rm", run: runRunRm, summary: "delete stored runs by id or filter", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
 		usage: []string{"run rm <id>... | (--command <substr> | --older-than <dur>) [--dry-run]"},
-		long:  "Delete stored runs, by explicit id(s) or by filter. Ids and filters are mutually exclusive. --dry-run reports what would be removed.",
+		long:  "Delete stored runs, by explicit id(s) or by filter. Ids and filters are mutually exclusive. --command matches anywhere in the recorded command line, arguments included, so it can select more runs than the executable name suggests: pass --dry-run first to see what would be removed.",
 		flags: []flagHelp{
-			{"--command <substr>", "delete runs whose command contains <substr>", ""},
+			{"--command <substr>", "delete runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)", ""},
 			{"--older-than <dur>", "delete runs older than <dur> (e.g. 720h)", ""},
 			{"--dry-run", "report what would be removed without deleting", ""},
 		},
-		examples: []string{"awa run rm --older-than 720h --dry-run"},
+		examples: []string{"awa run rm --older-than 720h --dry-run", "awa run rm --command \"xtask check\" --dry-run"},
 		topic:    "inspect",
 	}},
 	{name: "audit", run: runRunAudit, summary: "summarize stored reuse reasons of recent runs", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{

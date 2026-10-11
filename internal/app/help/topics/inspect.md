@@ -18,7 +18,9 @@ awa run ls
 awa run ls --all
 ```
 
-`<substring>` matches anywhere in the recorded command line.
+`<substring>` is literal and case-sensitive, and matches anywhere in the recorded
+command line — the executable or its arguments, joined by single spaces — so
+`--command "xtask check"` finds `cargo xtask check`.
 
 `awa run log` is chronological history, newest first: everything that was
 recorded, including failed, mutating, and record-only runs. `awa run ls` is a
@@ -108,7 +110,8 @@ awa run rm --older-than <duration>
 
 `<duration>` accepts `d`, `h`, `m`, and `s` units, so `30d` and `720h` are both
 valid. Explicit ids and the filter flags are mutually exclusive, and `--dry-run`
-reports what would be removed without removing it.
+reports what would be removed without removing it. `--command` matches arguments
+as well as the executable, so check its targets with `--dry-run` first.
 
 Deleting a run deletes the evidence, not the effect: whatever the command did to
 the worktree stays done. For routine cleanup driven by policy rather than by hand,

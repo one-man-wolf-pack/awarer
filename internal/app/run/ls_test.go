@@ -390,9 +390,9 @@ func TestLsCommandFilterStaysWithinWindow(t *testing.T) {
 	defer h.cleanup()
 	h.write(t, "a.txt", "v1")
 
-	// The oldest run carries the rare command; advancing the clock between runs keeps
+	// The oldest run carries the rare arguments; advancing the clock between runs keeps
 	// ids time-ordered, so the three newer "common" runs crowd it out of a small window.
-	if _, err := h.svc.Run(context.Background(), h.request("rare")); err != nil {
+	if _, err := h.svc.Run(context.Background(), h.request("common", "rare", "arg")); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
@@ -404,7 +404,7 @@ func TestLsCommandFilterStaysWithinWindow(t *testing.T) {
 	}
 
 	req := h.lsRequest()
-	req.Command = "rare"
+	req.Command = "rare arg"
 	req.Limit = 1
 	req.All = true
 	entries, err := lsEntries(h.svc, req)

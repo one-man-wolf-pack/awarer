@@ -72,9 +72,7 @@ type LsRequest struct {
 	// runs and reports which of them are reusable now. Command filters within that
 	// window, so a command absent from the newest Limit runs yields no rows rather than
 	// an unbounded search back through history. Zero means defaultLogLimit.
-	Limit int
-	// Command, when non-empty, keeps only runs whose first argv token matches it,
-	// applied within the candidate window.
+	Limit   int
 	Command string
 	// All includes non-reusable rows in Reusable, each carrying an explicit reason. By
 	// default Reusable holds only reusable entries.

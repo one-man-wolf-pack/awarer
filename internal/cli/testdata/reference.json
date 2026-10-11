@@ -397,7 +397,7 @@
               "spellings": [
                 "--command"
               ],
-              "desc": "filter to runs whose command contains <substr>",
+              "desc": "keep runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)",
               "takes_value": true,
               "value": "<substr>"
             },
@@ -439,7 +439,7 @@
               "spellings": [
                 "--command"
               ],
-              "desc": "filter to runs whose command contains <substr>",
+              "desc": "keep runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)",
               "takes_value": true,
               "value": "<substr>"
             },
@@ -541,7 +541,7 @@
               "spellings": [
                 "--command"
               ],
-              "desc": "delete runs whose command contains <substr>",
+              "desc": "delete runs whose full command line, arguments included, contains <substr> (literal, case-sensitive)",
               "takes_value": true,
               "value": "<substr>"
             },
