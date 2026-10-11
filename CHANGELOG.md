@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.0...v0.4.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **run:** match --command against the full recorded command line ([4c3336c](https://github.com/one-man-wolf-pack/awarer/commit/4c3336c0b8080476cea5361ba8974d18fd73092a))
+
+
+### Miscellaneous Chores
+
+* share this checkout's awa policy and refresh the agent guidance ([17dcf9e](https://github.com/one-man-wolf-pack/awarer/commit/17dcf9ed8e18997bd0431b2c5246c778ffb60502))
+
 ## [0.4.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.3.2...v0.4.0) (2026-10-10)
 
 
