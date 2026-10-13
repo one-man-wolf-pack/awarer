@@ -23,3 +23,6 @@ coverage.txt
 # Local credentials and provider configuration.
 /.env
 /.wrangler/
+
+# Personal Claude Code settings. The shared `.claude/settings.json` is tracked.
+/.claude/settings.local.json
