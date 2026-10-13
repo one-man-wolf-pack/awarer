@@ -136,6 +136,21 @@ go run ./internal/tools/refgen             # emit the CLI reference
 awa docs export --output <directory>       # export the documentation bundle
 ```
 
+A focused check selects a package and, when needed, a test or subtest by `-run`:
+
+```bash
+go test ./internal/app/run                                           # one package
+go test ./internal/app/run -run '^TestCommandMatches$'               # one test
+go test ./internal/app/run -run '^TestCommandMatches$/^empty_argv$'  # one subtest
+go test -race ./internal/app/run                                     # race, same boundary
+go vet ./internal/app/run                                            # vet, same boundary
+```
+
+Select the package, never a list of `.go` files: that silently drops the
+package's supporting files and tests. A selection that runs no test proves
+nothing; `-v` shows what ran. `just check` and `just release-gate` stay the
+aggregates for full qualification, not a prerequisite of every change.
+
 The generated CLI reference is checked against
 [`internal/cli/testdata/reference.json`](internal/cli/testdata/reference.json); run
 `just reference-update` after an intended surface change.

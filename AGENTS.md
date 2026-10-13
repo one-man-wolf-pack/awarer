@@ -25,6 +25,17 @@ locally.
   workflow runs the check over every commit an event introduces and is the
   enforcement; `lefthook install` is optional local feedback and never a
   precondition for anything else here.
+- When you author a commit, end its message with exactly these two trailers,
+  written explicitly:
+
+  ```text
+  Co-authored-by: Codex <noreply@openai.com>
+  Co-authored-by: Claude <noreply@anthropic.com>
+  ```
+
+  The tracked `.claude/settings.json` only turns off Claude's automatic trailer
+  so it cannot add a competing one. The check itself stays conditional: human
+  and bot commits that declare no co-author still pass.
 - Treat `README.md` as current executable/user guidance and `justfile` as the
   canonical command surface; `just --list` shows the recurring workflows, and
   focused one-step work uses the native Go tool the README names. Site-specific
@@ -36,128 +47,63 @@ locally.
 
 ## Using awa
 
-Start with the installed binary; its help describes that exact version:
+awa is optional here. A command wrapped by `awa run` also runs as the plain Go or
+Just command on its own; without an installed `awa`, drop the wrapper, skip the
+checkpoint and evidence steps, and keep the Git review and the check itself.
+The installed binary's help describes that exact version (`awa help agents`,
+`awa help topics`).
+
+Read the dashboard before a review, then anchor the work to a checkpoint and keep
+the full id it prints:
 
 ```bash
-awa version
-awa help agents
-awa help privacy
 awa status
-```
-
-`awa status` is the dashboard to read before a review: baseline, drift, Git state,
-reusable and near-miss runs, and the commands to run next. `awa help topics` lists
-every operational page.
-
-Before risky or iterative work, create a checkpoint with a specific message and
-keep the full id it prints:
-
-```bash
 awa checkpoint -m "before <task>"
 awa changes <checkpoint-id>..now
 awa diff <checkpoint-id>..now
 ```
 
-`latest` is shared project-local state and may move when another user or agent
-creates a checkpoint; `awa log -n 5` shows where it went. Explicit ids keep a
-review/fix loop anchored. Checkpoint deltas are focused memory, not proof that all
-pending work was reviewed: before acceptance, also inspect the complete
-`git status` and Git diff.
+`latest` is shared local state and moves when anyone else checkpoints; an explicit
+id does not. A checkpoint delta is focused memory, not proof that all pending work
+was reviewed: before acceptance, also read the complete `git status` and
+`git diff`.
 
-Use awa to run deterministic validation and retain inspectable output:
+Verify with the narrowest check that covers the change. The native command stands
+on its own:
 
 ```bash
-awa run --stdin null --display tail:200 -- just check
-awa run --stdin null --display tail:200 -- just stress
+go test ./internal/app/run -run '^TestCommandMatches$'
+```
+
+Wrap it when the output should be retained as inspectable evidence:
+
+```bash
+awa run --record --stdin null --display tail:200 -- go test ./internal/app/run -run '^TestCommandMatches$'
 awa run show --last --tail 500
-awa run show --last --grep "<pattern>"
 ```
 
-Discover reusable evidence and diagnose misses before repeating expensive work:
-
-```bash
-awa run ls
-awa run ls --near
-awa run explain -- just check
-awa run explain --last
-awa run explain --from-run <id> --to-now
-```
-
-A near miss carries a reason token (`awa help run` lists them). Read it before
-acting: `input-tree-differs` usually means the inputs really changed, and a real
-input is never excluded to win a hit. `awa run --refresh -- <command>` forces a
-fresh deterministic check.
-
-A piped or redirected stdin is passed to the command and makes the run
-non-reusable (`stdin-not-keyed`), which is what an agent harness usually hands
-awa. The gates above read no input, hence `--stdin null`; never use it to silence
-a command that does read stdin.
-
-For builds, generators, formatters, migrations, deployment work, or any command
-expected to mutate observed state, supervise it without publishing a cache hit:
-
-```bash
-awa run --record --display tail:200 -- just site
-awa run show --last --tail 500
-awa changes run:<id>:before..run:<id>:after
-```
-
-`awa run` is cwd-sensitive: run from the intended directory or use `--cwd`.
-`--display` changes terminal rendering, not stored output or exit status.
-
-A wrapped command does not inherit the shell's environment. It receives awa's
-built-in baseline plus the names in `[run].env_allowlist`, and every one of them
-is part of the cache key; any other variable is dropped without a message, so
-`FOO=1 awa run -- <command>` runs without `FOO` unless it is listed. The
-committed `awa.toml` is this checkout's shared policy and lists the variables the
-repository's own commands read. A command that starts reading a new one needs it
-added there — a policy change to propose, not a local workaround.
-`.awaignore` is the committed ignore file; `.gitignore` is not scan policy here.
-
-```bash
-awa config effective
-awa config validate
-```
-
-When a build, generator, or formatter rewrites files it should not have, restore
-just those paths from the checkpoint you were working against:
-
-```bash
-awa restore <checkpoint-id> -- internal/cli
-awa restore --apply <checkpoint-id> -- internal/cli
-```
-
-Preview first and always name the paths. Preview is the default and writes
-nothing; `--apply` is the only mutating form and requires an explicit selection
-(paths, or `--all`); nothing outside the selection is touched; incomplete
-evidence refuses with a named reason and there is no force option. An apply
-records the state it overwrote and prints a `restore:<id>:before` reference to
-undo it, retained under `[gc].keep_restores_for`. Running side-effecting commands
-through `awa run --record` in the first place is what makes their before/after
-evidence attributable — awa can observe drift but cannot prove which external
-process caused it.
-
-`.awa/` is private local evidence and must never be committed. Captured
-stdout/stderr and argv are stored verbatim and are not redacted, so wrapped
-commands must not print secrets or take them as arguments. A checkpoint covers
-untracked and gitignored files too: env files are recorded hash-only by default,
-and any other secret-bearing file needs a `[checkpoint].hash_only_patterns` or
-`.awaignore` entry before it is created, because a later config change does not
-remove bytes an older checkpoint already stored. Use `awa help privacy` and
-`awa doctor` when handling, moving, or sharing the checkout.
-
-`awa doctor` exiting 5 means a finding needs an action, not that awa failed: read
-the findings. These only inspect:
-
-```bash
-awa doctor
-awa doctor --capacity
-awa run audit
-awa gc --dry-run
-```
-
-`awa doctor --repair` performs only the mechanical fixes for the findings it marks
-`[repairable]` and never touches the worktree. `awa gc` and `awa run rm` delete
-evidence, and a config change alters what every later run and checkpoint
-observes; propose those with their evidence and leave the decision to the
-maintainer. `awa help maintenance` is the reading path for reviewing this setup.
+- **Record or cache.** `--record` always executes and never publishes a reusable
+  hit: use it for builds, generators, formatters, and any check whose output is
+  the evidence. Drop it (`awa run --stdin null -- just check`) only where a replayed
+  result still supports the claim. A cache miss alone does not invalidate earlier
+  evidence; `awa run explain -- <command>` names the reason, and a real input is
+  never excluded to win a hit. A selection that ran no test is not proof.
+- **Stdin.** A piped or redirected stdin, which is what an agent harness usually
+  hands awa, reaches the command and makes the run non-reusable. `--stdin null` is
+  only for commands that read no input; never use it to silence one that does.
+- **Environment.** A wrapped command gets awa's baseline plus the names in
+  `[run].env_allowlist` of the committed `awa.toml`; anything else is dropped
+  without a message, so `FOO=1 awa run -- <command>` runs without `FOO`. A newly
+  needed variable is a policy change to propose, not a local workaround.
+  `awa config effective` shows what applies. `.awaignore`, not `.gitignore`, is
+  scan policy.
+- **Privacy.** `.awa/` is private local evidence and is never committed. Output
+  and argv are stored verbatim, so wrapped commands must not print secrets or take
+  them as arguments. Checkpoints cover untracked and gitignored files; a
+  secret-bearing file needs its `.awaignore` or hash-only entry before it exists,
+  because later exclusion does not remove stored bytes (`awa help privacy`).
+- **Findings before repairs.** `awa doctor` (exit 5 means findings, not failure),
+  `awa run audit`, `awa gc --dry-run`, and `awa restore <checkpoint-id> -- <path>`
+  only inspect. `awa doctor --repair`, `awa gc`, `awa run rm`, `awa restore --apply`,
+  and any config change delete or alter evidence or the worktree: propose them with
+  their findings and leave the decision to the maintainer.
