@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.2](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.1...v0.4.2) (2026-10-13)
+
+
+### Documentation
+
+* condense the agent awa guide and show focused Go test selection ([bfb1bd5](https://github.com/one-man-wolf-pack/awarer/commit/bfb1bd5aec0cf1d8fafd40971081ac1935619cda))
+
+
+### Miscellaneous Chores
+
+* track shared Claude settings that disable automatic commit attribution ([3a62d8f](https://github.com/one-man-wolf-pack/awarer/commit/3a62d8f18f514ca8531f82727db68cc3b055d905))
+
 ## [0.4.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.0...v0.4.1) (2026-10-11)
 
 
