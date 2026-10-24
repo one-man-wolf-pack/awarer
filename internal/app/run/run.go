@@ -455,7 +455,7 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 	// cannot have those effects replayed, so its result must not become a hit. The
 	// post-run report feeds the latency diagnostic too, so a command that itself created
 	// a huge root is explained, not just marked non-reusable.
-	effect, effectPost := s.observeEffectMutation(req, kc.EffectPre)
+	effect, effectPost := s.observeEffectMutation(req, kc.EffectPre, kc.EffScope.Waived)
 
 	failed := runRes.Exit.Failed()
 	cacheFailedOK := effCfg.Run.CacheFailedRuns && !req.Policy.NoCacheFailures
@@ -662,6 +662,11 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	if req.EffectiveScope != nil {
 		effScope = *req.EffectiveScope
 	}
+	validation, err := selectValidation(req)
+	if err != nil {
+		return keyContext{}, err
+	}
+	effScope.Waived = waivedDirs(validation)
 	if err := effScope.Validate(); err != nil {
 		return keyContext{}, err
 	}
@@ -723,12 +728,12 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	// build/dist/node_modules) computes a different key and misses instead of falsely
 	// hitting. It is computed here, before Compute, so the lookup and the publish path
 	// key over exactly the same effect identity.
-	effectPre, effectReport, err := s.observeEffect(req)
+	effectPre, effectReport, err := s.observeEffect(req, effScope.Waived)
 	if err != nil {
 		return keyContext{}, err
 	}
 
-	keyInput := s.buildKeyInput(req, req.Config, effScope, scanRes.TreeHash(), effectPre, resolvedPath, resolvedStat, effEnv.Keyed())
+	keyInput := s.buildKeyInput(req, req.Config, effScope, validation, scanRes.TreeHash(), effectPre, resolvedPath, resolvedStat, effEnv.Keyed())
 	key := keyInput.Compute(s.deps.Hasher)
 
 	canRead, canWrite, baseStatus, reason := cacheability(req.Config, req, facts.Count > 0)
@@ -754,7 +759,7 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 
 // buildKeyInput assembles the typed key input from the request, the effective
 // config, and the scanned input identity.
-func (s *Service) buildKeyInput(req Request, cfg config.Config, scope config.ScanScope, treeHash hashing.TreeHash, effect runcache.EffectObservation, resolvedPath, resolvedStat string, env runcache.Environment) runcache.KeyInput {
+func (s *Service) buildKeyInput(req Request, cfg config.Config, scope config.ScanScope, validation *runcache.ValidationScope, treeHash hashing.TreeHash, effect runcache.EffectObservation, resolvedPath, resolvedStat string, env runcache.Environment) runcache.KeyInput {
 	return runcache.KeyInput{
 		CacheSchemaVersion: runcache.CacheSchemaVersion,
 		AwaVersion:         s.deps.AwaVersion,
@@ -779,6 +784,7 @@ func (s *Service) buildKeyInput(req Request, cfg config.Config, scope config.Sca
 		StdinMode:          req.StdinMode,
 		TTYAllowed:         req.TTYAllowed,
 		AllowSkippedInputs: req.Policy.AllowSkippedInputs,
+		Validation:         validation,
 	}
 }
 
@@ -944,7 +950,7 @@ func (s *Service) observeMutation(ctx context.Context, req Request, kc keyContex
 // there is always something to observe and the observer rejects an empty set rather
 // than inventing an identity. It is read-only, so it runs on both the run and
 // explain paths. The observer is a required dependency (run.New rejects a nil one).
-func (s *Service) observeEffect(req Request) (runcache.EffectObservation, runcache.EffectReport, error) {
+func (s *Service) observeEffect(req Request, waived []string) (runcache.EffectObservation, runcache.EffectReport, error) {
 	roots := config.EffectiveEffectRoots(req.Config.Run.WatchedEffectRoots)
 	layout, err := req.Project.Paths()
 	if err != nil {
@@ -954,7 +960,7 @@ func (s *Service) observeEffect(req Request) (runcache.EffectObservation, runcac
 	// a huge watched root's stat walk carries a measured duration into the latency
 	// diagnostic. The duration is diagnostic-only; it is never folded into the key.
 	start := s.deps.Clock.Now()
-	obs, report, err := s.deps.EffectObserver.Observe(layout.Root(), roots)
+	obs, report, err := s.deps.EffectObserver.Observe(layout.Root(), roots, waived)
 	report = report.WithDuration(s.deps.Clock.Now().Sub(start).Milliseconds())
 	return obs, report, err
 }
@@ -969,12 +975,12 @@ func (s *Service) observeEffect(req Request) (runcache.EffectObservation, runcac
 // small/clean in that case, and the cost lands here. The report is empty on the early
 // return (a pre-run that was already unavailable and thus already covered by the pre-run
 // report).
-func (s *Service) observeEffectMutation(req Request, pre runcache.EffectObservation) (runcache.EffectGuardStatus, runcache.EffectReport) {
+func (s *Service) observeEffectMutation(req Request, pre runcache.EffectObservation, waived []string) (runcache.EffectGuardStatus, runcache.EffectReport) {
 	if pre.Status() == runcache.EffectUnavailable {
 		g, _ := runcache.NewEffectGuardStatus(runcache.EffectGuardUnavailable)
 		return g, runcache.EffectReport{}
 	}
-	post, report, err := s.observeEffect(req)
+	post, report, err := s.observeEffect(req, waived)
 	if err != nil || post.Status() != runcache.EffectObserved {
 		g, _ := runcache.NewEffectGuardStatus(runcache.EffectGuardUnavailable)
 		return g, report

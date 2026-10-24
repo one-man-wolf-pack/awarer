@@ -251,6 +251,7 @@ type KeyInput struct {
 	StdinMode          StdinMode
 	TTYAllowed         bool
 	AllowSkippedInputs bool
+	Validation         *ValidationScope
 }
 
 // Validate checks that a key input is internally consistent — not merely that it
@@ -328,6 +329,11 @@ func (in KeyInput) Validate() error {
 	}
 	if err := validateScope(in.IncludeScope, in.ExcludeScope); err != nil {
 		return fmt.Errorf("key input scope: %w", err)
+	}
+	if in.Validation != nil {
+		if err := in.Validation.Validate(); err != nil {
+			return fmt.Errorf("key input: %w", err)
+		}
 	}
 	return nil
 }
@@ -414,6 +420,7 @@ func (in KeyInput) canonical() []byte {
 	putString(&b, in.StdinMode.String())
 	putBool(&b, in.TTYAllowed)
 	putBool(&b, in.AllowSkippedInputs)
+	putValidation(&b, in.Validation)
 	return b.Bytes()
 }
 

@@ -66,6 +66,11 @@ func MarkdownReference() string {
 			writeWrapped(&b, f.Summary, "  - ", "    ")
 			writeWrapped(&b, "When to change: "+f.WhenToChange, "  - ", "    ")
 		}
+		if s.Example != "" {
+			b.WriteString("\nExample:\n\n```toml\n")
+			b.WriteString(s.Example)
+			b.WriteString("```\n")
+		}
 	}
 
 	b.WriteString("\n")

@@ -883,6 +883,9 @@ func renderShowMeta(w *output.Writer, e runcache.RunEntry, td domainconfig.TimeD
 	w.Linef("mutation:  %s", e.Mutation.Outcome().String())
 	w.Linef("key:       %s", e.Key.String())
 	w.Linef("inputs:    tree=%s trust=%s scope=%s", e.KeyInput.InputTreeHash.String(), e.KeyInput.TrustMode.String(), strings.Join(e.KeyInput.IncludeScope, ","))
+	if v := e.KeyInput.Validation; v != nil {
+		w.Linef("policy:    %s", validationPolicyLine(v))
+	}
 	w.Linef("stdout:    %s", streamSummary(e.Stdout))
 	w.Linef("stderr:    %s", streamSummary(e.Stderr))
 	if e.Skipped.Count > 0 {
@@ -947,7 +950,8 @@ type logEntryDoc struct {
 	Healthy bool `json:"healthy"`
 	// Corrupt is true when the run's metadata could not be decoded; only id is
 	// populated and the metadata fields are left empty.
-	Corrupt bool `json:"corrupt,omitempty"`
+	Corrupt    bool                 `json:"corrupt,omitempty"`
+	Validation *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 func logDocs(entries []apprun.LogEntry) []logEntryDoc {
@@ -973,6 +977,7 @@ func logDocs(entries []apprun.LogEntry) []logEntryDoc {
 			Mutation:    e.Mutation.Outcome().String(),
 			Truncated:   e.Stdout.Truncated || e.Stderr.Truncated,
 			Healthy:     le.Healthy,
+			Validation:  validationPolicyView(e.KeyInput.Validation),
 		})
 	}
 	return out
@@ -999,7 +1004,8 @@ type lsEntryDoc struct {
 	Truncated bool `json:"truncated"`
 	// Corrupt is true when the run's metadata could not be decoded; only id, reusable
 	// (false), and reason ("corrupt") are populated.
-	Corrupt bool `json:"corrupt,omitempty"`
+	Corrupt    bool                 `json:"corrupt,omitempty"`
+	Validation *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 // lsListDoc is the single object shape of "run ls --json", for both the plain listing
@@ -1084,6 +1090,7 @@ func lsDocs(entries []apprun.LsEntry) []lsEntryDoc {
 			Reusable:   e.Reusable(),
 			Reason:     string(e.Reusability.Reason()),
 			Truncated:  en.Stdout.Truncated || en.Stderr.Truncated,
+			Validation: validationPolicyView(en.KeyInput.Validation),
 		})
 	}
 	return out

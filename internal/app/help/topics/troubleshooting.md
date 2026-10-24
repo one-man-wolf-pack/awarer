@@ -32,6 +32,8 @@ they mean for you:
   bounded sample of which paths.
 - `effect-state-differs` — watched generated output (`build`, `dist`, `target`,
   `node_modules`, ...) changed or was deleted since the run.
+  A check that rewrites its own build directory can replay its result through
+  [awa help validation](validation.md).
 - `cwd-mismatch` — `awa run` is cwd-sensitive by design. Pin it with
   `--cwd <path>`.
 - `env-mismatch` — an allowlisted environment fact differs.

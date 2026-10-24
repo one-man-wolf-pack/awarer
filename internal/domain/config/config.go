@@ -39,6 +39,7 @@ func (c Config) Clone() Config {
 	c.Run.ExtraExcludes = slices.Clone(c.Run.ExtraExcludes)
 	c.Run.EnvAllowlist = slices.Clone(c.Run.EnvAllowlist)
 	c.Run.WatchedEffectRoots = slices.Clone(c.Run.WatchedEffectRoots)
+	c.Run.Validation = cloneValidation(c.Run.Validation)
 	return c
 }
 
@@ -173,6 +174,7 @@ type Run struct {
 	// since silencing a built-in would reintroduce the false-hit class effect
 	// observation exists to close.
 	WatchedEffectRoots []string
+	Validation         []ValidationPolicy
 }
 
 // ScanScope is the fully-resolved boundary a single scan walks: the include list,
@@ -191,6 +193,8 @@ type ScanScope struct {
 	FollowSymlinks         bool
 	SymlinkMaxDepth        int
 	AllowSymlinkRootEscape bool
+	// Waived entries are literal paths, never exclusion patterns.
+	Waived []string
 
 	// ExcludeOrigins is diagnostic attribution for Exclude, parallel to it when
 	// present. It must stay out of every scope identity: two scopes excluding the
@@ -258,6 +262,11 @@ func (s ScanScope) Validate() error {
 	}
 	p = append(p, pathProblems("include", s.Include, mustStayInRoot)...)
 	p = append(p, pathProblems("exclude", s.Exclude, nonEmptyOnly)...)
+	for i, d := range s.Waived {
+		if prob := ValidationDirProblem(d); prob != "" {
+			p = append(p, fmt.Sprintf("waived[%d] %s", i, prob))
+		}
+	}
 	if len(p) > 0 {
 		return &ValidationError{Problems: p}
 	}
@@ -677,6 +686,7 @@ func (c Config) Validate() error {
 	p = append(p, carrierProblems("checkpoint.hash_only_patterns", c.Checkpoint.HashOnlyPatterns, true)...)
 	p = append(p, effectRootSelectorProblems(c.Run.WatchedEffectRoots)...)
 	p = append(p, envAllowlistProblems(c.Run.EnvAllowlist)...)
+	p = append(p, validationProblems(c.Run.Validation)...)
 	if !c.Hashing.TrustMode.Valid() {
 		p = append(p, "hashing.trust_mode is not a known trust mode")
 	}

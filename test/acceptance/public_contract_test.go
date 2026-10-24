@@ -39,7 +39,7 @@ var publicSubcommands = [][]string{
 // here would read as a topic the binary does not publish.
 var publicTopics = []string{
 	"agents", "install", "quickstart", "workflows", "status",
-	"run", "record", "inspect", "checkpoints", "diff", "restore", "refs",
+	"run", "record", "validation", "inspect", "checkpoints", "diff", "restore", "refs",
 	"config", "ignores", "doctor", "gc", "maintenance", "troubleshooting",
 	"privacy", "integrations", "platform", "json", "exit-codes",
 }

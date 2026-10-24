@@ -43,7 +43,7 @@ func (stubEnv) Lookup(string) (string, bool) { return "", false }
 // observes, so the call fails loudly instead.
 type stubEffectObserver struct{}
 
-func (stubEffectObserver) Observe(string, []string) (runcache.EffectObservation, runcache.EffectReport, error) {
+func (stubEffectObserver) Observe(string, []string, []string) (runcache.EffectObservation, runcache.EffectReport, error) {
 	panic("verdict path must not observe effect state")
 }
 

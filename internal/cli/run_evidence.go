@@ -160,6 +160,7 @@ func evidenceDocOf(ev runevidence.Evidence, stdoutIntegrity, stderrIntegrity run
 			Scope:          e.KeyInput.IncludeScope,
 			SkippedCount:   e.Skipped.Count,
 			SkippedAllowed: e.Skipped.Allowed,
+			Validation:     validationPolicyView(e.KeyInput.Validation),
 		},
 		States: evStatesDoc{
 			Before: assessmentDoc(ev.Before()),

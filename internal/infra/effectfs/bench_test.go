@@ -52,7 +52,7 @@ func BenchmarkDiscoverSourceTree(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := w.Discover(root, []string{"target", "artifacts/bin"}); err != nil {
+		if _, err := w.Discover(root, []string{"target", "artifacts/bin"}, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -70,7 +70,7 @@ func BenchmarkDiscoverGeneratedRoot(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := w.Discover(root, []string{"target"}); err != nil {
+		if _, err := w.Discover(root, []string{"target"}, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

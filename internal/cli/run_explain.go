@@ -237,15 +237,16 @@ type explainSkippedDoc struct {
 }
 
 type explainCurrentDoc struct {
-	Key           string            `json:"key"`
-	Cacheable     bool              `json:"cacheable"`
-	Command       []string          `json:"command"`
-	CWD           string            `json:"cwd"`
-	InputTreeHash string            `json:"input_tree_hash"`
-	RunConfigHash string            `json:"run_config_hash"`
-	StdinMode     string            `json:"stdin_mode"`
-	TTYAllowed    bool              `json:"tty_allowed"`
-	Skipped       explainSkippedDoc `json:"skipped"`
+	Key           string               `json:"key"`
+	Cacheable     bool                 `json:"cacheable"`
+	Command       []string             `json:"command"`
+	CWD           string               `json:"cwd"`
+	InputTreeHash string               `json:"input_tree_hash"`
+	RunConfigHash string               `json:"run_config_hash"`
+	StdinMode     string               `json:"stdin_mode"`
+	TTYAllowed    bool                 `json:"tty_allowed"`
+	Skipped       explainSkippedDoc    `json:"skipped"`
+	Validation    *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 type explainExactDoc struct {
@@ -284,6 +285,7 @@ func explainView(res apprun.ExplainResult) explainDoc {
 			StdinMode:     ki.StdinMode.String(),
 			TTYAllowed:    ki.TTYAllowed,
 			Skipped:       skippedView(res.Subject.Skipped),
+			Validation:    validationPolicyView(ki.Validation),
 		},
 		Diagnostics: perfDiagnosticsView(res.Performance),
 		ExactMatch:  exactView(res.Subject.ExactHit),
@@ -325,6 +327,13 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 		w.Linef("reason: %s", humanReason(res.Reason))
 	}
 	w.Linef("key:    %s", res.Subject.Key.String())
+	if v := res.Subject.KeyInput.Validation; v != nil {
+		if res.Outcome == apprun.OutcomeHit {
+			w.Linef("replay: %s", validationReplayLine(v))
+		} else {
+			w.Linef("policy: %s", validationPolicyLine(v))
+		}
+	}
 
 	if hit := res.Subject.ExactHit; hit != nil {
 		health := "healthy"
@@ -344,6 +353,9 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 		}
 		if changed := displayCategories(c.Score.Different); changed != "" {
 			w.Linef("changed: %s", changed)
+		}
+		if v := c.Entry.KeyInput.Validation; v != nil {
+			w.Linef("recorded policy: %s", validationPolicyLine(v))
 		}
 		// The effect detail, the changed-path sample, and the advisory hints are the same
 		// review facts run ls --near shows; explain already carries them for the reasons

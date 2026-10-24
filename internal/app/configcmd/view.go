@@ -96,8 +96,24 @@ type RunView struct {
 	// ExtraEffectRoots is the user's additive watched generated-output roots;
 	// EffectiveEffectRoots is the full watch list (built-in defaults plus the
 	// additions) the run cache observes with a bounded stat signature.
-	ExtraEffectRoots     []string `json:"extra_effect_roots"`
-	EffectiveEffectRoots []string `json:"effective_effect_roots"`
+	ExtraEffectRoots     []string         `json:"extra_effect_roots"`
+	EffectiveEffectRoots []string         `json:"effective_effect_roots"`
+	Validation           []ValidationView `json:"validation"`
+}
+
+type ValidationView struct {
+	Name           string   `json:"name"`
+	Argv           []string `json:"argv"`
+	CWD            string   `json:"cwd"`
+	UnobservedDirs []string `json:"unobserved_dirs"`
+}
+
+func validationViews(ps []config.ValidationPolicy) []ValidationView {
+	out := make([]ValidationView, len(ps))
+	for i, p := range ps {
+		out[i] = ValidationView{Name: p.Name, Argv: slices.Clone(p.Argv), CWD: p.CWD, UnobservedDirs: slices.Clone(p.UnobservedDirs)}
+	}
+	return out
 }
 
 type GCView struct {
@@ -165,6 +181,7 @@ func NewView(c config.Config) View {
 			CacheFailedRuns:       c.Run.CacheFailedRuns,
 			ExtraEffectRoots:      slices.Clone(c.Run.WatchedEffectRoots),
 			EffectiveEffectRoots:  config.EffectiveEffectRoots(c.Run.WatchedEffectRoots),
+			Validation:            validationViews(c.Run.Validation),
 		},
 		GC: GCView{
 			KeepLastCheckpoints: c.GC.KeepLastCheckpoints,

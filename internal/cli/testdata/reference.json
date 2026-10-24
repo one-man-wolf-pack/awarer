@@ -1151,6 +1151,10 @@
         "summary": "always-execute history for non-cacheable commands"
       },
       {
+        "name": "validation",
+        "summary": "replay one exact check without observing its build directory"
+      },
+      {
         "name": "inspect",
         "summary": "locate, read, verify, and delete stored run output"
       },
@@ -1233,6 +1237,7 @@
       "performance": "troubleshooting",
       "provider": "integrations",
       "recover": "restore",
+      "result-only": "validation",
       "review": "workflows",
       "rezonator": "integrations",
       "run-cache": "run",
@@ -1243,6 +1248,7 @@
       "troubleshoot": "troubleshooting",
       "undo": "restore",
       "upgrade": "install",
+      "validation-policy": "validation",
       "version": "install",
       "workflow": "workflows"
     }

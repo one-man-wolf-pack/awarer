@@ -49,15 +49,19 @@ func decodeStrict(data []byte, v any) error {
 }
 
 // metaSchemaVersion is the run metadata document version this build writes. It also
-// reads legacyMetaSchemaVersion; a document declaring any other version is
-// incompatible (ErrIncompatibleEntry) and is never decoded, migrated, or guessed. The
-// store owns this boundary and names the versions in the error text, so a doctor or gc
-// diagnostic can report which record is unreadable without any consumer restating a
-// number that moves.
-const metaSchemaVersion = 2
+// reads frontierMetaSchemaVersion and legacyMetaSchemaVersion; a document declaring
+// any other version is incompatible (ErrIncompatibleEntry) and is never decoded,
+// migrated, or guessed. The store owns this boundary and names the versions in the
+// error text, so a doctor or gc diagnostic can report which record is unreadable
+// without any consumer restating a number that moves.
+const metaSchemaVersion = 3
 
-// legacyMetaSchemaVersion is the published predecessor, read with unknown path
-// coverage for both observations.
+// frontierMetaSchemaVersion is the predecessor that introduced exclusion frontiers;
+// it differs from the current generation only in never carrying a validation policy.
+const frontierMetaSchemaVersion = 2
+
+// legacyMetaSchemaVersion is the oldest published predecessor, read with unknown
+// path coverage for both observations.
 const legacyMetaSchemaVersion = 1
 
 // pointerSchemaVersion is the key pointer document version, independent of the
@@ -174,24 +178,31 @@ type effectDoc struct {
 }
 
 type keyInputDoc struct {
-	CacheSchemaVersion int         `json:"cache_schema_version"`
-	AwaVersion         string      `json:"awa_version"`
-	InvocationMode     string      `json:"invocation_mode"`
-	Command            commandDoc  `json:"command"`
-	CWD                string      `json:"cwd"`
-	InputTreeHash      string      `json:"input_tree_hash"`
-	Effect             effectDoc   `json:"effect"`
-	IncludeScope       []string    `json:"include_scope"`
-	ExcludeScope       []string    `json:"exclude_scope"`
-	UseGitignore       bool        `json:"use_gitignore"`
-	UseAwaignore       bool        `json:"use_awaignore"`
-	TrustMode          string      `json:"trust_mode"`
-	RunConfigHash      string      `json:"run_config_hash"`
-	Env                []envVarDoc `json:"env"`
-	Platform           platformDoc `json:"platform"`
-	StdinMode          string      `json:"stdin_mode"`
-	TTYAllowed         bool        `json:"tty_allowed"`
-	AllowSkippedInputs bool        `json:"allow_skipped_inputs"`
+	CacheSchemaVersion int            `json:"cache_schema_version"`
+	AwaVersion         string         `json:"awa_version"`
+	InvocationMode     string         `json:"invocation_mode"`
+	Command            commandDoc     `json:"command"`
+	CWD                string         `json:"cwd"`
+	InputTreeHash      string         `json:"input_tree_hash"`
+	Effect             effectDoc      `json:"effect"`
+	IncludeScope       []string       `json:"include_scope"`
+	ExcludeScope       []string       `json:"exclude_scope"`
+	UseGitignore       bool           `json:"use_gitignore"`
+	UseAwaignore       bool           `json:"use_awaignore"`
+	TrustMode          string         `json:"trust_mode"`
+	RunConfigHash      string         `json:"run_config_hash"`
+	Env                []envVarDoc    `json:"env"`
+	Platform           platformDoc    `json:"platform"`
+	StdinMode          string         `json:"stdin_mode"`
+	TTYAllowed         bool           `json:"tty_allowed"`
+	AllowSkippedInputs bool           `json:"allow_skipped_inputs"`
+	Validation         *validationDoc `json:"validation,omitempty"`
+}
+
+type validationDoc struct {
+	Policy         string   `json:"policy"`
+	Replay         string   `json:"replay"`
+	UnobservedDirs []string `json:"unobserved_dirs"`
 }
 
 type outputDoc struct {
@@ -293,6 +304,9 @@ func encodeKeyInput(in runcache.KeyInput) keyInputDoc {
 		TTYAllowed:         in.TTYAllowed,
 		AllowSkippedInputs: in.AllowSkippedInputs,
 	}
+	if v := in.Validation; v != nil {
+		d.Validation = &validationDoc{Policy: v.Label, Replay: runcache.ValidationResultOnly, UnobservedDirs: append([]string(nil), v.UnobservedDirs...)}
+	}
 	for _, v := range in.Env.Vars() {
 		d.Env = append(d.Env, envVarDoc{Name: v.Name(), Presence: v.Presence().String(), Identity: v.Identity().String()})
 	}
@@ -333,7 +347,7 @@ func decodeMeta(data []byte) (runcache.RunEntry, error) {
 		return runcache.RunEntry{}, fmt.Errorf("decoding run: no schema_version")
 	}
 	v := *probe.SchemaVersion
-	if v != metaSchemaVersion && v != legacyMetaSchemaVersion {
+	if v != metaSchemaVersion && v != frontierMetaSchemaVersion && v != legacyMetaSchemaVersion {
 		return runcache.RunEntry{}, fmt.Errorf("%w: schema version %d, want %d",
 			runcache.ErrIncompatibleEntry, v, metaSchemaVersion)
 	}
@@ -346,9 +360,12 @@ func decodeMeta(data []byte) (runcache.RunEntry, error) {
 		case o == nil:
 		case v == legacyMetaSchemaVersion && o.Frontier != nil:
 			return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d carries no exclusion frontier", v)
-		case v == metaSchemaVersion && o.Frontier == nil:
+		case v != legacyMetaSchemaVersion && o.Frontier == nil:
 			return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d requires an exclusion frontier for every observation", v)
 		}
+	}
+	if v != metaSchemaVersion && entry.KeyInput.Validation != nil {
+		return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d carries no validation policy", v)
 	}
 	return entry, nil
 }
@@ -563,6 +580,13 @@ func decodeKeyInput(d keyInputDoc) (runcache.KeyInput, error) {
 	if err != nil {
 		return runcache.KeyInput{}, err
 	}
+	var validation *runcache.ValidationScope
+	if d.Validation != nil {
+		if d.Validation.Replay != runcache.ValidationResultOnly {
+			return runcache.KeyInput{}, fmt.Errorf("validation policy replay %q is not %q", d.Validation.Replay, runcache.ValidationResultOnly)
+		}
+		validation = &runcache.ValidationScope{Label: d.Validation.Policy, UnobservedDirs: append([]string(nil), d.Validation.UnobservedDirs...)}
+	}
 	vars := make([]runcache.EnvVar, 0, len(d.Env))
 	for _, v := range d.Env {
 		presence, err := runcache.ParseEnvPresence(v.Presence)
@@ -606,6 +630,7 @@ func decodeKeyInput(d keyInputDoc) (runcache.KeyInput, error) {
 		StdinMode:          stdin,
 		TTYAllowed:         d.TTYAllowed,
 		AllowSkippedInputs: d.AllowSkippedInputs,
+		Validation:         validation,
 	}, nil
 }
 

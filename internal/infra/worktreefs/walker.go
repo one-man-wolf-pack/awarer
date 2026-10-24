@@ -59,6 +59,7 @@ type walk struct {
 	eng       *ignoreEngine
 	inc       includeFilter
 	protected map[string]bool // base names never scanned, whatever the ignore rules say
+	waived    map[string]bool // exact root-relative directories a validation policy leaves unobserved
 	scope     config.ScanScope
 	visit     func(worktree.Node) error
 	omit      func(worktree.FrontierRecord) error
@@ -86,11 +87,23 @@ func (w *Walker) Walk(ctx context.Context, layout paths.Layout, scope config.Sca
 		eng:       eng,
 		inc:       newIncludeFilter(scope.CanonicalInclude()),
 		protected: protectedNames(),
+		waived:    waivedDirs(scope.Waived),
 		scope:     scope,
 		visit:     visit,
 		omit:      omit,
 	}
 	return filepath.WalkDir(root, st.base)
+}
+
+func waivedDirs(dirs []string) map[string]bool {
+	if len(dirs) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(dirs))
+	for _, d := range dirs {
+		out[d] = true
+	}
+	return out
 }
 
 // omitNode records an encountered node the traversal leaves unobserved. A real
@@ -152,6 +165,15 @@ func (w *walk) base(absPath string, d fs.DirEntry, err error) error {
 
 	isDir := d.IsDir()
 	isSymlink := d.Type()&fs.ModeSymlink != 0
+	// A waived directory is pruned before the include filter and the ignore engine,
+	// so neither a narrowed scope nor a negation can reopen it. Only a real directory
+	// qualifies: a file or symlink at the same spelling keeps ordinary handling.
+	if isDir && w.waived[rel] {
+		if err := w.omitNode(rel, true, false); err != nil {
+			return err
+		}
+		return fs.SkipDir
+	}
 	// Under follow_symlinks a symlink may resolve to a directory, so for scope
 	// pruning it is a potential ancestor of a deeper include (e.g. an include of
 	// "dirlink/inner.txt"). Treating it as directory-like keeps the symlink from
@@ -580,7 +602,9 @@ func (w *walk) walkRealChildren(realDir, virtualDir string, depth int, chain map
 
 		// Protected names are a hard boundary inside followed subtrees too, so an
 		// ignore-file negation cannot re-include VCS or awa state reached via a symlink.
-		omitted := w.protected[e.Name()] || !w.inc.allows(childVirtual, dirLike)
+		// A waived directory is matched by its virtual path here as in base(); a link
+		// at that spelling is not a directory entry and keeps ordinary handling.
+		omitted := w.protected[e.Name()] || (isDir && w.waived[childVirtual]) || !w.inc.allows(childVirtual, dirLike)
 		// As in base(), an explicit narrowed scope outranks the ignore engine.
 		if !omitted && !w.inc.overridesExcludes() {
 			if omitted, err = w.eng.ignores(childVirtual, isDir); err != nil {

@@ -41,6 +41,12 @@ func Template() string {
 			b.WriteString("\n")
 			fmt.Fprintf(&b, "# %s = %s\n", f.Key, f.Default)
 		}
+		if s.Example != "" {
+			b.WriteString("# Example:\n")
+			for _, line := range strings.Split(strings.TrimSuffix(s.Example, "\n"), "\n") {
+				b.WriteString("# " + line + "\n")
+			}
+		}
 	}
 	return b.String()
 }

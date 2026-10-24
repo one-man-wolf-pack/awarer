@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"awarer/internal/app/effectobserve"
@@ -128,12 +129,17 @@ func NewWithLimits(hasher hashing.Hasher, maxPerRoot, maxTotal, maxDiscovery int
 // observer maps to an unavailable (non-reusable) effect state — when a directory cannot
 // be read safely, a matched directory exceeds the entry budget, the tree holds more
 // matching directories than the bound, or the discovery traversal exceeds its budget.
-func (w *Walker) Discover(project string, selectors []string) ([]effectobserve.DiscoveredRoot, error) {
+//
+// waived lists exact project-relative directories a selected validation policy leaves
+// unobserved. Neither discovery nor an enclosing root's observation reads below one,
+// so its size, readability, and contents cannot reach the signature or a budget.
+func (w *Walker) Discover(project string, selectors, waived []string) ([]effectobserve.DiscoveredRoot, error) {
 	dc := &discovery{
 		w:         w,
 		project:   project,
 		prefix:    strings.TrimSuffix(filepath.ToSlash(filepath.Clean(project)), "/") + "/",
 		selects:   config.NewEffectRootMatcher(selectors),
+		waived:    waived,
 		remaining: w.maxTotal,
 	}
 	if err := dc.run(); err != nil {
@@ -149,6 +155,7 @@ type discovery struct {
 	project   string
 	prefix    string
 	selects   config.EffectRootMatcher
+	waived    []string
 	remaining int // shared per-observation entry budget left for matched directories
 	visited   int // discovery entries seen so far, matched or not
 	out       []effectobserve.DiscoveredRoot
@@ -213,6 +220,9 @@ func (dc *discovery) readDir(dir string, stack *[]string) error {
 				continue
 			}
 			rel := dc.relOf(full)
+			if slices.Contains(dc.waived, rel) {
+				continue
+			}
 			if dc.selects.Selects(name, rel) {
 				if err := dc.observe(full, rel); err != nil {
 					return err
@@ -237,7 +247,7 @@ func (dc *discovery) observe(full, rel string) error {
 	if dc.remaining < budget {
 		budget = dc.remaining
 	}
-	subHash, entries, err := dc.w.observeDir(full, budget)
+	subHash, entries, err := dc.w.observeDir(full, budget, waivedBelow(rel, dc.waived))
 	if err != nil {
 		// A budget overrun is the pathological huge-generated-output case (a `target/`
 		// with millions of files). Name the offending root so the caller's latency
@@ -265,8 +275,8 @@ func (dc *discovery) observe(full, rel string) error {
 // errOverBudget when it holds more entries than budget — too large to observe with
 // full fidelity, so the observer fails the whole observation closed rather than reuse
 // it on a partial signature that could hide an internal change.
-func (w *Walker) observeDir(abs string, budget int) (hashing.TreeHash, int64, error) {
-	acc, count, exceeded, err := w.walkDeep(abs, budget)
+func (w *Walker) observeDir(abs string, budget int, wv rootWaiver) (hashing.TreeHash, int64, error) {
+	acc, count, exceeded, err := w.walkDeep(abs, budget, wv)
 	if err != nil {
 		return hashing.TreeHash{}, 0, err
 	}
@@ -280,7 +290,7 @@ func (w *Walker) observeDir(abs string, budget int) (hashing.TreeHash, int64, er
 // accumulator, descending real subdirectories but never following symlinks. It stops
 // and reports exceeded=true once the folded count would pass limit. A vanished entry
 // (removed mid-walk) is skipped; any other read error fails closed.
-func (w *Walker) walkDeep(dir string, limit int) (acc [digestLen]byte, count int64, exceeded bool, err error) {
+func (w *Walker) walkDeep(dir string, limit int, wv rootWaiver) (acc [digestLen]byte, count int64, exceeded bool, err error) {
 	// An explicit stack keeps recursion depth off the goroutine stack for very deep
 	// trees; each frame is a directory whose children still need folding.
 	stack := []string{dir}
@@ -292,10 +302,14 @@ func (w *Walker) walkDeep(dir string, limit int) (acc [digestLen]byte, count int
 				exceeded = true
 				return false
 			}
-			w.addLeaf(&acc, rel, info)
+			if info.IsDir() && wv.ancestors[rel] {
+				w.addWaivedAncestor(&acc, rel, info)
+			} else {
+				w.addLeaf(&acc, rel, info)
+			}
 			count++
 			return true
-		}, dir, &stack)
+		}, dir, wv.pruned, &stack)
 		if cerr != nil {
 			return acc, count, exceeded, cerr
 		}
@@ -312,7 +326,7 @@ func (w *Walker) walkDeep(dir string, limit int) (acc [digestLen]byte, count int
 // are skipped. fold returning false stops the walk of this directory (the caller's
 // budget was hit; it tracks that in its closure). A child that vanished between
 // readdir and lstat is skipped; any other lstat/readdir error fails closed.
-func (w *Walker) readEntries(dir string, fold func(rel string, info os.FileInfo) bool, base string, stack *[]string) error {
+func (w *Walker) readEntries(dir string, fold func(rel string, info os.FileInfo) bool, base string, skip map[string]bool, stack *[]string) error {
 	f, err := os.Open(dir)
 	if err != nil {
 		return err
@@ -334,6 +348,9 @@ func (w *Walker) readEntries(dir string, fold func(rel string, info os.FileInfo)
 				return ierr
 			}
 			rel := toRel(base, full)
+			if info.IsDir() && skip[rel] {
+				continue
+			}
 			if !fold(rel, info) {
 				return nil
 			}
@@ -363,6 +380,18 @@ func (w *Walker) addLeaf(acc *[digestLen]byte, rel string, info os.FileInfo) {
 	addMod256(acc, leaf)
 }
 
+// addWaivedAncestor folds a directory that holds a waived descendant by path and mode
+// only: its aggregate size and mtime change when that descendant is created or
+// removed, which would bring the waived dependency back. Its unwaived children are
+// still folded as entries of their own.
+func (w *Walker) addWaivedAncestor(acc *[digestLen]byte, rel string, info os.FileInfo) {
+	var b bytes.Buffer
+	putString(&b, rel)
+	putString(&b, "waived-ancestor")
+	putUint(&b, uint64(worktreefs.StatSignatureOf(info).Mode))
+	addMod256(acc, digestBytes(w.hasher.HashBytes(b.Bytes())))
+}
+
 // finalize reduces the accumulator and entry count into the directory's sub-hash.
 // Including the count distinguishes an empty directory from any other.
 func (w *Walker) finalize(acc [digestLen]byte, count int64) hashing.TreeHash {
@@ -370,6 +399,29 @@ func (w *Walker) finalize(acc [digestLen]byte, count int64) hashing.TreeHash {
 	b.Write(acc[:])
 	putUint(&b, uint64(count))
 	return w.hasher.HashBytes(b.Bytes())
+}
+
+type rootWaiver struct {
+	pruned    map[string]bool
+	ancestors map[string]bool
+}
+
+func waivedBelow(rel string, waived []string) rootWaiver {
+	var wv rootWaiver
+	for _, d := range waived {
+		sub, ok := strings.CutPrefix(d, rel+"/")
+		if !ok {
+			continue
+		}
+		if wv.pruned == nil {
+			wv.pruned, wv.ancestors = map[string]bool{}, map[string]bool{}
+		}
+		wv.pruned[sub] = true
+		for i := strings.LastIndexByte(sub, '/'); i > 0; i = strings.LastIndexByte(sub[:i], '/') {
+			wv.ancestors[sub[:i]] = true
+		}
+	}
+	return wv
 }
 
 // toRel renders full as a slash-separated path relative to base; the base itself

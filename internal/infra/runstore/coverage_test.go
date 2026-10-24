@@ -69,7 +69,7 @@ func TestPredecessorRunReadsWithUnknownCoverage(t *testing.T) {
 	entry := storeRun(t, r, h, "legacy", "out", "", 1<<20)
 	meta := metaPathOf(t, layout.RunsDir(), entry.ID)
 	editMeta(t, meta, func(d string) string {
-		d = regexp.MustCompile(`"schema_version": 2`).ReplaceAllString(d, `"schema_version": 1`)
+		d = regexp.MustCompile(`"schema_version": [0-9]+`).ReplaceAllString(d, `"schema_version": 1`)
 		return observationFrontier.ReplaceAllString(d, "")
 	})
 	for _, name := range []string{"before.frontier.jsonl", "after.frontier.jsonl"} {

@@ -183,6 +183,11 @@ func storeRun(t testing.TB, r *runstore.Repo, h hashing.Hasher, disc, stdout, st
 // metadata cannot drift on how a run is stored.
 func storeRunObs(t testing.TB, r *runstore.Repo, h hashing.Hasher, disc, stdout, stderr string, limit int64, obs runcache.RunObservations, inputTree hashing.TreeHash) runcache.RunEntry {
 	t.Helper()
+	return storeRunKeyed(t, r, h, keyInputForTree(h, disc, inputTree), stdout, stderr, limit, obs)
+}
+
+func storeRunKeyed(t testing.TB, r *runstore.Repo, h hashing.Hasher, keyInput runcache.KeyInput, stdout, stderr string, limit int64, obs runcache.RunObservations) runcache.RunEntry {
+	t.Helper()
 	pending, err := r.Begin(runcache.CaptureLimits{MaxStdout: limit, MaxStderr: limit})
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
@@ -201,7 +206,6 @@ func storeRunObs(t testing.TB, r *runstore.Repo, h hashing.Hasher, disc, stdout,
 	if err != nil {
 		t.Fatalf("NewRunID: %v", err)
 	}
-	keyInput := keyInputForTree(h, disc, inputTree)
 	start := time.Now()
 	entry := runcache.RunEntry{
 		ID:          id,

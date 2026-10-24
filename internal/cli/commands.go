@@ -1354,6 +1354,7 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	kv("run.cache_failed_runs", "cache_failed_runs = %t", v.Run.CacheFailedRuns)
 	kv("run.extra_effect_roots", "extra_effect_roots = %s", quoteList(v.Run.ExtraEffectRoots))
 	w.Linef("effective_effect_roots = %s", quoteList(v.Run.EffectiveEffectRoots))
+	kv("run.validation", "validation = %s", validationList(v.Run.Validation))
 	w.Line("")
 	w.Line("[gc]")
 	kv("gc.keep_last_checkpoints", "keep_last_checkpoints = %d", v.GC.KeepLastCheckpoints)
@@ -1378,6 +1379,15 @@ func quoteList(items []string) string {
 	parts := make([]string, len(items))
 	for i, s := range items {
 		parts[i] = strconv.Quote(s)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func validationList(ps []configcmd.ValidationView) string {
+	parts := make([]string, len(ps))
+	for i, p := range ps {
+		parts[i] = fmt.Sprintf("{ name = %s, argv = %s, cwd = %s, unobserved_dirs = %s }",
+			strconv.Quote(p.Name), quoteList(p.Argv), strconv.Quote(p.CWD), quoteList(p.UnobservedDirs))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

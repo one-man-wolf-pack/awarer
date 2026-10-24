@@ -46,6 +46,12 @@ func configHashAt(generation uint64, cfg config.Config, scope config.ScanScope, 
 	// The exclude text and ignore flags above mean what the matching generation
 	// says they mean, so the same scope under other semantics is another policy.
 	putUint(&b, generation)
+	// Only a validation-policy scan carries waived directories; appending nothing
+	// otherwise keeps every ordinary scan identity at its predecessor value.
+	if len(scope.Waived) > 0 {
+		putString(&b, "waived")
+		putList(&b, scope.Waived)
+	}
 	return hashing.ConfigHashFromTree(h.HashBytes(b.Bytes()))
 }
 

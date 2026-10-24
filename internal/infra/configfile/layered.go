@@ -65,17 +65,25 @@ type overlayCheckpoint struct {
 }
 
 type overlayRun struct {
-	DefaultScope     *[]string `toml:"default_scope"`
-	ExtraExcludes    *[]string `toml:"extra_excludes"`
-	UseGitignore     *bool     `toml:"use_gitignore"`
-	UseAwaignore     *bool     `toml:"use_awaignore"`
-	EnvAllowlist     *[]string `toml:"env_allowlist"`
-	TTL              *string   `toml:"ttl"`
-	MaxStdoutSize    *string   `toml:"max_stdout_size"`
-	MaxStderrSize    *string   `toml:"max_stderr_size"`
-	CaptureOutput    *bool     `toml:"capture_output"`
-	CacheFailedRuns  *bool     `toml:"cache_failed_runs"`
-	ExtraEffectRoots *[]string `toml:"extra_effect_roots"`
+	DefaultScope     *[]string            `toml:"default_scope"`
+	ExtraExcludes    *[]string            `toml:"extra_excludes"`
+	UseGitignore     *bool                `toml:"use_gitignore"`
+	UseAwaignore     *bool                `toml:"use_awaignore"`
+	EnvAllowlist     *[]string            `toml:"env_allowlist"`
+	TTL              *string              `toml:"ttl"`
+	MaxStdoutSize    *string              `toml:"max_stdout_size"`
+	MaxStderrSize    *string              `toml:"max_stderr_size"`
+	CaptureOutput    *bool                `toml:"capture_output"`
+	CacheFailedRuns  *bool                `toml:"cache_failed_runs"`
+	ExtraEffectRoots *[]string            `toml:"extra_effect_roots"`
+	Validation       *[]overlayValidation `toml:"validation"`
+}
+
+type overlayValidation struct {
+	Name           string   `toml:"name"`
+	Argv           []string `toml:"argv"`
+	CWD            string   `toml:"cwd"`
+	UnobservedDirs []string `toml:"unobserved_dirs"`
 }
 
 type overlayGC struct {
@@ -416,6 +424,14 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 		if r.ExtraEffectRoots != nil {
 			cfg.Run.WatchedEffectRoots = *r.ExtraEffectRoots
 			origins["run.extra_effect_roots"] = layer
+		}
+		if r.Validation != nil {
+			policies := make([]config.ValidationPolicy, len(*r.Validation))
+			for i, v := range *r.Validation {
+				policies[i] = config.ValidationPolicy{Name: v.Name, Argv: v.Argv, CWD: v.CWD, UnobservedDirs: v.UnobservedDirs}
+			}
+			cfg.Run.Validation = policies
+			origins["run.validation"] = layer
 		}
 	}
 

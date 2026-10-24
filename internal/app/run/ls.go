@@ -152,13 +152,10 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 	}
 
 	base := Request{Project: req.Project, Config: req.Config}
-	// The effect observation depends only on the project and the watched-roots policy,
-	// both constant across candidates, so observe the watched generated-output roots
-	// once here rather than re-walking them per candidate.
-	effect, effectReport, err := s.observeEffect(base)
-	if err != nil {
-		return LsResult{}, err
-	}
+	// The effect observation depends only on the project, the watched-roots policy, and
+	// the waived directories of the validation policy a candidate selects now, so each
+	// distinct waived set is observed once, and only when a re-keyed candidate needs it.
+	effects := newLsEffects(s, base)
 	scanCache := newLsScans()
 	defer scanCache.close()
 
@@ -197,7 +194,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			continue
 		}
 
-		verdict, cmp, compared, err := s.reusability(ctx, base, entry, effect, scanCache)
+		verdict, cmp, compared, candReport, err := s.reusability(ctx, base, entry, effects, scanCache)
 		if err != nil {
 			return LsResult{}, err
 		}
@@ -209,7 +206,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			res.Reusable = append(res.Reusable, LsEntry{ID: id, Entry: entry, Reusability: verdict})
 		}
 		if req.Near {
-			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, cmp, compared, verdict.Reason(), effectReport))
+			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, cmp, compared, verdict.Reason(), candReport))
 		}
 	}
 
@@ -221,7 +218,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			res.NearMisses = res.NearMisses[:maxCandidates]
 		}
 	}
-	res.Performance = runPerformance([]inputReport{scanCache.slowest()}, effectReport)
+	res.Performance = runPerformance([]inputReport{scanCache.slowest()}, effects.reports...)
 	return res, nil
 }
 
@@ -232,9 +229,9 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 // whose recorded scope could not be re-observed — was never compared, so claiming
 // its categories "matched" would be dishonest — its reason alone explains it.
 //
-// effectReport is the diagnostic side channel of the one effect observation Ls already
-// performed — the same observation folded into every candidate's current key input — so
-// an effect-state miss carries the root that observation named without a second walk.
+// effectReport is the diagnostic side channel of the effect observation folded into
+// this candidate's current key input, so an effect-state miss carries the root that
+// observation named without a second walk.
 // The same re-keyed/short-circuited split that decides the score decides the root: a
 // short-circuited candidate's reason is its stored run's own verdict, which today's
 // observation says nothing about, so it keeps the diagnosis without the root.
@@ -287,7 +284,13 @@ func (s *Service) cachedScanFor(base Request, entry runcache.RunEntry, scanCache
 	if err != nil {
 		return scanner.Result{}, false
 	}
-	return scanCache.get(scopeSignature(*req.EffectiveScope))
+	validation, err := selectValidation(req)
+	if err != nil {
+		return scanner.Result{}, false
+	}
+	scope := *req.EffectiveScope
+	scope.Waived = waivedDirs(validation)
+	return scanCache.get(scopeSignature(scope))
 }
 
 // reusability computes whether a stored entry is a valid cache-hit candidate right
@@ -301,8 +304,9 @@ func (s *Service) cachedScanFor(base Request, entry runcache.RunEntry, scanCache
 // near-miss view ranks and explains — so a stale run is explained without re-deriving
 // its key. The comparison is empty for a clean key match and for a short-circuited
 // non-reusable run (which is never re-keyed). compared reports whether the entry was
-// re-keyed against current state at all.
-func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effect runcache.EffectObservation, scanCache *lsScans) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, err error) {
+// re-keyed against current state at all; only then is effectReport the report of the
+// effect observation that re-keying used.
+func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effects *lsEffects, scanCache *lsScans) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, effectReport runcache.EffectReport, err error) {
 	// A run the store recorded as non-reusable history — record-only, mutating, or
 	// post-scan-failed — was never a cache candidate, so it can never become reusable
 	// now: short-circuit to its stored reason rather than re-deriving a key for it.
@@ -311,7 +315,7 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	// run stays non-reusable history; only a later no-op run can be reusable).
 	if entry.Reuse.Kind() != runcache.ReuseReusable {
 		v, err := runcache.NotReusable(entry.Reuse.Reason())
-		return v, runcache.KeyComparison{}, false, err
+		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
 	// A recorded scope that cannot be re-observed must not abort the whole listing
 	// when the run configuration identity alone already proves the entry stale: that
@@ -319,13 +323,30 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	// nothing else establishes the entry's state.
 	if storedScopeProblem(entry) != nil && entry.KeyInput.RunConfigHash != runConfigHash(base.Config, s.deps.Hasher) {
 		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(runcache.DiffRunConfigChanged))
-		return v, runcache.KeyComparison{}, false, err
+		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
 	req, err := s.requestFromEntry(base, entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+	}
+	// A recorded scope that observes a directory today's selected policy waives is
+	// proof enough that the current key differs from the recorded one: the entry was
+	// keyed without that waiver. It is a mismatch of this assessment, not a refusal.
+	validation, err := selectValidation(req)
+	var conflict *ValidationConflictError
+	if errors.As(err, &conflict) {
+		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(runcache.DiffScopeChanged))
+		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+	}
+	if err != nil {
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
 	scope := *req.EffectiveScope
+	scope.Waived = waivedDirs(validation)
+	effect, effectReport, err := effects.get(scope.Waived)
+	if err != nil {
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+	}
 
 	sig := scopeSignature(scope)
 	scanRes, ok := scanCache.get(sig)
@@ -345,34 +366,34 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 			Now:                s.deps.Clock.Now(),
 		})
 		if err != nil {
-			return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
+			return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 		}
 		scanCache.put(sig, scanRes, newInputReport(s.deps.Clock.Now().Sub(scanStart).Milliseconds(), scanRes.Stats().Files))
 	}
 
-	current := s.currentKeyInputFor(req, scope, scanRes.TreeHash(), effect)
+	current := s.currentKeyInputFor(req, scope, validation, scanRes.TreeHash(), effect)
 	cmp = runcache.CompareKeyInputs(entry.KeyInput, current)
 
 	// A keyed difference means a real run would not hit this entry: name the most
 	// explanatory difference as the reason.
 	if !cmp.Equal() {
 		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(cmp.PrimaryReason()))
-		return v, cmp, true, err
+		return v, cmp, true, effectReport, err
 	}
 	// Key matches; apply the same freshness and payload gates the hit path enforces.
 	if s.expired(entry, req.Config.Run.TTL) {
 		v, err := runcache.NotReusable(runcache.ReasonExpired)
-		return v, cmp, true, err
+		return v, cmp, true, effectReport, err
 	}
 	healthy, err := s.payloadHealth(entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, err
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
 	if !healthy {
 		v, err := runcache.NotReusable(runcache.ReasonPayloadMissing)
-		return v, cmp, true, err
+		return v, cmp, true, effectReport, err
 	}
-	return runcache.Reusable(), cmp, true, nil
+	return runcache.Reusable(), cmp, true, effectReport, nil
 }
 
 // currentKeyInputFor builds the key input a real run of the entry's command would
@@ -381,16 +402,46 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 // effect observation the caller observed once for this Ls, folded through the same
 // buildKeyInput the run path uses — so a deleted or changed generated-output root
 // surfaces as effect-state-differs in the current-state reuse view.
-func (s *Service) currentKeyInputFor(req Request, scope config.ScanScope, treeHash hashing.TreeHash, effect runcache.EffectObservation) runcache.KeyInput {
+func (s *Service) currentKeyInputFor(req Request, scope config.ScanScope, validation *runcache.ValidationScope, treeHash hashing.TreeHash, effect runcache.EffectObservation) runcache.KeyInput {
 	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist)
 	resolvedPath, resolvedStat, _ := s.deps.Resolver.Resolve(req.Argv[0], req.AbsDir, effEnv.ChildEnv())
-	return s.buildKeyInput(req, req.Config, scope, treeHash, effect, resolvedPath, resolvedStat, effEnv.Keyed())
+	return s.buildKeyInput(req, req.Config, scope, validation, treeHash, effect, resolvedPath, resolvedStat, effEnv.Keyed())
 }
 
 // scopeSignature is a stable key grouping candidates whose worktree scan is
 // identical: the same boundary (include/exclude/ignore flags). Trust mode is omitted
 // because it changes only whether the index is reused, not the resulting hash.
 func scopeSignature(scope config.ScanScope) string {
-	return fmt.Sprintf("%q|%q|g=%t|a=%t",
-		scope.Include, scope.Exclude, scope.UseGitignore, scope.UseAwaignore)
+	return fmt.Sprintf("%q|%q|g=%t|a=%t|w=%q",
+		scope.Include, scope.Exclude, scope.UseGitignore, scope.UseAwaignore, scope.Waived)
+}
+
+type lsEffects struct {
+	s       *Service
+	base    Request
+	seen    map[string]lsEffect
+	reports []runcache.EffectReport
+}
+
+type lsEffect struct {
+	obs    runcache.EffectObservation
+	report runcache.EffectReport
+}
+
+func newLsEffects(s *Service, base Request) *lsEffects {
+	return &lsEffects{s: s, base: base, seen: map[string]lsEffect{}}
+}
+
+func (e *lsEffects) get(waived []string) (runcache.EffectObservation, runcache.EffectReport, error) {
+	k := fmt.Sprintf("%q", waived)
+	if got, ok := e.seen[k]; ok {
+		return got.obs, got.report, nil
+	}
+	obs, report, err := e.s.observeEffect(e.base, waived)
+	if err != nil {
+		return runcache.EffectObservation{}, runcache.EffectReport{}, err
+	}
+	e.seen[k] = lsEffect{obs: obs, report: report}
+	e.reports = append(e.reports, report)
+	return obs, report, nil
 }

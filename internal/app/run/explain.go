@@ -310,6 +310,10 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	}
 	kc, err := s.buildKeyContext(ctx, req, false)
 	if err != nil {
+		var conflict *ValidationConflictError
+		if errors.As(err, &conflict) {
+			return ExplainResult{}, fmt.Errorf("cannot re-observe stored run %s under the current config: %w; the stored run itself is intact and stays readable", stored.ID, err)
+		}
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()

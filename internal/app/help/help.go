@@ -149,6 +149,12 @@ var catalogSpec = []entry{
 		kind:    string(docbundle.KindTopic), file: "record.md", outPath: topicsDir + "/record.md",
 	},
 	{
+		slug: "validation", title: "awa run validation policies — result-only replay",
+		summary: "replay one exact check without observing its build directory",
+		kind:    string(docbundle.KindTopic), file: "validation.md", outPath: topicsDir + "/validation.md",
+		aliases: []string{"validation-policy", "result-only"},
+	},
+	{
 		slug: "inspect", title: "finding stored runs and their output",
 		summary: "locate, read, verify, and delete stored run output",
 		kind:    string(docbundle.KindTopic), file: "inspect.md", outPath: topicsDir + "/inspect.md",

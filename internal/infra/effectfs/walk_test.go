@@ -44,7 +44,7 @@ func TestDiscoverFindsRootAndNested(t *testing.T) {
 	// A non-watched source file must not be observed as a root.
 	mustWrite(t, filepath.Join(root, "src", "main.go"), "z")
 
-	got, err := newWalker(t).Discover(root, []string{"node_modules", "target"})
+	got, err := newWalker(t).Discover(root, []string{"node_modules", "target"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestDiscoverDoesNotDescendIntoMatchedRoot(t *testing.T) {
 	// A watched dir nested inside another watched dir must not be reported: the outer
 	// match is not descended into.
 	mustWrite(t, filepath.Join(root, "node_modules", "pkg", "dist", "bundle.js"), "x")
-	got, err := newWalker(t).Discover(root, []string{"node_modules", "dist"})
+	got, err := newWalker(t).Discover(root, []string{"node_modules", "dist"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestDiscoverSkipsProtected(t *testing.T) {
 	// A watched name inside .git must never be observed.
 	mustWrite(t, filepath.Join(root, ".git", "node_modules", "x"), "x")
 	mustWrite(t, filepath.Join(root, "target", "app"), "y")
-	got, err := newWalker(t).Discover(root, []string{"node_modules", "target"})
+	got, err := newWalker(t).Discover(root, []string{"node_modules", "target"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -93,11 +93,11 @@ func TestDiscoverDeterministicAndDetectsChange(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "target", "app"), "v1")
 	w := newWalker(t)
 
-	a, err := w.Discover(root, []string{"target"})
+	a, err := w.Discover(root, []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	b, err := w.Discover(root, []string{"target"})
+	b, err := w.Discover(root, []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestDiscoverDeterministicAndDetectsChange(t *testing.T) {
 
 	// Change the content: the sub-hash must move.
 	mustWrite(t, filepath.Join(root, "target", "app"), "v2-longer")
-	c, _ := w.Discover(root, []string{"target"})
+	c, _ := w.Discover(root, []string{"target"}, nil)
 	if a[0].SubHash.String() == c[0].SubHash.String() {
 		t.Error("a changed file under a watched dir must change its sub-hash")
 	}
@@ -121,7 +121,7 @@ func TestDiscoverOverBudgetFailsClosed(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		mustWrite(t, filepath.Join(dir, "pkg-"+strconv.Itoa(i)), "x")
 	}
-	if _, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"node_modules"}); err == nil {
+	if _, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"node_modules"}, nil); err == nil {
 		t.Error("a directory over the entry budget must fail Discover closed, not observe partially")
 	}
 }
@@ -137,7 +137,7 @@ func TestDiscoverOverBudgetNamesRoot(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		mustWrite(t, filepath.Join(dir, "pkg-"+strconv.Itoa(i)), "x")
 	}
-	_, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"node_modules"})
+	_, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"node_modules"}, nil)
 	var over *effectobserve.OverBudgetError
 	if !errors.As(err, &over) {
 		t.Fatalf("err = %v, want an *effectobserve.OverBudgetError", err)
@@ -159,7 +159,7 @@ func TestDiscoverDeepOverBudgetFailsClosed(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		mustWrite(t, filepath.Join(dir, "deep", "f"+strconv.Itoa(i)), "x")
 	}
-	if _, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"target"}); err == nil {
+	if _, err := newWalkerLimited(t, 8, 100, 100_000).Discover(root, []string{"target"}, nil); err == nil {
 		t.Error("a deep directory over the entry budget must fail Discover closed")
 	}
 }
@@ -173,12 +173,12 @@ func TestDiscoverTraversalBudgetFailsClosed(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		mustWrite(t, filepath.Join(root, "src", "file"+strconv.Itoa(i)+".go"), "x")
 	}
-	if _, err := newWalkerLimited(t, 100, 100, 10).Discover(root, []string{"node_modules"}); err == nil {
+	if _, err := newWalkerLimited(t, 100, 100, 10).Discover(root, []string{"node_modules"}, nil); err == nil {
 		t.Error("discovery over its traversal budget must fail closed, not read the whole directory")
 	}
 
 	// With a generous discovery budget the same tree succeeds (and finds nothing).
-	got, err := newWalkerLimited(t, 100, 100, 100_000).Discover(root, []string{"node_modules"})
+	got, err := newWalkerLimited(t, 100, 100, 100_000).Discover(root, []string{"node_modules"}, nil)
 	if err != nil {
 		t.Fatalf("Discover with a generous budget: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestDiscoverDoesNotFollowSymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "build", "link")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	got, err := newWalker(t).Discover(root, []string{"build"})
+	got, err := newWalker(t).Discover(root, []string{"build"}, nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestDiscoverSelectorFormsMatchDistinctly(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "other", "bin", "tool"), "x")
 	mustWrite(t, filepath.Join(root, "other", "artifacts", "bin", "tool"), "x")
 
-	exact, err := newWalker(t).Discover(root, []string{"artifacts/bin"})
+	exact, err := newWalker(t).Discover(root, []string{"artifacts/bin"}, nil)
 	if err != nil {
 		t.Fatalf("Discover exact: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestDiscoverSelectorFormsMatchDistinctly(t *testing.T) {
 		t.Errorf("exact selector discovered %v, want only artifacts/bin", exact)
 	}
 
-	byName, err := newWalker(t).Discover(root, []string{"bin"})
+	byName, err := newWalker(t).Discover(root, []string{"bin"}, nil)
 	if err != nil {
 		t.Fatalf("Discover name: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestDiscoverSelectorFormsMatchDistinctly(t *testing.T) {
 		t.Errorf("name selector discovered %d roots, want every bin basename: %v", len(byName), byName)
 	}
 
-	both, err := newWalker(t).Discover(root, []string{"bin", "artifacts/bin"})
+	both, err := newWalker(t).Discover(root, []string{"bin", "artifacts/bin"}, nil)
 	if err != nil {
 		t.Fatalf("Discover both: %v", err)
 	}

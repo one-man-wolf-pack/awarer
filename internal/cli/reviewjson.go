@@ -175,7 +175,8 @@ type nearMissDoc struct {
 	// effect-state-differs or effect-state-unavailable and absent otherwise. It is the
 	// same object `awa run --json` emits for a newly executed non-reusable run, so a
 	// consumer decodes an effect diagnosis identically wherever it appears.
-	Effect *effectDiagnosisDoc `json:"effect,omitempty"`
+	Effect     *effectDiagnosisDoc  `json:"effect,omitempty"`
+	Validation *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 // nearMissView converts a near-miss candidate into its JSON shape.
@@ -198,7 +199,8 @@ func nearMissView(c apprun.RunReuseCandidate) nearMissDoc {
 		// The record-mode action names this candidate's own stored command, not the
 		// invocation that asked for the diagnosis: the advice is about the run that keeps
 		// disturbing watched output.
-		Effect: effectDiagnosisView(c.Effect, e.KeyInput.Command.Argv),
+		Effect:     effectDiagnosisView(c.Effect, e.KeyInput.Command.Argv),
+		Validation: validationPolicyView(e.KeyInput.Validation),
 	}
 }
 

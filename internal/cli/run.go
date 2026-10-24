@@ -622,6 +622,13 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 	}
 	w.Diagnostic(fmt.Sprintf("  exit:     %s", exitLabel(sum.Exit)))
 	w.Diagnostic("  duration: " + durationLabel(sum.Duration))
+	if v := res.Execution.KeyInput.Validation; v != nil {
+		if res.Status == runcache.CacheHit {
+			w.Diagnostic("  replay:   " + validationReplayLine(v))
+		} else {
+			w.Diagnostic("  policy:   " + validationPolicyLine(v))
+		}
+	}
 	emitTruncationBanner(w, res.Execution.Output)
 	if sum.Recorded && !sum.RunID.IsZero() {
 		w.Diagnostic(fmt.Sprintf("  inspect:  awa run show %s (add --tail N for more)", sum.RunID.Short()))
@@ -1313,6 +1320,15 @@ func classifyRunError(err error) error {
 	case errors.Is(err, runcache.ErrStartFailed):
 		return genericErrorf("%v", err)
 	}
+	var conflict *apprun.ValidationConflictError
+	if errors.As(err, &conflict) {
+		switch conflict.Source {
+		case apprun.ConflictCLI:
+			return usageErrorf("%v", err)
+		case apprun.ConflictConfig:
+			return configErrorf("%v", err)
+		}
+	}
 	var ve *domainconfig.ValidationError
 	if errors.As(err, &ve) {
 		return configErrorf("%v", err)
@@ -1380,11 +1396,12 @@ type runRunDoc struct {
 }
 
 type runInputsDoc struct {
-	TreeHash       string   `json:"tree_hash"`
-	TrustMode      string   `json:"trust_mode"`
-	Scope          []string `json:"scope"`
-	SkippedCount   int      `json:"skipped_count"`
-	SkippedAllowed bool     `json:"skipped_allowed"`
+	TreeHash       string               `json:"tree_hash"`
+	TrustMode      string               `json:"trust_mode"`
+	Scope          []string             `json:"scope"`
+	SkippedCount   int                  `json:"skipped_count"`
+	SkippedAllowed bool                 `json:"skipped_allowed"`
+	Validation     *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 type runStreamDoc struct {
@@ -1477,6 +1494,7 @@ func runView(res apprun.Result, mode inspect.DisplayMode, diag apprun.RunInlineD
 			Scope:          e.KeyInput.IncludeScope,
 			SkippedCount:   e.Skipped.Count,
 			SkippedAllowed: e.Skipped.Allowed,
+			Validation:     validationPolicyView(e.KeyInput.Validation),
 		},
 		Display:     display,
 		Outputs:     outputs,

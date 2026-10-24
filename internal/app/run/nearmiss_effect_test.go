@@ -23,9 +23,9 @@ type countingEffectObserver struct {
 	calls int
 }
 
-func (o *countingEffectObserver) Observe(project string, roots []string) (runcache.EffectObservation, runcache.EffectReport, error) {
+func (o *countingEffectObserver) Observe(project string, roots, waived []string) (runcache.EffectObservation, runcache.EffectReport, error) {
 	o.calls++
-	return o.inner.Observe(project, roots)
+	return o.inner.Observe(project, roots, waived)
 }
 
 // effectFixture is the shared setup for these scenarios: a stable source input, a

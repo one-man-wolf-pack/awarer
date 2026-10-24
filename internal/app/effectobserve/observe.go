@@ -61,7 +61,7 @@ type DiscoveredRoot struct {
 // large to observe with fidelity) — the single fail-closed signal that makes the whole
 // observation unavailable.
 type Walker interface {
-	Discover(project string, selectors []string) ([]DiscoveredRoot, error)
+	Discover(project string, selectors, waived []string) ([]DiscoveredRoot, error)
 }
 
 // Service computes an EffectObservation from the configured watch list.
@@ -87,13 +87,13 @@ func New(walker Walker, hasher hashing.Hasher) *Service {
 // over a non-empty built-in set), so an empty one is a wiring or caller bug rather
 // than a third observation state: it fails loudly here instead of manufacturing an
 // identity no execution can produce.
-func (s *Service) Observe(project string, roots []string) (runcache.EffectObservation, runcache.EffectReport, error) {
+func (s *Service) Observe(project string, roots, waived []string) (runcache.EffectObservation, runcache.EffectReport, error) {
 	canon := canonicalRoots(roots)
 	if len(canon) == 0 {
 		return runcache.EffectObservation{}, runcache.EffectReport{}, fmt.Errorf("effectobserve: no watched effect roots to observe")
 	}
 
-	discovered, err := s.walker.Discover(project, canon)
+	discovered, err := s.walker.Discover(project, canon, waived)
 	if err != nil {
 		// Fail closed: a tree that cannot be observed safely (or a watched directory too
 		// large to observe fully) leaves the effect state unknown, so the run must not

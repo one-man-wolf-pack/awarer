@@ -189,7 +189,7 @@ func TestProductionKeyInputCarriesTheGenerationSensitiveRunConfigHash(t *testing
 	s := &Service{deps: Deps{Hasher: h}}
 	scope := effectiveScanScope(cfg, ScopeOverrides{})
 
-	ki := s.buildKeyInput(Request{Argv: []string{"tool"}}, cfg, scope, hashing.TreeHash{}, runcache.EffectObservation{}, "", "", runcache.Environment{})
+	ki := s.buildKeyInput(Request{Argv: []string{"tool"}}, cfg, scope, nil, hashing.TreeHash{}, runcache.EffectObservation{}, "", "", runcache.Environment{})
 	if ki.RunConfigHash != runConfigHashAt(pattern.Generation, cfg, h) {
 		t.Error("the assembled run key input does not carry the generation-sensitive run config hash")
 	}

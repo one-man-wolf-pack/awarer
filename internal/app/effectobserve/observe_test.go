@@ -16,7 +16,7 @@ type fakeWalker struct {
 	err        error
 }
 
-func (w *fakeWalker) Discover(project string, watchNames []string) ([]effectobserve.DiscoveredRoot, error) {
+func (w *fakeWalker) Discover(project string, watchNames, waived []string) ([]effectobserve.DiscoveredRoot, error) {
 	if w.err != nil {
 		return nil, w.err
 	}
@@ -35,7 +35,7 @@ func TestObserveRejectsEmptyWatchSet(t *testing.T) {
 	// same empty set.
 	h := blake3hash.New()
 	for _, roots := range [][]string{nil, {}, {"", ""}} {
-		obs, _, err := effectobserve.New(&fakeWalker{}, h).Observe("/proj", roots)
+		obs, _, err := effectobserve.New(&fakeWalker{}, h).Observe("/proj", roots, nil)
 		if err == nil {
 			t.Errorf("Observe(%q) must reject an empty watch set, got %v", roots, obs.Status())
 		}
@@ -45,7 +45,7 @@ func TestObserveRejectsEmptyWatchSet(t *testing.T) {
 func TestObserveFailClosedIsUnavailable(t *testing.T) {
 	h := blake3hash.New()
 	svc := effectobserve.New(&fakeWalker{err: errors.New("unreadable")}, h)
-	obs, _, err := svc.Observe("/proj", []string{"build", "target"})
+	obs, _, err := svc.Observe("/proj", []string{"build", "target"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -70,8 +70,8 @@ func TestObserveDeterministicRegardlessOfDiscoveryOrder(t *testing.T) {
 		{Path: "packages/api/target", SubHash: subHash(t, h, "t"), Entries: 5},
 		{Path: "build", SubHash: subHash(t, h, "b"), Entries: 3},
 	}}
-	oa, _, _ := effectobserve.New(a, h).Observe("/proj", []string{"build", "target"})
-	ob, _, _ := effectobserve.New(b, h).Observe("/proj", []string{"build", "target"})
+	oa, _, _ := effectobserve.New(a, h).Observe("/proj", []string{"build", "target"}, nil)
+	ob, _, _ := effectobserve.New(b, h).Observe("/proj", []string{"build", "target"}, nil)
 	if oa.Signature().String() != ob.Signature().String() {
 		t.Errorf("signature depends on discovery order: %s vs %s", oa.Signature(), ob.Signature())
 	}
@@ -85,8 +85,8 @@ func TestObserveNestedRootChangesSignature(t *testing.T) {
 	changed := &fakeWalker{discovered: []effectobserve.DiscoveredRoot{
 		{Path: "packages/api/target", SubHash: subHash(t, h, "v2"), Entries: 1},
 	}}
-	oa, _, _ := effectobserve.New(base, h).Observe("/proj", []string{"target"})
-	ob, _, _ := effectobserve.New(changed, h).Observe("/proj", []string{"target"})
+	oa, _, _ := effectobserve.New(base, h).Observe("/proj", []string{"target"}, nil)
+	ob, _, _ := effectobserve.New(changed, h).Observe("/proj", []string{"target"}, nil)
 	if oa.Signature().String() == ob.Signature().String() {
 		t.Error("a changed nested watched directory must change the effect signature")
 	}
@@ -98,8 +98,8 @@ func TestObserveDisappearedRootChangesSignature(t *testing.T) {
 		{Path: "dist", SubHash: subHash(t, h, "x"), Entries: 1},
 	}}
 	gone := &fakeWalker{discovered: nil}
-	withPresent, _, _ := effectobserve.New(present, h).Observe("/proj", []string{"dist"})
-	withGone, _, _ := effectobserve.New(gone, h).Observe("/proj", []string{"dist"})
+	withPresent, _, _ := effectobserve.New(present, h).Observe("/proj", []string{"dist"}, nil)
+	withGone, _, _ := effectobserve.New(gone, h).Observe("/proj", []string{"dist"}, nil)
 	if withPresent.Signature().String() == withGone.Signature().String() {
 		t.Error("a watched directory disappearing must change the signature")
 	}
@@ -109,8 +109,8 @@ func TestObserveWatchNameFoldedEvenWithoutMatch(t *testing.T) {
 	h := blake3hash.New()
 	// No directories match, but the configured watch names still shape the identity,
 	// so changing the watch list changes the signature even before anything exists.
-	one, _, _ := effectobserve.New(&fakeWalker{}, h).Observe("/proj", []string{"dist"})
-	two, _, _ := effectobserve.New(&fakeWalker{}, h).Observe("/proj", []string{"dist", "coverage"})
+	one, _, _ := effectobserve.New(&fakeWalker{}, h).Observe("/proj", []string{"dist"}, nil)
+	two, _, _ := effectobserve.New(&fakeWalker{}, h).Observe("/proj", []string{"dist", "coverage"}, nil)
 	if one.Signature().String() == two.Signature().String() {
 		t.Error("changing the watch-name list must change the signature")
 	}
@@ -122,7 +122,7 @@ func TestObserveWatchNameFoldedEvenWithoutMatch(t *testing.T) {
 func TestObserveReportOverBudgetNamesRoot(t *testing.T) {
 	h := blake3hash.New()
 	over := &fakeWalker{err: &effectobserve.OverBudgetError{Path: "target", Limit: 100_000}}
-	obs, report, err := effectobserve.New(over, h).Observe("/proj", []string{"target"})
+	obs, report, err := effectobserve.New(over, h).Observe("/proj", []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestObserveReportOverBudgetNamesRoot(t *testing.T) {
 func TestObserveReportPlainFailureCarriesNoEvidence(t *testing.T) {
 	h := blake3hash.New()
 	svc := effectobserve.New(&fakeWalker{err: errors.New("unreadable")}, h)
-	obs, report, err := svc.Observe("/proj", []string{"target"})
+	obs, report, err := svc.Observe("/proj", []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestObserveReportLargestRoot(t *testing.T) {
 		{Path: "node_modules", SubHash: subHash(t, h, "n"), Entries: 4200},
 		{Path: "dist", SubHash: subHash(t, h, "d"), Entries: 12},
 	}}
-	obs, report, err := effectobserve.New(w, h).Observe("/proj", []string{"build", "node_modules", "dist"})
+	obs, report, err := effectobserve.New(w, h).Observe("/proj", []string{"build", "node_modules", "dist"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -197,11 +197,11 @@ func TestObserveSignatureIndependentOfReport(t *testing.T) {
 	discovered := []effectobserve.DiscoveredRoot{
 		{Path: "target", SubHash: subHash(t, h, "t"), Entries: 90_000},
 	}
-	obs, report, err := effectobserve.New(&fakeWalker{discovered: discovered}, h).Observe("/proj", []string{"target"})
+	obs, report, err := effectobserve.New(&fakeWalker{discovered: discovered}, h).Observe("/proj", []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	obs2, _, err := effectobserve.New(&fakeWalker{discovered: discovered}, h).Observe("/proj", []string{"target"})
+	obs2, _, err := effectobserve.New(&fakeWalker{discovered: discovered}, h).Observe("/proj", []string{"target"}, nil)
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}

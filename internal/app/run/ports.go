@@ -50,7 +50,7 @@ type EnvReader interface {
 // the run service can raise a latency diagnostic. Both return types are domain values,
 // so this port does not depend on the sibling app subsystem that implements it.
 type EffectObserver interface {
-	Observe(project string, roots []string) (runcache.EffectObservation, runcache.EffectReport, error)
+	Observe(project string, roots, waived []string) (runcache.EffectObservation, runcache.EffectReport, error)
 }
 
 // ExecutableResolver resolves a command's executable to a path and a stat

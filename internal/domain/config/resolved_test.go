@@ -275,6 +275,9 @@ func TestChangedKeysMapsEachFieldToItsKey(t *testing.T) {
 		{"run.capture_output", func(c *Config) { c.Run.CaptureOutput = !d.Run.CaptureOutput }},
 		{"run.cache_failed_runs", func(c *Config) { c.Run.CacheFailedRuns = !d.Run.CacheFailedRuns }},
 		{"run.extra_effect_roots", func(c *Config) { c.Run.WatchedEffectRoots = []string{"z"} }},
+		{"run.validation", func(c *Config) {
+			c.Run.Validation = []ValidationPolicy{{Name: "v", Argv: []string{"x"}, CWD: ".", UnobservedDirs: []string{"t"}}}
+		}},
 		{"gc.keep_last_checkpoints", func(c *Config) { c.GC.KeepLastCheckpoints = d.GC.KeepLastCheckpoints + 1 }},
 		{"gc.keep_runs_for", func(c *Config) { c.GC.KeepRunsFor = d.GC.KeepRunsFor + 1 }},
 		{"gc.keep_restores_for", func(c *Config) { c.GC.KeepRestoresFor = d.GC.KeepRestoresFor + 1 }},

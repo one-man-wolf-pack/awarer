@@ -36,10 +36,11 @@ type Field struct {
 
 // Section groups the fields of one TOML table.
 type Section struct {
-	Name   string
-	Title  string
-	Intro  string
-	Fields []Field
+	Name    string
+	Title   string
+	Intro   string
+	Fields  []Field
+	Example string
 }
 
 // Sections returns the ordered configuration reference, with defaults rendered
@@ -106,7 +107,13 @@ func Sections() []Section {
 				{"capture_output", boolean(d.Run.CaptureOutput), "bool", "Whether run output is captured and stored for replay/inspection.", "Turn off to run without recording output."},
 				{"cache_failed_runs", boolean(d.Run.CacheFailedRuns), "bool", "Whether non-zero-exit runs are cached.", "Turn off to always re-run failed commands."},
 				{"extra_effect_roots", list(d.Run.WatchedEffectRoots), "name/path list", "Additive watched generated-output selectors on top of the built-ins. Each is either a directory NAME matched wherever it appears (\"bin\") or an exact project-relative PATH matched only there (\"artifacts/bin\"). Literal, never globs. Additive only — a built-in cannot be silenced.", "Watch a generated directory a command reads so later changes to it invalidate reuse."},
+				{"validation", "[]", "array of tables: name, argv, cwd, unobserved_dirs", "Named validation policies ([[run.validation]]). A policy applies only to the run whose complete argv equals argv element for element and whose execution cwd is cwd; it leaves each unobserved_dirs entry (an exact path below the project root, never a name matched at any depth) out of input identity and effect observation, so a cache hit replays the recorded result without recreating those directories. Declaring one asserts both that their prior contents cannot change the result and that their files are not needed after a replay. Two policies selecting one invocation are a conflict. See `awa help validation`.", "Let a check that writes a huge or changing build directory replay its recorded result."},
 			},
+			Example: "[[run.validation]]\n" +
+				"name = \"cargo-test\"\n" +
+				"argv = [\"cargo\", \"test\"]\n" +
+				"cwd = \".\"\n" +
+				"unobserved_dirs = [\"target\"]\n",
 		},
 		{
 			Name:  "gc",

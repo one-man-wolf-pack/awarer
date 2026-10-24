@@ -182,6 +182,9 @@ func CompareKeyInputs(old, new KeyInput) KeyComparison {
 		old.UseAwaignore != new.UseAwaignore {
 		c.add(DiffScopeChanged, "scope", scopeString(old), scopeString(new))
 	}
+	if !sameValidationSemantics(old.Validation, new.Validation) {
+		c.add(DiffScopeChanged, "validation", validationString(old.Validation), validationString(new.Validation))
+	}
 	if old.TrustMode != new.TrustMode {
 		c.add(DiffTrustChanged, "trust_mode", old.TrustMode.String(), new.TrustMode.String())
 	}
