@@ -628,6 +628,9 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 		} else {
 			w.Diagnostic("  policy:   " + validationPolicyLine(v))
 		}
+		if line := identityFactsLine(v, res.Execution.PostRunFacts, res.Status == runcache.CacheHit); line != "" {
+			w.Diagnostic("  facts:    " + line)
+		}
 	}
 	emitTruncationBanner(w, res.Execution.Output)
 	if sum.Recorded && !sum.RunID.IsZero() {
@@ -1161,6 +1164,7 @@ func buildRunService(ctx context.Context, layout paths.Layout, cfg domainconfig.
 		Scanner:        scn,
 		Store:          runstore.New(layout, hasher),
 		Runner:         proc,
+		Prober:         proc,
 		Resolver:       proc,
 		EffectObserver: effectobserve.New(effectfs.New(hasher), hasher),
 		Env:            osEnv{},
@@ -1494,7 +1498,7 @@ func runView(res apprun.Result, mode inspect.DisplayMode, diag apprun.RunInlineD
 			Scope:          e.KeyInput.IncludeScope,
 			SkippedCount:   e.Skipped.Count,
 			SkippedAllowed: e.Skipped.Allowed,
-			Validation:     validationPolicyView(e.KeyInput.Validation),
+			Validation:     validationPolicyView(e.KeyInput.Validation, e.PostRunFacts),
 		},
 		Display:     display,
 		Outputs:     outputs,

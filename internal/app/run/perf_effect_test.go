@@ -50,6 +50,7 @@ func newEffectHarnessWithBudget(t *testing.T, cfg config.Config, perRoot int) *e
 		Scanner:        scanner.New(worktreefs.New(), hasher, idx),
 		Store:          runstore.New(layout, hasher),
 		Runner:         proc,
+		Prober:         proc,
 		Resolver:       proc,
 		EffectObserver: effectobserve.New(effectfs.NewWithLimits(hasher, perRoot, perRoot*100, 2_000_000), hasher),
 		Env:            osEnvReader{},

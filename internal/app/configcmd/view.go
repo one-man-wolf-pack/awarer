@@ -99,19 +99,30 @@ type RunView struct {
 	ExtraEffectRoots     []string         `json:"extra_effect_roots"`
 	EffectiveEffectRoots []string         `json:"effective_effect_roots"`
 	Validation           []ValidationView `json:"validation"`
+	AllowIdentityProbes  bool             `json:"allow_identity_probes"`
 }
 
 type ValidationView struct {
-	Name           string   `json:"name"`
-	Argv           []string `json:"argv"`
-	CWD            string   `json:"cwd"`
-	UnobservedDirs []string `json:"unobserved_dirs"`
+	Name           string              `json:"name"`
+	Argv           []string            `json:"argv"`
+	CWD            string              `json:"cwd"`
+	UnobservedDirs []string            `json:"unobserved_dirs"`
+	IdentityProbes []IdentityProbeView `json:"identity_probes"`
+}
+
+type IdentityProbeView struct {
+	Name string   `json:"name"`
+	Argv []string `json:"argv"`
 }
 
 func validationViews(ps []config.ValidationPolicy) []ValidationView {
 	out := make([]ValidationView, len(ps))
 	for i, p := range ps {
-		out[i] = ValidationView{Name: p.Name, Argv: slices.Clone(p.Argv), CWD: p.CWD, UnobservedDirs: slices.Clone(p.UnobservedDirs)}
+		probes := make([]IdentityProbeView, len(p.IdentityProbes))
+		for j, pr := range p.IdentityProbes {
+			probes[j] = IdentityProbeView{Name: pr.Name, Argv: slices.Clone(pr.Argv)}
+		}
+		out[i] = ValidationView{Name: p.Name, Argv: slices.Clone(p.Argv), CWD: p.CWD, UnobservedDirs: slices.Clone(p.UnobservedDirs), IdentityProbes: probes}
 	}
 	return out
 }
@@ -182,6 +193,7 @@ func NewView(c config.Config) View {
 			ExtraEffectRoots:      slices.Clone(c.Run.WatchedEffectRoots),
 			EffectiveEffectRoots:  config.EffectiveEffectRoots(c.Run.WatchedEffectRoots),
 			Validation:            validationViews(c.Run.Validation),
+			AllowIdentityProbes:   c.Run.AllowIdentityProbes,
 		},
 		GC: GCView{
 			KeepLastCheckpoints: c.GC.KeepLastCheckpoints,

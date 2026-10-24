@@ -49,6 +49,9 @@ type RunReuseCandidate struct {
 	Changed       *runcache.ChangedPathSample
 	Hints         []runcache.AdvisoryHint
 	Effect        *EffectDiagnosis
+	// An uncomputed candidate's empty Comparison and Score do not mean its key matches;
+	// ranking or projecting them as a match would claim closeness without evidence.
+	uncomputed bool
 }
 
 // reasonOrigin names where a candidate's mismatch reason came from. It is what decides
@@ -108,11 +111,22 @@ func (c *RunReuseCandidate) attachEffect(report runcache.EffectReport, origin re
 // later, only for the bounded set actually returned.
 func newCandidate(entry runcache.RunEntry, current runcache.KeyInput) RunReuseCandidate {
 	cmp := runcache.CompareKeyInputs(entry.KeyInput, current)
-	return RunReuseCandidate{
-		Entry:      entry,
-		Comparison: cmp,
-		Score:      scoreFrom(cmp),
-		Reason:     runcache.ReasonFromDiffCode(cmp.PrimaryReason()),
+	c := RunReuseCandidate{Entry: entry, Reason: runcache.ReasonFromDiffCode(cmp.PrimaryReason())}
+	c.setComparison(cmp)
+	return c
+}
+
+// No score category represents identity facts, so a candidate with a changed fact gets
+// no score: one would read as every category matching.
+func (c *RunReuseCandidate) setComparison(cmp runcache.KeyComparison) {
+	codes := cmp.Codes()
+	switch {
+	case slices.Contains(codes, runcache.DiffExternalFactsUnavailable):
+		c.Comparison, c.Score, c.uncomputed = runcache.KeyComparison{}, CandidateScore{}, true
+	case slices.Contains(codes, runcache.DiffExternalFactsChanged):
+		c.Comparison, c.Score = cmp, CandidateScore{}
+	default:
+		c.Comparison, c.Score = cmp, scoreFrom(cmp)
 	}
 }
 
@@ -200,9 +214,10 @@ func sortCandidates(cands []RunReuseCandidate) {
 // (inputs/env/config/platform changed) — it would replay again if that drift
 // reverted; bucket 1 is a run policy or an after-the-fact disqualification kept out
 // of the cache (record-only, mutating, unknown-post-state, failed), which no input
-// change can make reusable. Bucket 0 always ranks ahead of bucket 1.
+// change can make reusable, and a reason-only candidate whose comparison could not be
+// computed, so no closeness is claimed for it. Bucket 0 always ranks ahead of bucket 1.
 func rankBucket(c RunReuseCandidate) int {
-	if c.Entry.Reuse.Kind() == runcache.ReuseReusable {
+	if c.Entry.Reuse.Kind() == runcache.ReuseReusable && !c.uncomputed {
 		return 0
 	}
 	return 1

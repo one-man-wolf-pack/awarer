@@ -74,7 +74,10 @@ const (
 	ReasonCaptureDisabled MismatchReason = "capture-disabled"
 	// ReasonFailedNotCached: the command failed and policy (cache_failed_runs=false,
 	// or --no-cache-failures) declines to cache a failed result.
-	ReasonFailedNotCached MismatchReason = "failed-not-cached"
+	ReasonFailedNotCached                 MismatchReason = "failed-not-cached"
+	ReasonExternalFactsUnavailable        MismatchReason = "external-facts-unavailable"
+	ReasonExternalFactsChanged            MismatchReason = "external-facts-changed"
+	ReasonExternalFactsUnavailablePostRun MismatchReason = "external-facts-unavailable-post-run"
 )
 
 // mismatchReasons is the canonical enumeration of the closed vocabulary. It is the
@@ -93,6 +96,8 @@ var mismatchReasons = []MismatchReason{
 	ReasonMutatedState,
 	ReasonEffectStateDiffers,
 	ReasonEffectStateUnavailable,
+	ReasonExternalFactsChanged,
+	ReasonExternalFactsUnavailablePostRun,
 	ReasonFastTrustMode,
 	// a recorded key fact no longer matches
 	ReasonExpired,
@@ -112,6 +117,7 @@ var mismatchReasons = []MismatchReason{
 	ReasonSkippedInputs,
 	ReasonCaptureDisabled,
 	ReasonFailedNotCached,
+	ReasonExternalFactsUnavailable,
 }
 
 // MismatchReasons returns the closed reason vocabulary in canonical order. The
@@ -184,6 +190,10 @@ func ReasonFromDiffCode(code DiffCode) MismatchReason {
 		return ReasonEnvMismatch
 	case DiffPlatformChanged:
 		return ReasonPlatformMismatch
+	case DiffExternalFactsChanged:
+		return ReasonExternalFactsChanged
+	case DiffExternalFactsUnavailable:
+		return ReasonExternalFactsUnavailable
 	default:
 		return ReasonConfigMismatch
 	}

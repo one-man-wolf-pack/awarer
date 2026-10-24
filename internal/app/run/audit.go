@@ -102,10 +102,13 @@ var auditClasses = []auditClass{
 	{AuditPolicyBlocker, runcache.ReuseRecordOnly, runcache.ReasonFastTrustMode},
 	{AuditPolicyBlocker, runcache.ReuseRecordOnly, runcache.ReasonNonCacheablePolicy},
 	{AuditPolicyBlocker, runcache.ReuseRecordOnly, runcache.ReasonCaptureDisabled},
+	{AuditPolicyBlocker, runcache.ReuseRecordOnly, runcache.ReasonExternalFactsUnavailable},
 	{AuditChangedState, runcache.ReuseNonReusable, runcache.ReasonMutatedState},
 	{AuditChangedState, runcache.ReuseNonReusable, runcache.ReasonEffectStateDiffers},
+	{AuditChangedState, runcache.ReuseNonReusable, runcache.ReasonExternalFactsChanged},
 	{AuditObservationUnavailable, runcache.ReuseNonReusable, runcache.ReasonEffectStateUnavailable},
 	{AuditObservationUnavailable, runcache.ReuseUnknownPostState, runcache.ReasonPostScanFailed},
+	{AuditObservationUnavailable, runcache.ReuseNonReusable, runcache.ReasonExternalFactsUnavailablePostRun},
 	{AuditFailureCachePolicy, runcache.ReuseNonReusable, runcache.ReasonFailedNotCached},
 }
 

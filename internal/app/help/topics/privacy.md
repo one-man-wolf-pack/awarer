@@ -144,6 +144,11 @@ output exceeds the capture limit it is stored truncated and every surface says
 so ("stored ... is incomplete evidence — N bytes omitted"); a truncated payload
 is never presented as complete.
 
+Validation-policy identity probes are the exception: their stdout and stderr are
+never stored or shown, only each probe's status and a fingerprint of its stdout
+(`awa help validation`). A fingerprint is not encryption, and the probe's argv
+is stored like any other config value.
+
 ## Keep `.awa/` private and untracked
 
 - awa creates `.awa/` and everything in it owner-private; do not widen it.

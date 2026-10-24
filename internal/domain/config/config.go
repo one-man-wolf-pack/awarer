@@ -175,6 +175,9 @@ type Run struct {
 	// observation exists to close.
 	WatchedEffectRoots []string
 	Validation         []ValidationPolicy
+	// AllowIdentityProbes is accepted only from the private project config layer; the
+	// layered loader refuses it anywhere else.
+	AllowIdentityProbes bool
 }
 
 // ScanScope is the fully-resolved boundary a single scan walks: the include list,

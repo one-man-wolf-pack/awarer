@@ -28,6 +28,12 @@ func (stubRunner) Run(context.Context, runcache.RunSpec) (runcache.RunResult, er
 	return runcache.RunResult{}, nil
 }
 
+type stubProber struct{}
+
+func (stubProber) Probe(context.Context, runcache.ProbeSpec) runcache.ProbeResult {
+	return runcache.ProbeResult{Status: runcache.FactStartFailed}
+}
+
 type stubResolver struct{}
 
 func (stubResolver) Resolve(string, string, []string) (string, string, bool) { return "", "", false }
@@ -68,6 +74,7 @@ func newVerdictService(t *testing.T) *Service {
 		Scanner:        stubScanner{},
 		Store:          errStore{},
 		Runner:         stubRunner{},
+		Prober:         stubProber{},
 		Resolver:       stubResolver{},
 		EffectObserver: stubEffectObserver{},
 		Env:            stubEnv{},

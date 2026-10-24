@@ -96,7 +96,7 @@ func (s *Service) DiagnoseRun(ctx context.Context, res Result, ttl config.Durati
 	// identical key) and a score claiming everything matched. Derive the honest reason
 	// the same way Service.reusability does, and drop the score a non-reusable-kind
 	// entry never earned.
-	reason := inlineReason(nearest.Entry, nearest.Comparison, s.expired(nearest.Entry, ttl), healthy)
+	reason := inlineReason(nearest, s.expired(nearest.Entry, ttl), healthy)
 	if reason == "" {
 		// A reusable entry whose key still matches, is unexpired, and verifies is an
 		// anomaly here (an orphaned duplicate, or a cached failure skipped by policy) that
@@ -150,12 +150,15 @@ func (s *Service) DiagnoseRun(ctx context.Context, res Result, ttl config.Durati
 // still matches reports expiry, then a corrupt payload, in that order. An empty result
 // means the entry looks reusable here (an anomaly the caller resolves by staying
 // silent) rather than a named miss.
-func inlineReason(entry runcache.RunEntry, cmp runcache.KeyComparison, expired, healthy bool) runcache.MismatchReason {
-	if entry.Reuse.Kind() != runcache.ReuseReusable {
-		return entry.Reuse.Reason()
+func inlineReason(c RunReuseCandidate, expired, healthy bool) runcache.MismatchReason {
+	if c.Entry.Reuse.Kind() != runcache.ReuseReusable {
+		return c.Entry.Reuse.Reason()
 	}
-	if !cmp.Equal() {
-		return runcache.ReasonFromDiffCode(cmp.PrimaryReason())
+	if c.uncomputed {
+		return c.Reason
+	}
+	if !c.Comparison.Equal() {
+		return runcache.ReasonFromDiffCode(c.Comparison.PrimaryReason())
 	}
 	if expired {
 		return runcache.ReasonExpired

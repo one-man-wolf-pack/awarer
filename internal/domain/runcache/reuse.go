@@ -81,7 +81,8 @@ func ReusableCacheEntry() ReuseState {
 // can carry.
 func (r MismatchReason) disqualifiedReason() bool {
 	switch r {
-	case ReasonMutatedState, ReasonEffectStateDiffers, ReasonEffectStateUnavailable, ReasonFailedNotCached:
+	case ReasonMutatedState, ReasonEffectStateDiffers, ReasonEffectStateUnavailable, ReasonFailedNotCached,
+		ReasonExternalFactsChanged, ReasonExternalFactsUnavailablePostRun:
 		return true
 	default:
 		return false
@@ -94,7 +95,7 @@ func (r MismatchReason) disqualifiedReason() bool {
 func (r MismatchReason) policyReason() bool {
 	switch r {
 	case ReasonRecordOnly, ReasonNoCache, ReasonStdinNotKeyed, ReasonSkippedInputs,
-		ReasonCaptureDisabled, ReasonNonCacheablePolicy, ReasonFastTrustMode:
+		ReasonCaptureDisabled, ReasonNonCacheablePolicy, ReasonFastTrustMode, ReasonExternalFactsUnavailable:
 		return true
 	default:
 		return false
@@ -107,7 +108,7 @@ func (r MismatchReason) policyReason() bool {
 // not a policy reason, which is a record-only run's concern.
 func NonReusableRun(reason MismatchReason) (ReuseState, error) {
 	if !reason.disqualifiedReason() {
-		return ReuseState{}, fmt.Errorf("non-reusable run cannot carry reason %q (want a disqualification reason: %q, %q, %q, or %q)", reason, ReasonMutatedState, ReasonEffectStateDiffers, ReasonEffectStateUnavailable, ReasonFailedNotCached)
+		return ReuseState{}, fmt.Errorf("non-reusable run cannot carry reason %q (want a disqualification reason)", reason)
 	}
 	return ReuseState{kind: ReuseNonReusable, reason: reason}, nil
 }

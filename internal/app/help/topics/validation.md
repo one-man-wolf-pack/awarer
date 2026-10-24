@@ -86,19 +86,68 @@ as `ignored-boundary`, or first as `policy-incompatible` when the run's scan
 policy differs from the current one.
 Checkpoints and their history scope are unaffected.
 
-Files outside the project are outside the evidence too. A policy does not make a
-toolchain change — a different Rust toolchain or compiler — invalidate a stored
-result; only facts awa keys, such as names in `[run].env_allowlist`, do.
+Files outside the project are outside the evidence too. A policy alone does not
+make a toolchain change invalidate a stored result; only facts awa keys do, such
+as names in `[run].env_allowlist` or the identity probes below.
+
+## Identity probes
+
+```toml
+[[run.validation.identity_probes]]   # in awa.toml, inside the policy above
+name = "rustc"                       # a label for output only
+argv = ["rustc", "-vV"]              # a literal command, never a shell line
+```
+
+```toml
+[run]                                # in .awa/config.toml only
+allow_identity_probes = true
+```
+
+A probe is a command whose exact stdout becomes part of the policy's cache key,
+so a different report means a miss. Up to 8 probes per policy.
+
+- **Permission.** Probes are code from the project config. They run only when
+  `allow_identity_probes = true` is set in the private `.awa/config.toml`; in
+  `awa.toml` or a `--config` file that key is a config error. The grant covers
+  every probe this checkout's config declares, including ones added or edited
+  later. It is not a sandbox: a probe can do anything a command can.
+- **When.** Only `awa run`, never explain, `run ls`, show, status, doctor, or
+  config. A run that could be reused runs the probes before it looks up a result,
+  also when that becomes a hit, and again after the command before it stores a
+  reusable result. `--record`, `--no-cache`, disabled capture, unkeyed stdin, and fast trust mode
+  skip them. Each runs in the command's cwd with the command's sanitized
+  environment and null stdin.
+- **Bounds.** Each probe gets 10 s, 64 KiB of stdout, and 64 KiB of stderr; one
+  phase of probes gets 30 s. Exceeding a bound ends that probe.
+- **Unavailable.** A probe that is not granted, is not found, fails to start,
+  exits non-zero or by a signal, times out, prints nothing, or overflows a bound
+  makes the facts unavailable. The command still runs with its own exit code and
+  output; only reuse is lost. Before the run that is `external-facts-unavailable`;
+  after it, `external-facts-unavailable-post-run`. Different bytes after the run
+  are `external-facts-changed`. Without the grant, explain, `run ls`, and status
+  report that same blocker with every probe `denied`, and run none.
+- **Privacy.** Probe output is never stored or shown, also on failure. Runs keep
+  each probe's status and a fingerprint of its stdout. A fingerprint is not
+  encryption: a short guessable report can be guessed.
+
+Matching reports prove only that the probes printed the same bytes at those two
+moments. They do not identify libraries, compiler components, build-script
+discoveries, or services the probes do not report. awa does not check that a
+probe describes the tool the command uses: for `cargo +nightly test`, plain
+`rustc -vV` can report a different toolchain, so name the same selection in the
+probe argv.
 
 ## Inspect
 
 ```text
 awa run explain -- cargo test     # replay: on a hit, else policy:; JSON current.validation
-awa run show --last --meta        # the policy that run recorded
+awa run show --last --meta        # the policy and facts that run recorded
 ```
 
 `awa run --json` reports `inputs.validation`; `run show`, `run ls`, `run log`, and
-explain candidates report the policy each stored run recorded.
+explain candidates report the policy each stored run recorded. With identity
+probes, `identity_probes` lists each probe's `before` and `after` status and
+fingerprint.
 
 ## See also
 

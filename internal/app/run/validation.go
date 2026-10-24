@@ -41,7 +41,11 @@ func selectValidation(req Request) (*runcache.ValidationScope, error) {
 	if !ok {
 		return nil, nil
 	}
-	v, err := runcache.NewValidationScope(pol.Name, pol.UnobservedDirs)
+	probes := make([]runcache.ProbeDefinition, len(pol.IdentityProbes))
+	for i, pr := range pol.IdentityProbes {
+		probes[i] = runcache.ProbeDefinition{Label: pr.Name, Argv: pr.Argv}
+	}
+	v, err := runcache.NewValidationScope(pol.Name, pol.UnobservedDirs, probes)
 	if err != nil {
 		return nil, err
 	}

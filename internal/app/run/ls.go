@@ -194,7 +194,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			continue
 		}
 
-		verdict, cmp, compared, candReport, err := s.reusability(ctx, base, entry, effects, scanCache)
+		verdict, cmp, compared, candReport, err := s.reusability(ctx, base, entry, effects, scanCache, req.Near)
 		if err != nil {
 			return LsResult{}, err
 		}
@@ -239,7 +239,7 @@ func (s *Service) nearCandidate(entry runcache.RunEntry, cmp runcache.KeyCompari
 	cand := RunReuseCandidate{Entry: entry, Comparison: cmp, Reason: reason}
 	origin := reasonFromStoredVerdict
 	if compared {
-		cand.Score = scoreFrom(cmp)
+		cand.setComparison(cmp)
 		origin = reasonFromComparison
 	}
 	cand.attachEffect(effectReport, origin)
@@ -306,7 +306,7 @@ func (s *Service) cachedScanFor(base Request, entry runcache.RunEntry, scanCache
 // non-reusable run (which is never re-keyed). compared reports whether the entry was
 // re-keyed against current state at all; only then is effectReport the report of the
 // effect observation that re-keying used.
-func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effects *lsEffects, scanCache *lsScans) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, effectReport runcache.EffectReport, err error) {
+func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effects *lsEffects, scanCache *lsScans, near bool) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, effectReport runcache.EffectReport, err error) {
 	// A run the store recorded as non-reusable history — record-only, mutating, or
 	// post-scan-failed — was never a cache candidate, so it can never become reusable
 	// now: short-circuit to its stored reason rather than re-deriving a key for it.
@@ -341,6 +341,9 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	if err != nil {
 		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
+	if validation, err = s.withPreRunFacts(ctx, req, validation, nil); err != nil {
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+	}
 	scope := *req.EffectiveScope
 	scope.Waived = waivedDirs(validation)
 	effect, effectReport, err := effects.get(scope.Waived)
@@ -373,6 +376,11 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 
 	current := s.currentKeyInputFor(req, scope, validation, scanRes.TreeHash(), effect)
 	cmp = runcache.CompareKeyInputs(entry.KeyInput, current)
+	// A comparison without the current facts is complete only as a proof of some other
+	// difference; a near-miss candidate would also present it as the full key delta.
+	if current.Validation.FactsUnassessed() && (cmp.Equal() || near) {
+		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, ErrExternalFactsUnassessed
+	}
 
 	// A keyed difference means a real run would not hit this entry: name the most
 	// explanatory difference as the reason.

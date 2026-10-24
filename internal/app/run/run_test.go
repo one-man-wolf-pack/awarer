@@ -72,6 +72,26 @@ func (r *fakeResolver) Resolve(_ string, _ string, env []string) (string, string
 	return "", "", false
 }
 
+type fakeProber struct {
+	calls   int
+	stdout  map[string]string
+	status  map[string]runcache.FactStatus
+	gotSpec []runcache.ProbeSpec
+	onProbe func(spec runcache.ProbeSpec)
+}
+
+func (p *fakeProber) Probe(_ context.Context, spec runcache.ProbeSpec) runcache.ProbeResult {
+	p.calls++
+	p.gotSpec = append(p.gotSpec, spec)
+	if p.onProbe != nil {
+		p.onProbe(spec)
+	}
+	if st, ok := p.status[spec.Argv[0]]; ok {
+		return runcache.ProbeResult{Status: st}
+	}
+	return runcache.ProbeResult{Status: runcache.FactAcquired, Stdout: []byte(p.stdout[spec.Argv[0]])}
+}
+
 type mapEnv struct{ vars map[string]string }
 
 func (m mapEnv) Lookup(name string) (string, bool) {
@@ -87,6 +107,7 @@ func (c *fakeClock) Now() time.Time { return c.now }
 type harness struct {
 	svc      *apprun.Service
 	runner   *fakeRunner
+	prober   *fakeProber
 	resolver *fakeResolver
 	env      *mapEnv
 	clock    *fakeClock
@@ -104,6 +125,11 @@ type harnessConfig struct {
 	decorateScanner        func(apprun.Scanner) apprun.Scanner
 	decorateIndex          func(worktree.Index) worktree.Index
 	decorateEffectObserver func(apprun.EffectObserver) apprun.EffectObserver
+	decorateStore          func(runcache.Store) runcache.Store
+}
+
+func withStoreDecorator(f func(runcache.Store) runcache.Store) harnessOpt {
+	return func(c *harnessConfig) { c.decorateStore = f }
 }
 
 // withScannerDecorator wraps the run service's scanner, letting a test inject
@@ -157,6 +183,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
 	runner := &fakeRunner{stdout: "default-out\n", exit: runcache.ExitStatus{Kind: runcache.ExitNormal, Code: 0}, clock: clock}
 	resolver := &fakeResolver{}
+	prober := &fakeProber{stdout: map[string]string{}, status: map[string]runcache.FactStatus{}}
 	env := &mapEnv{vars: map[string]string{}}
 	store := runstore.New(layout, hasher)
 	var index worktree.Index = idx
@@ -171,10 +198,15 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	if hc.decorateEffectObserver != nil {
 		observer = hc.decorateEffectObserver(observer)
 	}
+	var svcStore runcache.Store = store
+	if hc.decorateStore != nil {
+		svcStore = hc.decorateStore(store)
+	}
 	svc := apprun.New(apprun.Deps{
 		Scanner:        scan,
-		Store:          store,
+		Store:          svcStore,
 		Runner:         runner,
+		Prober:         prober,
 		Resolver:       resolver,
 		EffectObserver: observer,
 		Env:            env,
@@ -183,7 +215,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		AwaVersion:     "test",
 	})
 	return &harness{
-		svc: svc, runner: runner, resolver: resolver, env: env, clock: clock, store: store,
+		svc: svc, runner: runner, prober: prober, resolver: resolver, env: env, clock: clock, store: store,
 		proj: proj, cfg: cfg, rootAbs: layout.Root(),
 		cleanup: func() { _ = idx.Close() },
 	}

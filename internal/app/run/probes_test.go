@@ -1,0 +1,495 @@
+package run_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"slices"
+	"testing"
+
+	apprun "awarer/internal/app/run"
+	"awarer/internal/domain/config"
+	"awarer/internal/domain/runcache"
+)
+
+func newProbeHarness(t *testing.T, grant bool) *harness {
+	t.Helper()
+	h, _ := newValidationHarness(t)
+	h.cfg.Run.Validation[0].IdentityProbes = []config.IdentityProbe{
+		{Name: "tool", Argv: []string{"tool", "--version"}},
+		{Name: "linker", Argv: []string{"linker", "-v"}},
+	}
+	h.cfg.Run.AllowIdentityProbes = grant
+	h.prober.stdout["tool"] = "tool 1.0\n"
+	h.prober.stdout["linker"] = "linker 7\n"
+	return h
+}
+
+func (h *harness) mustRun(t *testing.T, req apprun.Request) apprun.Result {
+	t.Helper()
+	res, err := h.svc.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return res
+}
+
+func factStatuses(facts []runcache.ExternalFact) []runcache.FactStatus {
+	out := make([]runcache.FactStatus, len(facts))
+	for i, f := range facts {
+		out[i] = f.Status
+	}
+	return out
+}
+
+func TestProbesNeverRunWithoutThePrivateGrant(t *testing.T) {
+	h := newProbeHarness(t, false)
+	h.runner.exit = runcache.ExitStatus{Kind: runcache.ExitNormal, Code: 3}
+	h.runner.stdout = "child output\n"
+	var out []byte
+	req := h.request("check")
+	req.Stdout = writerFunc(func(p []byte) { out = append(out, p...) })
+
+	res := h.mustRun(t, req)
+	if h.prober.calls != 0 {
+		t.Fatalf("ungranted probes ran %d times", h.prober.calls)
+	}
+	if res.ExitCode != 3 || string(out) != "child output\n" || h.runner.calls != 1 {
+		t.Fatalf("child exit %d output %q calls %d, want its own result", res.ExitCode, out, h.runner.calls)
+	}
+	if res.Written || res.Reuse.Kind() != runcache.ReuseRecordOnly || res.Reuse.Reason() != runcache.ReasonExternalFactsUnavailable {
+		t.Fatalf("reuse = %s/%s written=%v, want record-only external-facts-unavailable", res.Reuse.Kind(), res.Reuse.Reason(), res.Written)
+	}
+	got := factStatuses(res.Execution.KeyInput.Validation.Facts)
+	if !slices.Equal(got, []runcache.FactStatus{runcache.FactDenied, runcache.FactDenied}) {
+		t.Fatalf("facts = %v, want both denied", got)
+	}
+	stored, err := h.store.Get(res.RunID)
+	if err != nil || stored.PostRunFacts != nil {
+		t.Fatalf("stored = %v post=%v, want a readable record without reacquisition", err, stored.PostRunFacts)
+	}
+	h.mustRun(t, h.request("check"))
+	if h.runner.calls != 2 {
+		t.Fatal("a run without facts was reused")
+	}
+}
+
+type writerFunc func([]byte)
+
+func (f writerFunc) Write(p []byte) (int, error) { f(p); return len(p), nil }
+
+func TestGrantedProbesAreFreshOnEveryLookupIncludingAHit(t *testing.T) {
+	h := newProbeHarness(t, true)
+	first := h.mustRun(t, h.request("check"))
+	if !first.Written || h.prober.calls != 4 {
+		t.Fatalf("written=%v probes=%d reuse=%s/%s, want a published result after pre and post phases", first.Written, h.prober.calls, first.Reuse.Kind(), first.Reuse.Reason())
+	}
+	for _, spec := range h.prober.gotSpec {
+		if spec.Dir != h.rootAbs || !slices.Equal(spec.Env, h.runner.gotEnv) || spec.Timeout <= 0 || spec.MaxStdout <= 0 || spec.MaxStderr <= 0 {
+			t.Fatalf("probe spec %+v, want the child's cwd and env with finite bounds", spec)
+		}
+	}
+	hit := h.mustRun(t, h.request("check"))
+	if hit.Status != runcache.CacheHit || h.runner.calls != 1 || h.prober.calls != 6 {
+		t.Fatalf("status=%v child=%d probes=%d, want a hit that reacquired the pre-run phase only", hit.Status, h.runner.calls, h.prober.calls)
+	}
+
+	h.prober.stdout["linker"] = "linker 7 \n"
+	miss := h.mustRun(t, h.request("check"))
+	if miss.Status == runcache.CacheHit || h.runner.calls != 2 {
+		t.Fatal("a changed probe report replayed the old result")
+	}
+}
+
+func TestPostRunFactsGateThePublication(t *testing.T) {
+	cases := []struct {
+		name   string
+		during func(h *harness)
+		want   runcache.MismatchReason
+	}{
+		{"changed report", func(h *harness) { h.prober.stdout["tool"] = "tool 2.0\n" }, runcache.ReasonExternalFactsChanged},
+		{"unavailable report", func(h *harness) { h.prober.status["linker"] = runcache.FactTimedOut }, runcache.ReasonExternalFactsUnavailablePostRun},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newProbeHarness(t, true)
+			h.runner.onRun = func() { tc.during(h) }
+			res := h.mustRun(t, h.request("check"))
+			if res.Written || res.Reuse.Kind() != runcache.ReuseNonReusable || res.Reuse.Reason() != tc.want {
+				t.Fatalf("reuse = %s/%s written=%v, want non-reusable %s", res.Reuse.Kind(), res.Reuse.Reason(), res.Written, tc.want)
+			}
+			if res.Execution.Mutation.ScanFailed() {
+				t.Fatal("a probe failure was recorded as a failed post-run scan")
+			}
+			stored, err := h.store.Get(res.RunID)
+			if err != nil || len(stored.PostRunFacts) != 2 {
+				t.Fatalf("stored = %v post=%v, want the reacquired phase recorded", err, stored.PostRunFacts)
+			}
+		})
+	}
+}
+
+func TestSuccessfulPostRunFactsCannotRepairAnUnavailablePrestate(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.prober.status["tool"] = runcache.FactExitNonzero
+	h.runner.onRun = func() { delete(h.prober.status, "tool") }
+	res := h.mustRun(t, h.request("check"))
+	if res.Written || res.Reuse.Reason() != runcache.ReasonExternalFactsUnavailable {
+		t.Fatalf("reuse = %s/%s written=%v", res.Reuse.Kind(), res.Reuse.Reason(), res.Written)
+	}
+	got := factStatuses(res.Execution.KeyInput.Validation.Facts)
+	if !slices.Equal(got, []runcache.FactStatus{runcache.FactSkipped, runcache.FactExitNonzero}) && !slices.Equal(got, []runcache.FactStatus{runcache.FactExitNonzero, runcache.FactSkipped}) {
+		t.Fatalf("facts = %v, want the failure and a skipped remainder", got)
+	}
+	if h.prober.calls != 1 || res.Execution.PostRunFacts != nil {
+		t.Fatalf("probes=%d post=%v, want no reacquisition after an unavailable prestate", h.prober.calls, res.Execution.PostRunFacts)
+	}
+}
+
+func TestPolicyThatRulesOutReuseRunsNoProbes(t *testing.T) {
+	for _, pol := range []apprun.Policy{{Record: true}, {NoCache: true}} {
+		h := newProbeHarness(t, true)
+		req := h.request("check")
+		req.Policy = pol
+		res := h.mustRun(t, req)
+		if h.prober.calls != 0 {
+			t.Fatalf("%+v ran %d probes merely to enrich history", pol, h.prober.calls)
+		}
+		got := factStatuses(res.Execution.KeyInput.Validation.Facts)
+		if !slices.Equal(got, []runcache.FactStatus{runcache.FactNotAcquired, runcache.FactNotAcquired}) {
+			t.Fatalf("%+v facts = %v", pol, got)
+		}
+		if _, err := h.store.Get(res.RunID); err != nil {
+			t.Fatalf("%+v record unreadable: %v", pol, err)
+		}
+	}
+}
+
+func TestAProbeThatChangesAnInputMeetsTheMutationGuard(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.prober.onProbe = func(spec runcache.ProbeSpec) {
+		if h.runner.calls == 1 {
+			h.write(t, "main.src", "rewritten by a probe")
+		}
+	}
+	res := h.mustRun(t, h.request("check"))
+	if res.Written || res.Reuse.Reason() != runcache.ReasonMutatedState {
+		t.Fatalf("reuse = %s/%s written=%v, want mutated-state", res.Reuse.Kind(), res.Reuse.Reason(), res.Written)
+	}
+}
+
+func TestProbeLabelsAreNotIdentityButDefinitionsAre(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.mustRun(t, h.request("check"))
+	h.cfg.Run.Validation[0].IdentityProbes[0].Name = "renamed"
+	if res := h.mustRun(t, h.request("check")); res.Status != runcache.CacheHit {
+		t.Fatalf("renaming a probe missed: %v", res.Status)
+	}
+	h.cfg.Run.Validation[0].IdentityProbes[0].Argv = []string{"tool", "-V"}
+	h.prober.stdout["tool"] = "tool 1.0\n"
+	if res := h.mustRun(t, h.request("check")); res.Status == runcache.CacheHit {
+		t.Fatal("a changed probe argv reused the old result")
+	}
+}
+
+func TestCancellationDuringProbesStartsNoChild(t *testing.T) {
+	h := newProbeHarness(t, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.prober.onProbe = func(runcache.ProbeSpec) { cancel() }
+	_, err := h.svc.Run(ctx, h.request("check"))
+	if !errors.Is(err, context.Canceled) || h.runner.calls != 0 {
+		t.Fatalf("err=%v child=%d, want cancellation before the child", err, h.runner.calls)
+	}
+}
+
+func TestDiagnosticsNeverExecuteProbes(t *testing.T) {
+	h := newProbeHarness(t, true)
+	first := h.mustRun(t, h.request("check"))
+	calls := h.prober.calls
+	ctx := context.Background()
+
+	for _, req := range []apprun.ExplainRequest{
+		{Mode: apprun.ModeCommand, Request: h.request("check")},
+		{Mode: apprun.ModeLast, Request: h.request("check")},
+		{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: first.RunID.String()},
+	} {
+		if _, err := h.svc.Explain(ctx, req); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
+			t.Errorf("explain mode %d = %v, want a refusal without fresh facts", req.Mode, err)
+		}
+	}
+	for _, near := range []bool{false, true} {
+		if _, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: near}); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
+			t.Errorf("ls near=%v = %v, want a refusal without fresh facts", near, err)
+		}
+	}
+	if _, err := h.svc.Log(ctx, apprun.LogRequest{}); err != nil {
+		t.Errorf("log: %v", err)
+	}
+	if _, err := h.svc.Audit(ctx, apprun.AuditRequest{}); err != nil {
+		t.Errorf("audit: %v", err)
+	}
+	if h.prober.calls != calls {
+		t.Fatalf("diagnostics ran %d probes", h.prober.calls-calls)
+	}
+
+	h.write(t, "main.src", "v2")
+	res, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, All: true})
+	if err != nil || len(res.Reusable) != 1 || res.Reusable[0].Reusability.Reason() != runcache.ReasonInputTreeDiffers {
+		t.Fatalf("ls with a proven mismatch = %+v, %v", res.Reusable, err)
+	}
+	if h.prober.calls != calls {
+		t.Fatalf("ls ran %d probes", h.prober.calls-calls)
+	}
+}
+
+type cancellingEffectObserver struct {
+	inner  apprun.EffectObserver
+	cancel context.CancelFunc
+}
+
+func (o *cancellingEffectObserver) Observe(project string, roots, waived []string) (runcache.EffectObservation, runcache.EffectReport, error) {
+	if o.cancel != nil {
+		o.cancel()
+		o.cancel = nil
+	}
+	return o.inner.Observe(project, roots, waived)
+}
+
+func TestCancellationAfterTheKeyStartsNoChild(t *testing.T) {
+	obs := &cancellingEffectObserver{}
+	h := newHarness(t, withEffectObserverDecorator(func(inner apprun.EffectObserver) apprun.EffectObserver {
+		obs.inner = inner
+		return obs
+	}))
+	h.write(t, "main.src", "v1")
+	ctx, cancel := context.WithCancel(context.Background())
+	obs.cancel = cancel
+	_, err := h.svc.Run(ctx, h.request("check"))
+	if !errors.Is(err, context.Canceled) || h.runner.calls != 0 {
+		t.Fatalf("err=%v child=%d, want cancellation before the child", err, h.runner.calls)
+	}
+}
+
+func TestKnownDenialAnswersDiagnosticsWithoutProbes(t *testing.T) {
+	h := newProbeHarness(t, true)
+	first := h.mustRun(t, h.request("check"))
+	h.cfg.Run.AllowIdentityProbes = false
+	calls := h.prober.calls
+	ctx := context.Background()
+	denied := []runcache.FactStatus{runcache.FactDenied, runcache.FactDenied}
+
+	for _, req := range []apprun.ExplainRequest{
+		{Mode: apprun.ModeCommand, Request: h.request("check")},
+		{Mode: apprun.ModeLast, Request: h.request("check")},
+		{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: first.RunID.String()},
+	} {
+		res, err := h.svc.Explain(ctx, req)
+		if err != nil {
+			t.Fatalf("explain mode %d: %v", req.Mode, err)
+		}
+		if res.Outcome == apprun.OutcomeHit || res.Reason != runcache.ReasonExternalFactsUnavailable.String() {
+			t.Errorf("explain mode %d = %s/%s, want the denial blocker", req.Mode, res.Outcome, res.Reason)
+		}
+		if got := factStatuses(res.Subject.KeyInput.Validation.Facts); !slices.Equal(got, denied) {
+			t.Errorf("explain mode %d facts = %v, want denied", req.Mode, got)
+		}
+	}
+	ls, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, All: true})
+	if err != nil || len(ls.Reusable) != 1 || ls.Reusable[0].Reusability.Reason() != runcache.ReasonExternalFactsUnavailable {
+		t.Fatalf("ls = %+v, %v; want the stored run blocked by the denial", ls.Reusable, err)
+	}
+	near, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: true})
+	if err != nil || len(near.NearMisses) != 1 || near.NearMisses[0].Reason != runcache.ReasonExternalFactsUnavailable {
+		t.Fatalf("ls --near = %+v, %v; want the denial as the near-miss reason", near.NearMisses, err)
+	}
+	if h.prober.calls != calls {
+		t.Fatalf("diagnostics ran %d probes", h.prober.calls-calls)
+	}
+
+	h.cfg.Run.AllowIdentityProbes = true
+	if _, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg}); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
+		t.Fatalf("granted ls = %v, want facts still unassessed", err)
+	}
+}
+
+type lookupStore struct {
+	runcache.Store
+	keys      []runcache.RunKey
+	failWith  error
+	answerAs  *runcache.RunKey
+	stdoutErr error
+}
+
+func (s *lookupStore) Lookup(key runcache.RunKey) (runcache.CacheEntry, bool, error) {
+	s.keys = append(s.keys, key)
+	if s.failWith != nil {
+		return runcache.CacheEntry{}, false, s.failWith
+	}
+	if s.answerAs != nil {
+		key = *s.answerAs
+	}
+	return s.Store.Lookup(key)
+}
+
+func (s *lookupStore) OpenStdout(id runcache.RunID) (io.ReadCloser, error) {
+	if s.stdoutErr != nil {
+		return nil, s.stdoutErr
+	}
+	return s.Store.OpenStdout(id)
+}
+
+func newDeniedExplainHarness(t *testing.T) (*harness, *lookupStore) {
+	t.Helper()
+	ls := &lookupStore{}
+	h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+		ls.Store = inner
+		return ls
+	}))
+	t.Cleanup(h.cleanup)
+	h.cfg.Run.Validation = []config.ValidationPolicy{{
+		Name: "check", Argv: []string{"check"}, CWD: ".", UnobservedDirs: []string{"target"},
+		IdentityProbes: []config.IdentityProbe{{Name: "tool", Argv: []string{"tool", "--version"}}},
+	}}
+	h.write(t, "main.src", "v1")
+	return h, ls
+}
+
+func TestDeniedExplainProjectsTheRunsOwnKeyAndAnActualLookup(t *testing.T) {
+	h, store := newDeniedExplainHarness(t)
+	run := h.mustRun(t, h.request("check"))
+	if run.Reuse.Reason() != runcache.ReasonExternalFactsUnavailable {
+		t.Fatalf("run reason = %s", run.Reuse.Reason())
+	}
+	store.keys = nil
+
+	res, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Subject.Key != run.Key || !slices.Equal(store.keys, []runcache.RunKey{run.Key}) {
+		t.Fatalf("explain key %s looked up %v, want the run's denied-state key %s", res.Subject.Key, store.keys, run.Key)
+	}
+	if res.Subject.Cacheable || res.Outcome != apprun.OutcomeUncached || res.Reason != runcache.ReasonExternalFactsUnavailable.String() {
+		t.Fatalf("explain = cacheable %v %s/%s", res.Subject.Cacheable, res.Outcome, res.Reason)
+	}
+	for _, f := range res.Subject.KeyInput.Validation.Facts {
+		if f.Status != runcache.FactDenied || !f.Fingerprint.IsZero() {
+			t.Fatalf("fact %+v, want denied without a fingerprint", f)
+		}
+	}
+	if res.Subject.ExactHit != nil || !res.Differences.Equal() || len(res.Candidates) != 0 || h.prober.calls != 0 {
+		t.Fatalf("exact %+v diffs %+v candidates %d probes %d", res.Subject.ExactHit, res.Differences, len(res.Candidates), h.prober.calls)
+	}
+}
+
+func TestDeniedExplainNeverReadsAFailedLookupAsAbsence(t *testing.T) {
+	failure := errors.New("injected store failure")
+	t.Run("lookup", func(t *testing.T) {
+		h, store := newDeniedExplainHarness(t)
+		store.failWith = failure
+		if _, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")}); !errors.Is(err, failure) {
+			t.Fatalf("explain = %v, want the lookup failure", err)
+		}
+	})
+	t.Run("payload verification", func(t *testing.T) {
+		h, store := newDeniedExplainHarness(t)
+		h.cfg.Run.AllowIdentityProbes = true
+		h.prober.stdout["tool"] = "tool 1\n"
+		granted := h.mustRun(t, h.request("check"))
+		h.cfg.Run.AllowIdentityProbes = false
+		store.answerAs = &granted.Key
+		store.stdoutErr = failure
+		if _, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")}); !errors.Is(err, failure) {
+			t.Fatalf("explain = %v, want the verification failure", err)
+		}
+	})
+}
+
+func assertReasonOnly(t *testing.T, where string, c apprun.RunReuseCandidate, reason runcache.MismatchReason) {
+	t.Helper()
+	if c.Reason != reason || len(c.Comparison.Differences) != 0 || len(c.Score.Matched) != 0 || len(c.Score.Different) != 0 {
+		t.Errorf("%s candidate = reason %s diffs %+v score %+v, want reason-only %s", where, c.Reason, c.Comparison.Differences, c.Score, reason)
+	}
+}
+
+func TestRevokedGrantLeavesCandidatesReasonOnly(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.cfg.Run.Validation[0].IdentityProbes = h.cfg.Run.Validation[0].IdentityProbes[:1]
+	granted := h.mustRun(t, h.request("check"))
+	ordinary := h.mustRun(t, h.request("other"))
+	h.write(t, "main.src", "v2")
+	h.cfg.Run.AllowIdentityProbes = false
+	calls := h.prober.calls
+	ctx := context.Background()
+
+	near, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: true})
+	if err != nil || len(near.NearMisses) != 2 {
+		t.Fatalf("ls --near = %+v, %v", near.NearMisses, err)
+	}
+	if near.NearMisses[0].Entry.ID != ordinary.RunID || len(near.NearMisses[0].Score.Different) == 0 {
+		t.Errorf("first near miss = %s score %+v, want the scored ordinary drift ahead", near.NearMisses[0].Entry.ID, near.NearMisses[0].Score)
+	}
+	assertReasonOnly(t, "ls --near", near.NearMisses[1], runcache.ReasonExternalFactsUnavailable)
+	if near.NearMisses[1].Entry.ID != granted.RunID {
+		t.Errorf("reason-only candidate lost its recorded run: %s", near.NearMisses[1].Entry.ID)
+	}
+
+	stored, err := h.svc.Explain(ctx, apprun.ExplainRequest{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: granted.RunID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Differences.Differences) != 0 || len(stored.Candidates) != 1 {
+		t.Fatalf("stored explain diffs %+v candidates %d", stored.Differences.Differences, len(stored.Candidates))
+	}
+	assertReasonOnly(t, "explain", stored.Candidates[0], runcache.ReasonExternalFactsUnavailable)
+
+	if h.prober.calls != calls {
+		t.Fatalf("diagnostics ran %d probes", h.prober.calls-calls)
+	}
+}
+
+func TestRevokedGrantInlineDiagnosisIsReasonOnly(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.mustRun(t, h.request("check"))
+	h.cfg.Run.AllowIdentityProbes = false
+	calls := h.prober.calls
+	denied := h.mustRun(t, h.request("check"))
+	diag, err := h.svc.DiagnoseRun(context.Background(), denied, h.cfg.Run.TTL)
+	if err != nil || diag.Nearest == nil {
+		t.Fatalf("inline = %+v, %v", diag, err)
+	}
+	assertReasonOnly(t, "inline", *diag.Nearest, runcache.ReasonExternalFactsUnavailable)
+	if h.prober.calls != calls {
+		t.Fatalf("a denied run or its diagnosis ran %d probes", h.prober.calls-calls)
+	}
+}
+
+func TestChangedAcquiredFactKeepsItsDeltaWithoutAnAllMatchedScore(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.mustRun(t, h.request("check"))
+	h.prober.stdout["tool"] = "tool 2.0\n"
+	second := h.mustRun(t, h.request("check"))
+	diag, err := h.svc.DiagnoseRun(context.Background(), second, h.cfg.Run.TTL)
+	if err != nil || diag.Nearest == nil {
+		t.Fatalf("inline = %+v, %v", diag, err)
+	}
+	n := diag.Nearest
+	if n.Reason != runcache.ReasonExternalFactsChanged || len(n.Comparison.Differences) != 1 || n.Comparison.Differences[0].Code != runcache.DiffExternalFactsChanged {
+		t.Fatalf("nearest = %s %+v, want the actual changed-fact delta", n.Reason, n.Comparison.Differences)
+	}
+	if len(n.Score.Matched) != 0 || len(n.Score.Different) != 0 {
+		t.Fatalf("score %+v reads as every category matching", n.Score)
+	}
+}
+
+func TestInlineCandidateRecordedUnderDenialIsReasonOnly(t *testing.T) {
+	h := newProbeHarness(t, false)
+	h.mustRun(t, h.request("check"))
+	h.cfg.Run.AllowIdentityProbes = true
+	granted := h.mustRun(t, h.request("check"))
+	diag, err := h.svc.DiagnoseRun(context.Background(), granted, h.cfg.Run.TTL)
+	if err != nil || diag.Nearest == nil {
+		t.Fatalf("inline = %+v, %v", diag, err)
+	}
+	assertReasonOnly(t, "inline", *diag.Nearest, runcache.ReasonExternalFactsUnavailable)
+}

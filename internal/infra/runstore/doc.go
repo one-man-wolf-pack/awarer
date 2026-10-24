@@ -54,10 +54,14 @@ func decodeStrict(data []byte, v any) error {
 // migrated, or guessed. The store owns this boundary and names the versions in the
 // error text, so a doctor or gc diagnostic can report which record is unreadable
 // without any consumer restating a number that moves.
-const metaSchemaVersion = 3
+const metaSchemaVersion = 4
+
+// validationMetaSchemaVersion is the predecessor that introduced validation policies;
+// it differs from the current generation only in never carrying identity probes.
+const validationMetaSchemaVersion = 3
 
 // frontierMetaSchemaVersion is the predecessor that introduced exclusion frontiers;
-// it differs from the current generation only in never carrying a validation policy.
+// it never carries a validation policy.
 const frontierMetaSchemaVersion = 2
 
 // legacyMetaSchemaVersion is the oldest published predecessor, read with unknown
@@ -92,6 +96,19 @@ type metaDoc struct {
 	Mutation      string          `json:"mutation"`
 	EffectGuard   string          `json:"effect_guard"`
 	Observations  observationsDoc `json:"observations"`
+	PostRunFacts  []factDoc       `json:"post_run_external_facts,omitempty"`
+}
+
+// factDoc deliberately has no output field: probe stdout and stderr are never stored.
+type factDoc struct {
+	Status      string `json:"status"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+type identityProbeDoc struct {
+	Probe string   `json:"probe"`
+	Argv  []string `json:"argv"`
+	factDoc
 }
 
 type reuseDoc struct {
@@ -200,9 +217,11 @@ type keyInputDoc struct {
 }
 
 type validationDoc struct {
-	Policy         string   `json:"policy"`
-	Replay         string   `json:"replay"`
-	UnobservedDirs []string `json:"unobserved_dirs"`
+	Policy         string             `json:"policy"`
+	Replay         string             `json:"replay"`
+	UnobservedDirs []string           `json:"unobserved_dirs"`
+	Interpretation string             `json:"fact_interpretation,omitempty"`
+	IdentityProbes []identityProbeDoc `json:"identity_probes,omitempty"`
 }
 
 type outputDoc struct {
@@ -241,6 +260,9 @@ func encodeMeta(e runcache.RunEntry) ([]byte, error) {
 		Mutation:      e.Mutation.Outcome().String(),
 		EffectGuard:   e.EffectGuard.Outcome().String(),
 		Observations:  observationsDoc{Before: encodeObservation(e.Before), After: encodeObservation(e.After)},
+	}
+	if e.PostRunFacts != nil {
+		doc.PostRunFacts = encodeFacts(e.PostRunFacts)
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -306,11 +328,45 @@ func encodeKeyInput(in runcache.KeyInput) keyInputDoc {
 	}
 	if v := in.Validation; v != nil {
 		d.Validation = &validationDoc{Policy: v.Label, Replay: runcache.ValidationResultOnly, UnobservedDirs: append([]string(nil), v.UnobservedDirs...)}
+		if len(v.Probes) > 0 {
+			d.Validation.Interpretation = runcache.FactInterpretation
+			facts := encodeFacts(v.Facts)
+			for i, p := range v.Probes {
+				d.Validation.IdentityProbes = append(d.Validation.IdentityProbes, identityProbeDoc{Probe: p.Label, Argv: append([]string(nil), p.Argv...), factDoc: facts[i]})
+			}
+		}
 	}
 	for _, v := range in.Env.Vars() {
 		d.Env = append(d.Env, envVarDoc{Name: v.Name(), Presence: v.Presence().String(), Identity: v.Identity().String()})
 	}
 	return d
+}
+
+func encodeFacts(facts []runcache.ExternalFact) []factDoc {
+	out := make([]factDoc, len(facts))
+	for i, f := range facts {
+		out[i] = factDoc{Status: f.Status.String(), Fingerprint: f.Fingerprint.String()}
+	}
+	return out
+}
+
+func decodeFacts(docs []factDoc) ([]runcache.ExternalFact, error) {
+	out := make([]runcache.ExternalFact, len(docs))
+	for i, d := range docs {
+		st, err := runcache.ParseFactStatus(d.Status)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = runcache.UnavailableFact(st)
+		if d.Fingerprint != "" {
+			fp, err := hashing.ParseTreeHash(d.Fingerprint)
+			if err != nil {
+				return nil, fmt.Errorf("external fact %d fingerprint: %w", i, err)
+			}
+			out[i].Fingerprint = fp
+		}
+	}
+	return out, nil
 }
 
 func encodeOutput(c runcache.OutputCapture) outputDoc {
@@ -347,7 +403,7 @@ func decodeMeta(data []byte) (runcache.RunEntry, error) {
 		return runcache.RunEntry{}, fmt.Errorf("decoding run: no schema_version")
 	}
 	v := *probe.SchemaVersion
-	if v != metaSchemaVersion && v != frontierMetaSchemaVersion && v != legacyMetaSchemaVersion {
+	if v != metaSchemaVersion && v != validationMetaSchemaVersion && v != frontierMetaSchemaVersion && v != legacyMetaSchemaVersion {
 		return runcache.RunEntry{}, fmt.Errorf("%w: schema version %d, want %d",
 			runcache.ErrIncompatibleEntry, v, metaSchemaVersion)
 	}
@@ -364,8 +420,11 @@ func decodeMeta(data []byte) (runcache.RunEntry, error) {
 			return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d requires an exclusion frontier for every observation", v)
 		}
 	}
-	if v != metaSchemaVersion && entry.KeyInput.Validation != nil {
+	if v < validationMetaSchemaVersion && entry.KeyInput.Validation != nil {
 		return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d carries no validation policy", v)
+	}
+	if v < metaSchemaVersion && (entry.PostRunFacts != nil || (entry.KeyInput.Validation != nil && len(entry.KeyInput.Validation.Probes) > 0)) {
+		return runcache.RunEntry{}, fmt.Errorf("decoding run: schema %d carries no identity probes", v)
 	}
 	return entry, nil
 }
@@ -416,6 +475,13 @@ func decodeCurrentMeta(data []byte) (runcache.RunEntry, error) {
 	entry.EffectGuard = guard
 	entry.Before = before
 	entry.After = after
+	if doc.PostRunFacts != nil {
+		post, err := decodeFacts(doc.PostRunFacts)
+		if err != nil {
+			return runcache.RunEntry{}, fmt.Errorf("post-run external facts: %w", err)
+		}
+		entry.PostRunFacts = post
+	}
 	// Every stored record is a real execution, so it always observed pre-run state and
 	// — unless that post-run scan failed — post-run state too. RunEntry.Validate owns
 	// the same invariant for the domain; this is the hostile-boundary restatement, which
@@ -586,6 +652,24 @@ func decodeKeyInput(d keyInputDoc) (runcache.KeyInput, error) {
 			return runcache.KeyInput{}, fmt.Errorf("validation policy replay %q is not %q", d.Validation.Replay, runcache.ValidationResultOnly)
 		}
 		validation = &runcache.ValidationScope{Label: d.Validation.Policy, UnobservedDirs: append([]string(nil), d.Validation.UnobservedDirs...)}
+		if (len(d.Validation.IdentityProbes) > 0) != (d.Validation.Interpretation != "") {
+			return runcache.KeyInput{}, fmt.Errorf("validation policy identity probes and fact interpretation must appear together")
+		}
+		if d.Validation.Interpretation != "" && d.Validation.Interpretation != runcache.FactInterpretation {
+			return runcache.KeyInput{}, fmt.Errorf("validation policy fact interpretation %q is not %q", d.Validation.Interpretation, runcache.FactInterpretation)
+		}
+		var factDocs []factDoc
+		for _, p := range d.Validation.IdentityProbes {
+			validation.Probes = append(validation.Probes, runcache.ProbeDefinition{Label: p.Probe, Argv: append([]string(nil), p.Argv...)})
+			factDocs = append(factDocs, p.factDoc)
+		}
+		if factDocs != nil {
+			facts, err := decodeFacts(factDocs)
+			if err != nil {
+				return runcache.KeyInput{}, err
+			}
+			validation.Facts = facts
+		}
 	}
 	vars := make([]runcache.EnvVar, 0, len(d.Env))
 	for _, v := range d.Env {

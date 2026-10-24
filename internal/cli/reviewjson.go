@@ -200,7 +200,7 @@ func nearMissView(c apprun.RunReuseCandidate) nearMissDoc {
 		// invocation that asked for the diagnosis: the advice is about the run that keeps
 		// disturbing watched output.
 		Effect:     effectDiagnosisView(c.Effect, e.KeyInput.Command.Argv),
-		Validation: validationPolicyView(e.KeyInput.Validation),
+		Validation: validationPolicyView(e.KeyInput.Validation, e.PostRunFacts),
 	}
 }
 

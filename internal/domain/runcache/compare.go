@@ -12,23 +12,25 @@ import (
 type DiffCode string
 
 const (
-	DiffInvocationChanged      DiffCode = "invocation-changed"
-	DiffCommandChanged         DiffCode = "command-changed"
-	DiffExecutableChanged      DiffCode = "executable-changed"
-	DiffCWDChanged             DiffCode = "cwd-changed"
-	DiffInputTreeChanged       DiffCode = "input-tree-changed"
-	DiffEffectStateChanged     DiffCode = "effect-state-changed"
-	DiffEffectStateUnavailable DiffCode = "effect-state-unavailable"
-	DiffScopeChanged           DiffCode = "scope-changed"
-	DiffTrustChanged           DiffCode = "trust-changed"
-	DiffRunConfigChanged       DiffCode = "run-config-changed"
-	DiffEnvChanged             DiffCode = "env-changed"
-	DiffPlatformChanged        DiffCode = "platform-changed"
-	DiffStdinChanged           DiffCode = "stdin-changed"
-	DiffTTYChanged             DiffCode = "tty-changed"
-	DiffSkippedChanged         DiffCode = "skipped-changed"
-	DiffSchemaChanged          DiffCode = "schema-changed"
-	DiffVersionChanged         DiffCode = "awa-version-changed"
+	DiffInvocationChanged        DiffCode = "invocation-changed"
+	DiffCommandChanged           DiffCode = "command-changed"
+	DiffExecutableChanged        DiffCode = "executable-changed"
+	DiffCWDChanged               DiffCode = "cwd-changed"
+	DiffInputTreeChanged         DiffCode = "input-tree-changed"
+	DiffEffectStateChanged       DiffCode = "effect-state-changed"
+	DiffEffectStateUnavailable   DiffCode = "effect-state-unavailable"
+	DiffScopeChanged             DiffCode = "scope-changed"
+	DiffTrustChanged             DiffCode = "trust-changed"
+	DiffRunConfigChanged         DiffCode = "run-config-changed"
+	DiffEnvChanged               DiffCode = "env-changed"
+	DiffPlatformChanged          DiffCode = "platform-changed"
+	DiffStdinChanged             DiffCode = "stdin-changed"
+	DiffTTYChanged               DiffCode = "tty-changed"
+	DiffSkippedChanged           DiffCode = "skipped-changed"
+	DiffSchemaChanged            DiffCode = "schema-changed"
+	DiffVersionChanged           DiffCode = "awa-version-changed"
+	DiffExternalFactsChanged     DiffCode = "external-facts-changed"
+	DiffExternalFactsUnavailable DiffCode = "external-facts-unavailable"
 )
 
 // EnvChange names how one environment variable differs between two checkpoints,
@@ -95,6 +97,8 @@ func (c KeyComparison) PrimaryReason() DiffCode {
 		DiffTTYChanged,
 		DiffSkippedChanged,
 		DiffPlatformChanged,
+		DiffExternalFactsUnavailable,
+		DiffExternalFactsChanged,
 		DiffEffectStateUnavailable,
 		DiffEffectStateChanged,
 		DiffInputTreeChanged,
@@ -184,6 +188,8 @@ func CompareKeyInputs(old, new KeyInput) KeyComparison {
 	}
 	if !sameValidationSemantics(old.Validation, new.Validation) {
 		c.add(DiffScopeChanged, "validation", validationString(old.Validation), validationString(new.Validation))
+	} else {
+		c.addFacts(old.Validation, new.Validation)
 	}
 	if old.TrustMode != new.TrustMode {
 		c.add(DiffTrustChanged, "trust_mode", old.TrustMode.String(), new.TrustMode.String())
@@ -205,6 +211,22 @@ func CompareKeyInputs(old, new KeyInput) KeyComparison {
 		c.add(DiffSkippedChanged, "allow_skipped_inputs", fmt.Sprint(old.AllowSkippedInputs), fmt.Sprint(new.AllowSkippedInputs))
 	}
 	return c
+}
+
+// An unassessed side proves nothing either way, so it adds no difference; a
+// comparison without one is not complete, and callers must not present it as such.
+func (c *KeyComparison) addFacts(old, new *ValidationScope) {
+	if old == nil || new == nil || len(new.Probes) == 0 || old.FactsUnassessed() || new.FactsUnassessed() {
+		return
+	}
+	if slices.Equal(old.Facts, new.Facts) {
+		return
+	}
+	code := DiffExternalFactsChanged
+	if !FactsComplete(old.Facts) || !FactsComplete(new.Facts) {
+		code = DiffExternalFactsUnavailable
+	}
+	c.add(code, "external_facts", factsString(old.Probes, old.Facts), factsString(new.Probes, new.Facts))
 }
 
 func (c *KeyComparison) add(code DiffCode, field, old, new string) {

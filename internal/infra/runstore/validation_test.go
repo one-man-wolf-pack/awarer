@@ -21,7 +21,7 @@ func readFile(t *testing.T, path string) string {
 
 func TestValidatedRunPersistsItsPolicy(t *testing.T) {
 	r, _, h := newStore(t)
-	v, err := runcache.NewValidationScope("cargo-test", []string{"target", "build/gen"})
+	v, err := runcache.NewValidationScope("cargo-test", []string{"target", "build/gen"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestValidationPolicyRecordsRejectTampering(t *testing.T) {
 		edit func(string) string
 	}{
 		{"a predecessor generation cannot carry a policy", func(d string) string {
-			return strings.Replace(d, `"schema_version": 3`, `"schema_version": 2`, 1)
+			return strings.Replace(d, `"schema_version": 4`, `"schema_version": 2`, 1)
 		}},
 		{"an unknown replay meaning", func(d string) string {
 			return strings.Replace(d, `"replay": "result-only"`, `"replay": "artifacts"`, 1)
@@ -64,7 +64,7 @@ func TestValidationPolicyRecordsRejectTampering(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, layout, h := newStore(t)
-			v, err := runcache.NewValidationScope("p", []string{"build", "target"})
+			v, err := runcache.NewValidationScope("p", []string{"build", "target"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestOrdinaryPredecessorGenerationStaysReadable(t *testing.T) {
 	r, layout, h := newStore(t)
 	entry := storeRun(t, r, h, "ordinary", "out", "", 1<<20)
 	editMeta(t, metaPathOf(t, layout.RunsDir(), entry.ID), func(d string) string {
-		return strings.Replace(d, `"schema_version": 3`, `"schema_version": 2`, 1)
+		return strings.Replace(d, `"schema_version": 4`, `"schema_version": 2`, 1)
 	})
 	got, err := r.Get(entry.ID)
 	if err != nil {

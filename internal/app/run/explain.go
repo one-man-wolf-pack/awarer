@@ -176,12 +176,18 @@ func (s *Service) currentVerdict(req Request, kc keyContext) (verdict, error) {
 	// informational: any error becomes a warning rather than failing the diagnostic,
 	// and the outcome stays policy-driven — exactly what a real run would do.
 	authoritative := kc.CanRead
+	// Under a known probe denial the lookup is informational, yet its exact_match is
+	// still read as an established absence: a failed lookup must fail the diagnostic
+	// rather than surface as a missing entry.
+	mustEstablish := kc.Reason == runcache.ReasonExternalFactsUnavailable
 	exactCorrupt := false
 	ce, ok, lookErr := s.deps.Store.Lookup(kc.Key)
 	entry := ce.Entry()
 	switch {
 	case lookErr != nil:
 		switch {
+		case mustEstablish:
+			return verdict{}, lookErr
 		case authoritative && errors.Is(lookErr, runcache.ErrCorruptStore):
 			exactCorrupt = true
 			v.Warnings = append(v.Warnings, "exact key entry is corrupt: "+lookErr.Error())
@@ -193,7 +199,7 @@ func (s *Service) currentVerdict(req Request, kc keyContext) (verdict, error) {
 	case ok:
 		healthy, herr := s.payloadHealth(entry)
 		switch {
-		case herr != nil && authoritative:
+		case herr != nil && (authoritative || mustEstablish):
 			return verdict{}, herr
 		case herr != nil:
 			v.Warnings = append(v.Warnings, "could not verify exact key entry payload: "+herr.Error())
@@ -237,11 +243,14 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 	if len(req.Argv) == 0 {
 		return ExplainResult{}, fmt.Errorf("explain: empty command")
 	}
-	kc, err := s.buildKeyContext(ctx, req, false)
+	kc, err := s.buildKeyContext(ctx, req, false, false)
 	if err != nil {
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
+	if kc.KeyInput.Validation.FactsUnassessed() {
+		return ExplainResult{}, ErrExternalFactsUnassessed
+	}
 	v, err := s.currentVerdict(req, kc)
 	if err != nil {
 		return ExplainResult{}, err
@@ -308,7 +317,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	if err != nil {
 		return ExplainResult{}, err
 	}
-	kc, err := s.buildKeyContext(ctx, req, false)
+	kc, err := s.buildKeyContext(ctx, req, false, false)
 	if err != nil {
 		var conflict *ValidationConflictError
 		if errors.As(err, &conflict) {
@@ -317,6 +326,9 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
+	if kc.KeyInput.Validation.FactsUnassessed() {
+		return ExplainResult{}, ErrExternalFactsUnassessed
+	}
 
 	// The outcome reflects what a real run would do with the current key — the same
 	// key-pointer lookup, TTL, and failure-policy rules as Run — never merely whether

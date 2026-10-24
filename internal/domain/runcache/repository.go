@@ -46,6 +46,28 @@ type Runner interface {
 	Run(ctx context.Context, spec RunSpec) (RunResult, error)
 }
 
+type ProbeSpec struct {
+	Argv      []string
+	Dir       string
+	Env       []string
+	Timeout   time.Duration
+	MaxStdout int64
+	MaxStderr int64
+}
+
+type ProbeResult struct {
+	Status FactStatus
+	// Stdout exists only to be fingerprinted: persisting or displaying it would
+	// disclose probe output, which the privacy contract never retains.
+	Stdout []byte
+}
+
+// A Prober reports the caller's own cancellation as a timed-out probe; the caller must
+// check its context afterwards so a cancellation never becomes a recorded fact.
+type Prober interface {
+	Probe(ctx context.Context, spec ProbeSpec) ProbeResult
+}
+
 // CaptureLimits bound the bytes stored per output stream.
 type CaptureLimits struct {
 	MaxStdout int64

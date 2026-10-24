@@ -885,6 +885,9 @@ func renderShowMeta(w *output.Writer, e runcache.RunEntry, td domainconfig.TimeD
 	w.Linef("inputs:    tree=%s trust=%s scope=%s", e.KeyInput.InputTreeHash.String(), e.KeyInput.TrustMode.String(), strings.Join(e.KeyInput.IncludeScope, ","))
 	if v := e.KeyInput.Validation; v != nil {
 		w.Linef("policy:    %s", validationPolicyLine(v))
+		if line := identityFactsLine(v, e.PostRunFacts, false); line != "" {
+			w.Linef("facts:     %s", line)
+		}
 	}
 	w.Linef("stdout:    %s", streamSummary(e.Stdout))
 	w.Linef("stderr:    %s", streamSummary(e.Stderr))
@@ -977,7 +980,7 @@ func logDocs(entries []apprun.LogEntry) []logEntryDoc {
 			Mutation:    e.Mutation.Outcome().String(),
 			Truncated:   e.Stdout.Truncated || e.Stderr.Truncated,
 			Healthy:     le.Healthy,
-			Validation:  validationPolicyView(e.KeyInput.Validation),
+			Validation:  validationPolicyView(e.KeyInput.Validation, e.PostRunFacts),
 		})
 	}
 	return out
@@ -1090,7 +1093,7 @@ func lsDocs(entries []apprun.LsEntry) []lsEntryDoc {
 			Reusable:   e.Reusable(),
 			Reason:     string(e.Reusability.Reason()),
 			Truncated:  en.Stdout.Truncated || en.Stderr.Truncated,
-			Validation: validationPolicyView(en.KeyInput.Validation),
+			Validation: validationPolicyView(en.KeyInput.Validation, en.PostRunFacts),
 		})
 	}
 	return out

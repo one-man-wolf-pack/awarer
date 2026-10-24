@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"awarer/internal/domain/config"
@@ -322,9 +323,10 @@ type RunEntry struct {
 	// (build, dist, target, node_modules, ...) — the effect scope excluded from the
 	// input scan. It is the backing fact for the effect-state disqualification
 	// reasons, cross-checked against the reuse state on read the way Mutation is.
-	EffectGuard EffectGuardStatus
-	Before      *Observation
-	After       *Observation
+	EffectGuard  EffectGuardStatus
+	Before       *Observation
+	After        *Observation
+	PostRunFacts []ExternalFact
 }
 
 // maxExitCode returns the largest exit code a process on the given platform can
@@ -388,6 +390,9 @@ func (e RunEntry) Validate() error {
 	// reason that contradicts the cache decision — is rejected at the read boundary
 	// rather than trusted.
 	if err := e.validateReuse(); err != nil {
+		return err
+	}
+	if err := e.validateFacts(); err != nil {
 		return err
 	}
 	if err := e.validateObservations(); err != nil {
@@ -495,6 +500,49 @@ func (e RunEntry) validateReuse() error {
 	case ReuseRecordOnly:
 		if err := e.validateRecordOnlyReason(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (e RunEntry) validateFacts() error {
+	v := e.KeyInput.Validation
+	declared := v != nil && len(v.Probes) > 0
+	reason := e.Reuse.Reason()
+	if !declared {
+		if e.PostRunFacts != nil {
+			return fmt.Errorf("run entry records post-run external facts without identity probes")
+		}
+		switch reason {
+		case ReasonExternalFactsUnavailable, ReasonExternalFactsChanged, ReasonExternalFactsUnavailablePostRun:
+			return fmt.Errorf("run entry reason %q but its policy declares no identity probes", reason)
+		}
+		return nil
+	}
+	if e.PostRunFacts != nil {
+		if err := ValidateFacts(v.Probes, e.PostRunFacts); err != nil {
+			return fmt.Errorf("post-run external facts: %w", err)
+		}
+		if !FactsComplete(v.Facts) {
+			return fmt.Errorf("run entry reacquired external facts after an incomplete pre-run phase")
+		}
+	}
+	switch {
+	case e.Reuse.IsReusable():
+		if !SameFacts(v.Facts, e.PostRunFacts) {
+			return fmt.Errorf("reusable run entry lacks agreeing pre- and post-run external facts")
+		}
+	case reason == ReasonExternalFactsUnavailable:
+		if FactsComplete(v.Facts) || slices.ContainsFunc(v.Facts, func(f ExternalFact) bool { return f.Status == FactNotAcquired }) {
+			return fmt.Errorf("run entry reason %q but its pre-run facts are complete", reason)
+		}
+	case reason == ReasonExternalFactsChanged:
+		if !FactsComplete(e.PostRunFacts) || SameFacts(v.Facts, e.PostRunFacts) {
+			return fmt.Errorf("run entry reason %q but its post-run facts do not differ", reason)
+		}
+	case reason == ReasonExternalFactsUnavailablePostRun:
+		if e.PostRunFacts == nil || FactsComplete(e.PostRunFacts) {
+			return fmt.Errorf("run entry reason %q but its post-run facts are not unavailable", reason)
 		}
 	}
 	return nil

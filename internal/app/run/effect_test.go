@@ -59,6 +59,7 @@ func newEffectHarness(t *testing.T, cfg config.Config) *effectHarness {
 		Scanner:        scanner.New(worktreefs.New(), hasher, idx),
 		Store:          runstore.New(layout, hasher),
 		Runner:         proc,
+		Prober:         proc,
 		Resolver:       proc,
 		EffectObserver: effectobserve.New(effectfs.New(hasher), hasher),
 		Env:            osEnvReader{},

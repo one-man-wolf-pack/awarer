@@ -188,6 +188,20 @@ func storeRunObs(t testing.TB, r *runstore.Repo, h hashing.Hasher, disc, stdout,
 
 func storeRunKeyed(t testing.TB, r *runstore.Repo, h hashing.Hasher, keyInput runcache.KeyInput, stdout, stderr string, limit int64, obs runcache.RunObservations) runcache.RunEntry {
 	t.Helper()
+	return storeRunWith(t, r, h, keyInput, stdout, stderr, limit, obs, nil)
+}
+
+func storeRunWith(t testing.TB, r *runstore.Repo, h hashing.Hasher, keyInput runcache.KeyInput, stdout, stderr string, limit int64, obs runcache.RunObservations, adjust func(*runcache.RunEntry)) runcache.RunEntry {
+	t.Helper()
+	entry, err := commitRunWith(t, r, h, keyInput, stdout, stderr, limit, obs, adjust)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	return entry
+}
+
+func commitRunWith(t testing.TB, r *runstore.Repo, h hashing.Hasher, keyInput runcache.KeyInput, stdout, stderr string, limit int64, obs runcache.RunObservations, adjust func(*runcache.RunEntry)) (runcache.RunEntry, error) {
+	t.Helper()
 	pending, err := r.Begin(runcache.CaptureLimits{MaxStdout: limit, MaxStderr: limit})
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
@@ -221,10 +235,10 @@ func storeRunKeyed(t testing.TB, r *runstore.Repo, h hashing.Hasher, keyInput ru
 		Mutation:    mustUnchanged(),
 		EffectGuard: mustUnchangedEffect(),
 	}
-	if err := pending.Commit(context.Background(), entry, obs); err != nil {
-		t.Fatalf("Commit: %v", err)
+	if adjust != nil {
+		adjust(&entry)
 	}
-	return entry
+	return entry, pending.Commit(context.Background(), entry, obs)
 }
 
 func TestStoreLookupRoundTrip(t *testing.T) {

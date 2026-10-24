@@ -10,7 +10,7 @@ import (
 
 func validationScope(t *testing.T, label string, dirs ...string) *runcache.ValidationScope {
 	t.Helper()
-	v, err := runcache.NewValidationScope(label, dirs)
+	v, err := runcache.NewValidationScope(label, dirs, nil)
 	if err != nil {
 		t.Fatalf("NewValidationScope: %v", err)
 	}

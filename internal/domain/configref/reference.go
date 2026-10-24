@@ -107,13 +107,18 @@ func Sections() []Section {
 				{"capture_output", boolean(d.Run.CaptureOutput), "bool", "Whether run output is captured and stored for replay/inspection.", "Turn off to run without recording output."},
 				{"cache_failed_runs", boolean(d.Run.CacheFailedRuns), "bool", "Whether non-zero-exit runs are cached.", "Turn off to always re-run failed commands."},
 				{"extra_effect_roots", list(d.Run.WatchedEffectRoots), "name/path list", "Additive watched generated-output selectors on top of the built-ins. Each is either a directory NAME matched wherever it appears (\"bin\") or an exact project-relative PATH matched only there (\"artifacts/bin\"). Literal, never globs. Additive only — a built-in cannot be silenced.", "Watch a generated directory a command reads so later changes to it invalidate reuse."},
-				{"validation", "[]", "array of tables: name, argv, cwd, unobserved_dirs", "Named validation policies ([[run.validation]]). A policy applies only to the run whose complete argv equals argv element for element and whose execution cwd is cwd; it leaves each unobserved_dirs entry (an exact path below the project root, never a name matched at any depth) out of input identity and effect observation, so a cache hit replays the recorded result without recreating those directories. Declaring one asserts both that their prior contents cannot change the result and that their files are not needed after a replay. Two policies selecting one invocation are a conflict. See `awa help validation`.", "Let a check that writes a huge or changing build directory replay its recorded result."},
+				{"validation", "[]", "array of tables: name, argv, cwd, unobserved_dirs, identity_probes", "Named validation policies ([[run.validation]]). A policy applies only to the run whose complete argv equals argv element for element and whose execution cwd is cwd; it leaves each unobserved_dirs entry (an exact path below the project root, never a name matched at any depth) out of input identity and effect observation, so a cache hit replays the recorded result without recreating those directories. Declaring one asserts both that their prior contents cannot change the result and that their files are not needed after a replay. Two policies selecting one invocation are a conflict. Optional identity_probes ([[run.validation.identity_probes]], each a name and a literal argv, at most 8) are commands whose exact stdout becomes part of the policy's reuse identity; they run only when allow_identity_probes grants them. See `awa help validation`.", "Let a check that writes a huge or changing build directory replay its recorded result."},
+				{"allow_identity_probes", boolean(d.Run.AllowIdentityProbes), "bool", "Grants awa run permission to execute the identity_probes of this checkout's validation policies, including probes added or edited later. Accepted only in the private .awa/config.toml: awa.toml or an explicit --config file setting it is a config error. Probes are arbitrary commands; the grant is not a sandbox and does not make them read-only. Introduced in this release: older binaries reject the key as unknown.", "Turn on after reviewing the probes a policy declares, so its results can be reused."},
 			},
 			Example: "[[run.validation]]\n" +
 				"name = \"cargo-test\"\n" +
 				"argv = [\"cargo\", \"test\"]\n" +
 				"cwd = \".\"\n" +
-				"unobserved_dirs = [\"target\"]\n",
+				"unobserved_dirs = [\"target\"]\n" +
+				"\n" +
+				"[[run.validation.identity_probes]]\n" +
+				"name = \"rustc\"\n" +
+				"argv = [\"rustc\", \"-vV\"]\n",
 		},
 		{
 			Name:  "gc",

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -59,6 +60,22 @@ func TestValidationPolicyRejectsInvalidDeclarations(t *testing.T) {
 		{"protected nested awa", func(p *ValidationPolicy) { p.UnobservedDirs = []string{"x/.awa/y"} }, "protected"},
 		{"nested pair", func(p *ValidationPolicy) { p.UnobservedDirs = []string{"target", "target/debug"} }, "overlaps"},
 		{"duplicate dir", func(p *ValidationPolicy) { p.UnobservedDirs = []string{"target", "target"} }, "overlaps"},
+		{"unnamed probe", func(p *ValidationPolicy) { p.IdentityProbes = []IdentityProbe{{Argv: []string{"rustc", "-vV"}}} }, "identity_probes[0].name"},
+		{"probe without executable", func(p *ValidationPolicy) { p.IdentityProbes = []IdentityProbe{{Name: "rustc"}} }, "identity_probes[0].argv"},
+		{"probe argv NUL", func(p *ValidationPolicy) {
+			p.IdentityProbes = []IdentityProbe{{Name: "r", Argv: []string{"rustc", "a\x00"}}}
+		}, "identity_probes[0].argv[1]"},
+		{"duplicate probe name", func(p *ValidationPolicy) {
+			p.IdentityProbes = []IdentityProbe{{Name: "r", Argv: []string{"a"}}, {Name: "r", Argv: []string{"b"}}}
+		}, "duplicates identity_probes[0]"},
+		{"duplicate probe argv", func(p *ValidationPolicy) {
+			p.IdentityProbes = []IdentityProbe{{Name: "a", Argv: []string{"rustc"}}, {Name: "b", Argv: []string{"rustc"}}}
+		}, "identity_probes[1]"},
+		{"too many probes", func(p *ValidationPolicy) {
+			for i := range MaxIdentityProbes + 1 {
+				p.IdentityProbes = append(p.IdentityProbes, IdentityProbe{Name: fmt.Sprint(i), Argv: []string{fmt.Sprint(i)}})
+			}
+		}, "at most 8"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

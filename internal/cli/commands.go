@@ -457,6 +457,9 @@ type reviewRunsDoc struct {
 	// instead of reading it back out of the JSON shape. Both come from one candidate, so
 	// the dashboard line and the machine object cannot disagree.
 	nearestEffect *apprun.EffectDiagnosis
+	// unavailable marks a section whose listing failed: its zero counts are not a
+	// verdict, so the dashboard points at the warning instead of claiming none.
+	unavailable bool
 }
 
 // --- status review dashboard: computation ---
@@ -628,14 +631,14 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone, diag.patterns)
 	if err != nil {
 		diag.warn("runs", "run-service-failed", "cannot build run service: "+err.Error())
-		return reviewRunsDoc{}, nil
+		return reviewRunsDoc{unavailable: true}, nil
 	}
 	defer cleanup()
 
 	ls, err := svc.Ls(ctx, apprun.LsRequest{Project: proj, Config: cfg, Near: true})
 	if err != nil {
 		diag.warn("runs", "run-ls-failed", "cannot read reusable runs: "+err.Error())
-		return reviewRunsDoc{}, nil
+		return reviewRunsDoc{unavailable: true}, nil
 	}
 	if len(ls.Reusable) > 0 {
 		return reviewRunsDoc{Reusable: len(ls.Reusable)}, ls.Performance
@@ -783,6 +786,8 @@ func renderStatusReview(w *output.Writer, res status.Result, r reviewDoc, td dom
 
 	if res.RunCache.Populated {
 		switch {
+		case r.Runs.unavailable:
+			w.Line("reusable:    unknown — the run listing failed (see the warning above)")
 		case r.Runs.Reusable > 0:
 			w.Linef("reusable:    %d run(s) replayable now — awa run ls", r.Runs.Reusable)
 		case r.Runs.Near > 0:
@@ -1355,6 +1360,7 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	kv("run.extra_effect_roots", "extra_effect_roots = %s", quoteList(v.Run.ExtraEffectRoots))
 	w.Linef("effective_effect_roots = %s", quoteList(v.Run.EffectiveEffectRoots))
 	kv("run.validation", "validation = %s", validationList(v.Run.Validation))
+	kv("run.allow_identity_probes", "allow_identity_probes = %t", v.Run.AllowIdentityProbes)
 	w.Line("")
 	w.Line("[gc]")
 	kv("gc.keep_last_checkpoints", "keep_last_checkpoints = %d", v.GC.KeepLastCheckpoints)
@@ -1386,8 +1392,16 @@ func quoteList(items []string) string {
 func validationList(ps []configcmd.ValidationView) string {
 	parts := make([]string, len(ps))
 	for i, p := range ps {
-		parts[i] = fmt.Sprintf("{ name = %s, argv = %s, cwd = %s, unobserved_dirs = %s }",
-			strconv.Quote(p.Name), quoteList(p.Argv), strconv.Quote(p.CWD), quoteList(p.UnobservedDirs))
+		probes := ""
+		if len(p.IdentityProbes) > 0 {
+			ps := make([]string, len(p.IdentityProbes))
+			for j, pr := range p.IdentityProbes {
+				ps[j] = fmt.Sprintf("{ name = %s, argv = %s }", strconv.Quote(pr.Name), quoteList(pr.Argv))
+			}
+			probes = ", identity_probes = [" + strings.Join(ps, ", ") + "]"
+		}
+		parts[i] = fmt.Sprintf("{ name = %s, argv = %s, cwd = %s, unobserved_dirs = %s%s }",
+			strconv.Quote(p.Name), quoteList(p.Argv), strconv.Quote(p.CWD), quoteList(p.UnobservedDirs), probes)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

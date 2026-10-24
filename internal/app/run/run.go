@@ -26,6 +26,7 @@ type Deps struct {
 	Scanner  Scanner
 	Store    runcache.Store
 	Runner   runcache.Runner
+	Prober   runcache.Prober
 	Resolver ExecutableResolver
 	// EffectObserver computes the bounded effect signature over the watched
 	// generated-output roots. It is a correctness dependency: a run that does not
@@ -77,6 +78,8 @@ func New(deps Deps) *Service {
 		panic("run.New: store must not be nil")
 	case deps.Runner == nil:
 		panic("run.New: runner must not be nil")
+	case deps.Prober == nil:
+		panic("run.New: prober must not be nil")
 	case deps.Resolver == nil:
 		panic("run.New: resolver must not be nil")
 	case deps.EffectObserver == nil:
@@ -254,7 +257,8 @@ type Execution struct {
 	// Output is the captured stdout/stderr summary. It is nil when output capture
 	// was disabled (run.capture_output=false) — output was not captured at all,
 	// which is honest where a zero summary would falsely read as "empty".
-	Output *Output
+	Output       *Output
+	PostRunFacts []runcache.ExternalFact
 }
 
 // Output is the execution-level summary of a run's captured streams.
@@ -344,7 +348,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		defer func() { _ = release() }()
 	}
 
-	kc, err := s.buildKeyContext(ctx, req, true)
+	kc, err := s.buildKeyContext(ctx, req, true, true)
 	if err != nil {
 		return Result{}, err
 	}
@@ -413,6 +417,12 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 		stderrSink = io.MultiWriter(req.Stderr, p.Stderr())
 	}
 
+	if err := ctx.Err(); err != nil {
+		if pending != nil {
+			_ = pending.Discard()
+		}
+		return Result{}, err
+	}
 	runRes, err := s.deps.Runner.Run(ctx, runcache.RunSpec{
 		Path:   kc.ResolvedPath,
 		Argv:   req.Argv,
@@ -447,6 +457,25 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 	// This scan is also what leaves the worktree index describing the state the child
 	// left, so the next run's baseline is the worktree and not a memory of it; the
 	// presence lock this call holds covers that write as it covers the pre-run one.
+	failed := runRes.Exit.Failed()
+	cacheFailedOK := effCfg.Run.CacheFailedRuns && !req.Policy.NoCacheFailures
+
+	// Reacquire before the final observations, for the same ordering reason as the
+	// pre-run phase, and only when a reusable pointer could still be published.
+	validation := kc.KeyInput.Validation
+	var postFacts []runcache.ExternalFact
+	var factsReason runcache.MismatchReason
+	if probesDeclared(validation) && kc.CanWrite && (!failed || cacheFailedOK) {
+		postFacts, err = kc.acquire(ctx, validation)
+		if err != nil {
+			if pending != nil {
+				_ = pending.Discard()
+			}
+			return Result{}, err
+		}
+		factsReason = postRunFactsReason(validation, postFacts)
+	}
+
 	mutation, afterScan, afterInput := s.observeMutation(ctx, req, kc)
 	defer func() { _ = afterScan.Close() }()
 
@@ -457,8 +486,6 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 	// a huge root is explained, not just marked non-reusable.
 	effect, effectPost := s.observeEffectMutation(req, kc.EffectPre, kc.EffScope.Waived)
 
-	failed := runRes.Exit.Failed()
-	cacheFailedOK := effCfg.Run.CacheFailedRuns && !req.Policy.NoCacheFailures
 	// A recorded run is durable history whenever output was captured, even when it is
 	// not reusable; a reusable cache pointer is published only when the run was
 	// eligible to write, did not fail (unless policy permits), and left both the input
@@ -466,9 +493,9 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 	// independent decisions the new model splits apart.
 	record := capture
 	publishPointer := record && kc.CanWrite && (!failed || cacheFailedOK) &&
-		mutation.CacheableUnderMutation() && effect.CacheableUnderEffect()
+		mutation.CacheableUnderMutation() && effect.CacheableUnderEffect() && factsReason == ""
 
-	reuse, decision := reuseFromOutcome(kc, publishPointer, failed, cacheFailedOK, mutation, effect)
+	reuse, decision := reuseFromOutcome(kc, publishPointer, failed, cacheFailedOK, mutation, effect, factsReason)
 
 	// Output metadata is present whenever the streams were captured — even on a run
 	// that is not stored, it describes what the command produced this time. It is nil
@@ -478,15 +505,16 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 		output = &Output{Stdout: summarizeStream(soCap), Stderr: summarizeStream(seCap)}
 	}
 	exec := Execution{
-		KeyInput:    kc.KeyInput,
-		Exit:        runRes.Exit,
-		StartedAt:   runRes.StartedAt,
-		FinishedAt:  runRes.FinishedAt,
-		Decision:    decision,
-		Skipped:     kc.Skipped,
-		Mutation:    mutation,
-		EffectGuard: effect,
-		Output:      output,
+		KeyInput:     kc.KeyInput,
+		Exit:         runRes.Exit,
+		StartedAt:    runRes.StartedAt,
+		FinishedAt:   runRes.FinishedAt,
+		Decision:     decision,
+		Skipped:      kc.Skipped,
+		Mutation:     mutation,
+		EffectGuard:  effect,
+		Output:       output,
+		PostRunFacts: postFacts,
 	}
 
 	// A run id and a durable record are produced whenever output was captured, so a
@@ -501,19 +529,20 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 			return Result{}, err
 		}
 		entry := runcache.RunEntry{
-			ID:          id,
-			Key:         kc.Key,
-			KeyInput:    kc.KeyInput,
-			StartedAt:   runRes.StartedAt,
-			FinishedAt:  runRes.FinishedAt,
-			Exit:        runRes.Exit,
-			Stdout:      soCap,
-			Stderr:      seCap,
-			Decision:    decision,
-			Skipped:     kc.Skipped,
-			Reuse:       reuse,
-			Mutation:    mutation,
-			EffectGuard: effect,
+			ID:           id,
+			Key:          kc.Key,
+			KeyInput:     kc.KeyInput,
+			StartedAt:    runRes.StartedAt,
+			FinishedAt:   runRes.FinishedAt,
+			Exit:         runRes.Exit,
+			Stdout:       soCap,
+			Stderr:       seCap,
+			Decision:     decision,
+			Skipped:      kc.Skipped,
+			Reuse:        reuse,
+			Mutation:     mutation,
+			EffectGuard:  effect,
+			PostRunFacts: postFacts,
 		}
 		afterFrontier, _, _ := afterScan.Coverage().Frontier()
 		obs := runcache.RunObservations{
@@ -622,6 +651,8 @@ type keyContext struct {
 	// stdin-not-keyed, no-cache, skipped-inputs). It is a record-only run's reuse
 	// reason, used directly without re-parsing a stringified token.
 	Reason runcache.MismatchReason
+	// Diagnostics and ungranted runs hold no acquirer, so they cannot execute a probe.
+	acquire factAcquirer
 }
 
 // BeforeManifest is the re-openable pre-run scan manifest a recorded run persists as
@@ -654,7 +685,7 @@ func (kc keyContext) Close() error { return kc.beforeScan.Close() }
 // the input scan writes the worktree index: Run persists it (under a presence lock)
 // to keep the accelerator warm, while Explain scans read-only so it never mutates
 // shared state without a lock.
-func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex bool) (keyContext, error) {
+func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex, acquireFacts bool) (keyContext, error) {
 	effScope := effectiveScanScope(req.Config, req.Scope)
 	// A pre-resolved effective scope (Explain reproducing a stored run) replaces the
 	// derived one outright, so both the scan and the key use exactly the requested
@@ -668,6 +699,26 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	}
 	effScope.Waived = waivedDirs(validation)
 	if err := effScope.Validate(); err != nil {
+		return keyContext{}, err
+	}
+
+	// The child runs with a sanitized environment: the built-in baseline plus the
+	// configured allowlist plus awa's fixed injected facts, and nothing else. The exact
+	// environment the child sees is what the key records, so no unkeyed variable can
+	// change the command's output behind the cache. The one child env taken here is used
+	// for identity probes, executable resolution (so the keyed binary is found via the
+	// PATH the command actually runs with) and for the process itself.
+	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist)
+	childEnv := effEnv.ChildEnv()
+
+	// Probes are not proven read-only, so their phase completes before the executable,
+	// input and effect observations the key is built from: whatever a probe changes is
+	// then seen by those observations instead of slipping between them and the lookup.
+	var acquire factAcquirer
+	if acquireFacts && req.Config.Run.AllowIdentityProbes {
+		acquire = s.acquirerFor(req, childEnv)
+	}
+	if validation, err = s.withPreRunFacts(ctx, req, validation, acquire); err != nil {
 		return keyContext{}, err
 	}
 
@@ -710,15 +761,6 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	facts := scanRes.SkippedSummary(maxSkippedSamples)
 	summary := summarizeSkipped(facts, req.Policy.AllowSkippedInputs)
 
-	// The child runs with a sanitized environment: the built-in baseline plus the
-	// configured allowlist plus awa's fixed injected facts, and nothing else. The exact
-	// environment the child sees is what the key records, so no unkeyed variable can
-	// change the command's output behind the cache. The one child env taken here is used
-	// for executable resolution (so the keyed binary is found via the PATH the command
-	// actually runs with) and for the process itself.
-	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist)
-	childEnv := effEnv.ChildEnv()
-
 	// Resolve the executable for the key (best effort) before any lookup, since the
 	// resolved path and stat are part of the key.
 	resolvedPath, resolvedStat, _ := s.deps.Resolver.Resolve(req.Argv[0], req.AbsDir, childEnv)
@@ -737,6 +779,9 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	key := keyInput.Compute(s.deps.Hasher)
 
 	canRead, canWrite, baseStatus, reason := cacheability(req.Config, req, facts.Count > 0)
+	if reason == "" && !validation.FactsComplete() && !validation.FactsUnassessed() {
+		canRead, canWrite, baseStatus, reason = false, false, runcache.CacheUncached, runcache.ReasonExternalFactsUnavailable
+	}
 
 	return keyContext{
 		EffCfg:       req.Config,
@@ -754,7 +799,44 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 		CanWrite:     canWrite,
 		BaseStatus:   baseStatus,
 		Reason:       reason,
+		acquire:      acquire,
 	}, nil
+}
+
+func (s *Service) withPreRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) (*runcache.ValidationScope, error) {
+	if !probesDeclared(v) {
+		return v, nil
+	}
+	facts, err := s.preRunFacts(ctx, req, v, acquire)
+	if err != nil || facts == nil {
+		return v, err
+	}
+	out, err := v.WithFacts(facts)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Diagnostics share this so their known facts match a run's: no probe runs merely to
+// enrich history, and a missing grant is a known denial rather than unassessed.
+func (s *Service) preRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) ([]runcache.ExternalFact, error) {
+	known := func(st runcache.FactStatus) []runcache.ExternalFact {
+		facts := make([]runcache.ExternalFact, len(v.Probes))
+		for i := range facts {
+			facts[i] = runcache.UnavailableFact(st)
+		}
+		return facts
+	}
+	switch canRead, canWrite, _, _ := cacheability(req.Config, req, false); {
+	case !canRead && !canWrite:
+		return known(runcache.FactNotAcquired), nil
+	case !req.Config.Run.AllowIdentityProbes:
+		return known(runcache.FactDenied), nil
+	case acquire == nil:
+		return nil, nil
+	}
+	return acquire(ctx, v)
 }
 
 // buildKeyInput assembles the typed key input from the request, the effective
@@ -847,11 +929,12 @@ func cacheability(effCfg config.Config, req Request, hasSkipped bool) (canRead, 
 // can never diverge (the entry's Validate cross-checks them). Precedence mirrors the
 // old decide: a published pointer is reusable; otherwise, for a run that was
 // eligible to write, the mutation guard ranks first (changed → non-reusable, scan
-// failed → unknown-post-state), then a failed-not-cached command; otherwise policy
-// kept the run out of the cache entirely and it is record-only. The mutation reason
+// failed → unknown-post-state), then the effect guard, then disagreeing or
+// unavailable post-run identity facts, then a failed-not-cached command; otherwise
+// policy kept the run out of the cache entirely and it is record-only. The mutation reason
 // ranks first because it is the strongest safety statement: even cache_failed_runs
 // would not make a mutating result reusable.
-func reuseFromOutcome(kc keyContext, publishPointer, failed, cacheFailedOK bool, mutation runcache.MutationStatus, effect runcache.EffectGuardStatus) (runcache.ReuseState, runcache.CacheDecision) {
+func reuseFromOutcome(kc keyContext, publishPointer, failed, cacheFailedOK bool, mutation runcache.MutationStatus, effect runcache.EffectGuardStatus, factsReason runcache.MismatchReason) (runcache.ReuseState, runcache.CacheDecision) {
 	switch {
 	case publishPointer:
 		return runcache.ReusableCacheEntry(), runcache.CacheDecision{Cacheable: true}
@@ -869,6 +952,9 @@ func reuseFromOutcome(kc keyContext, publishPointer, failed, cacheFailedOK bool,
 		reason := effect.Reason()
 		st, _ := runcache.NonReusableRun(reason)
 		return st, runcache.CacheDecision{Cacheable: false, Reason: reason.String()}
+	case kc.CanWrite && factsReason != "":
+		st, _ := runcache.NonReusableRun(factsReason)
+		return st, runcache.CacheDecision{Cacheable: false, Reason: factsReason.String()}
 	case kc.CanWrite && failed && !cacheFailedOK:
 		st, _ := runcache.NonReusableRun(runcache.ReasonFailedNotCached)
 		return st, runcache.CacheDecision{Cacheable: false, Reason: runcache.ReasonFailedNotCached.String()}

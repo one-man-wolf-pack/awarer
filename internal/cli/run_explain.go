@@ -285,7 +285,7 @@ func explainView(res apprun.ExplainResult) explainDoc {
 			StdinMode:     ki.StdinMode.String(),
 			TTYAllowed:    ki.TTYAllowed,
 			Skipped:       skippedView(res.Subject.Skipped),
-			Validation:    validationPolicyView(ki.Validation),
+			Validation:    validationPolicyView(ki.Validation, nil),
 		},
 		Diagnostics: perfDiagnosticsView(res.Performance),
 		ExactMatch:  exactView(res.Subject.ExactHit),

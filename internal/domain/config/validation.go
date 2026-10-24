@@ -11,11 +11,26 @@ type ValidationPolicy struct {
 	Argv           []string
 	CWD            string
 	UnobservedDirs []string
+	IdentityProbes []IdentityProbe
 }
+
+type IdentityProbe struct {
+	Name string
+	Argv []string
+}
+
+const MaxIdentityProbes = 8
 
 func (p ValidationPolicy) clone() ValidationPolicy {
 	p.Argv = slices.Clone(p.Argv)
 	p.UnobservedDirs = slices.Clone(p.UnobservedDirs)
+	if p.IdentityProbes != nil {
+		probes := make([]IdentityProbe, len(p.IdentityProbes))
+		for i, pr := range p.IdentityProbes {
+			probes[i] = IdentityProbe{Name: pr.Name, Argv: slices.Clone(pr.Argv)}
+		}
+		p.IdentityProbes = probes
+	}
 	return p
 }
 
@@ -33,7 +48,10 @@ func cloneValidation(ps []ValidationPolicy) []ValidationPolicy {
 func validationEqual(a, b []ValidationPolicy) bool {
 	return slices.EqualFunc(a, b, func(x, y ValidationPolicy) bool {
 		return x.Name == y.Name && x.CWD == y.CWD &&
-			slices.Equal(x.Argv, y.Argv) && slices.Equal(x.UnobservedDirs, y.UnobservedDirs)
+			slices.Equal(x.Argv, y.Argv) && slices.Equal(x.UnobservedDirs, y.UnobservedDirs) &&
+			slices.EqualFunc(x.IdentityProbes, y.IdentityProbes, func(a, b IdentityProbe) bool {
+				return a.Name == b.Name && slices.Equal(a.Argv, b.Argv)
+			})
 	})
 }
 
@@ -135,6 +153,7 @@ func validationProblems(policies []ValidationPolicy) []string {
 				}
 			}
 		}
+		probs = append(probs, identityProbeProblems(at, p.IdentityProbes)...)
 		if len(p.Argv) > 0 {
 			sel := selector{cwd: p.CWD, argv: string(encodeArgv(p.Argv))}
 			if j, dup := selectors[sel]; dup {
@@ -142,6 +161,46 @@ func validationProblems(policies []ValidationPolicy) []string {
 			} else {
 				selectors[sel] = i
 			}
+		}
+	}
+	return probs
+}
+
+func identityProbeProblems(at string, probes []IdentityProbe) []string {
+	var probs []string
+	if len(probes) > MaxIdentityProbes {
+		probs = append(probs, fmt.Sprintf("%s.identity_probes lists %d probes: at most %d are allowed", at, len(probes), MaxIdentityProbes))
+	}
+	names := make(map[string]int, len(probes))
+	argvs := make(map[string]int, len(probes))
+	for i, pr := range probes {
+		pat := fmt.Sprintf("%s.identity_probes[%d]", at, i)
+		switch {
+		case pr.Name == "":
+			probs = append(probs, pat+".name must not be empty")
+		case pr.Name != strings.TrimSpace(pr.Name) || strings.ContainsAny(pr.Name, "\x00\r\n"):
+			probs = append(probs, fmt.Sprintf("%s.name %q must not have surrounding whitespace, NUL, or line breaks", pat, pr.Name))
+		default:
+			if j, dup := names[pr.Name]; dup {
+				probs = append(probs, fmt.Sprintf("%s.name %q duplicates identity_probes[%d]", pat, pr.Name, j))
+			} else {
+				names[pr.Name] = i
+			}
+		}
+		if len(pr.Argv) == 0 || pr.Argv[0] == "" {
+			probs = append(probs, pat+".argv must list the complete probe command, starting with a non-empty executable")
+			continue
+		}
+		for j, a := range pr.Argv {
+			if strings.ContainsRune(a, 0) {
+				probs = append(probs, fmt.Sprintf("%s.argv[%d] must not contain NUL", pat, j))
+			}
+		}
+		enc := string(encodeArgv(pr.Argv))
+		if j, dup := argvs[enc]; dup {
+			probs = append(probs, fmt.Sprintf("%s.argv %q duplicates identity_probes[%d]: declare each probe once", pat, pr.Argv, j))
+		} else {
+			argvs[enc] = i
 		}
 	}
 	return probs
