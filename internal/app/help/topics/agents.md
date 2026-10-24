@@ -1,8 +1,11 @@
 # awa for coding agents
 
-Use awa for three things: explicit checkpoints of the worktree, reusable
-deterministic checks, and durable execution history. You do not need prior
-knowledge of the project — the commands below are the whole workflow.
+Use awa for three things: retained execution results you can read again,
+explicit checkpoints of the worktree, and reusable deterministic checks. You do
+not need prior knowledge of the project — the commands below are the whole
+workflow.
+
+## Review the worktree
 
 Start with the dashboard — it is the single entry point before a review:
 
@@ -11,100 +14,112 @@ awa status                       # checkpoint, dirty summary, reusable/near
                                  # runs, and the commands to run next
 ```
 
-Before a meaningful change, checkpoint the worktree (replace the placeholder
-with a specific message; do not copy it literally):
+Before a meaningful change, checkpoint the worktree, then review what changed
+since it (replace the placeholder with a specific message):
 
 ```text
 awa checkpoint -m "<specific-checkpoint-message>"
-```
-
-Review what changed since the last checkpoint (default range latest..now):
-
-```text
-awa changes
-awa diff [path]
-```
-
-A clean changes/diff delta means only "no changes since that baseline" — not
-that the whole worktree is reviewed. Before you declare work ready, inspect the
-full current uncommitted worktree, not just the checkpoint delta.
-
-`latest` is shared project-local state, not your private bookmark: it moves
-whenever any agent or user runs `awa checkpoint`. For a long review/fix loop,
-keep the checkpoint id that `awa checkpoint` prints and compare against it
-explicitly so another agent's checkpoint cannot silently move your baseline:
-
-```text
 awa changes <checkpoint-id>..now
-awa diff <checkpoint-id>..now
+awa diff <checkpoint-id>..now [-- <path>]
 ```
 
-If a default `awa changes` baseline ever surprises you, inspect recent
-checkpoints with `awa log -n 5`.
+Keep the id `awa checkpoint` prints and compare against it. Plain `awa changes`
+and `awa diff` use `latest..now`, but `latest` is shared project-local state: it
+moves whenever any agent or user checkpoints. If a baseline surprises you,
+inspect recent checkpoints with `awa log -n 5`.
 
-Run a deterministic check through the cache (record first, reuse if safe):
+A clean delta means only "no changes since that baseline". Before you declare
+work ready, inspect the full current uncommitted worktree, not just the delta.
+
+## Keep execution results
+
+A test, build, or diagnostic run through awa keeps its command, exit status, and
+captured output, failures included, so you can read it again instead of
+rerunning it. When a fresh result is required, record it; the run prints its id:
 
 ```text
-awa run --display tail:200 -- <command>
-awa run ls                       # checks reusable for the current state
+awa run --record --stdin null --display tail:200 -- <command>
+awa run show <run-id> --tail 500
+awa run log -n 5                 # recent run ids, newest first
+awa changes run:<run-id>:before..run:<run-id>:after   # what it changed
+```
+
+`--stdin null` is only for a command that reads no input; drop it otherwise.
+
+`--record` always executes and never becomes a reusable hit. Use it for fresh
+results and for side-effecting work — builds, generators, formatters,
+migrations, deployments — where replay would mislead. Its before/after
+observation attributes the effect immediately; without the wrapper awa can see
+that the worktree drifted but cannot prove what caused it.
+
+A copyable paragraph for a project's agent instructions:
+
+```text
+Run tests, builds, and diagnostics that need a fresh result with
+`awa run --record -- <command>`; awa keeps the command, exit status, and
+captured output in this project's local store. Note the run id it prints,
+especially after a failure, and use it to refer to that result. Before
+rerunning a command only to see its output again, read it with
+`awa run show <run-id> --tail <n>` (plain `show` prints metadata only). A
+tail is not all captured output, and capture can be truncated or disabled.
+See `awa help inspect`.
+```
+
+A run id is local to this project's `.awa/` store, not a shareable link.
+Capture limits and retention apply, so no complete or indefinite log is
+promised. Trivial shell commands need no wrapper, and a justified rerun is
+fine. Finding and reading runs: [awa help inspect](inspect.md).
+
+## Reuse a deterministic check safely
+
+Without `--record`, `awa run` records first and becomes a reusable hit only if
+the run is clean, non-mutating, and its watched generated-output roots are
+unchanged:
+
+```text
+awa run --stdin null --display tail:200 -- <command>
+awa run ls                       # reusable now (current inputs and policy)
 awa run ls --near                # and why recent checks are now stale
-awa run show --last --tail 500   # inspect the last run's captured output
-awa run show --last --grep "<pattern>"
+awa run explain --stdin null -- <command>   # cache decision, no execution
+awa run --refresh --stdin null -- <command> # force a fresh check
+awa run show --last --grep "<pattern>"      # convenience: the newest run
 ```
 
-Run a non-cacheable or side-effecting command with supervised history, and other
-useful forms:
+A pipe or file on stdin, which agent harnesses usually supply, is passed
+through unkeyed, so that run is never reusable (`stdin-not-keyed`); the null
+device is not. Use `--stdin null` only when the command reads no input.
 
-```text
-awa run --record --display tail:200 -- <command>
-awa changes run:<id>:before..run:<id>:after   # what the command changed
-awa run explain -- <command>     # show the cache decision without running
-awa run --refresh -- <command>   # force a fresh deterministic check
-awa run --stdin null -- <command> # only for a command that needs no input
-```
+Warnings here are correctness signals, not noise:
+
+- Do not use cache mode for non-idempotent commands or commands that depend on
+  hidden external state; a false hit would skip real work.
+- A "skipped inputs" or "not cached" notice means the result was not made
+  reusable.
+- `awa run` is cwd-sensitive by design: the execution directory is part of the
+  cache key. Use `--cwd <path>` to make it explicit.
+- `.gitignore` is OFF by default for awa's scan input, so a gitignored file is
+  still a real input that can affect a command.
+- A note that a large watched effect root (e.g. `target/`, `node_modules/`)
+  dominated state observation explains why run, `run ls --near`, and status
+  felt slow. Do not rerun blindly; reviewing the configured `[run]` effect
+  roots is a policy decision, not a routine fix.
 
 ## Repairing an accidental rewrite
 
-A checkpoint is also evidence you can restore from — when a generator or
-formatter rewrites files it should not have, put the selected paths back:
+When a generator or formatter rewrites files it should not have, put the
+selected paths back from a checkpoint:
 
 ```text
 awa restore <checkpoint-id> -- <path>            # preview; changes nothing
 awa restore --apply <checkpoint-id> -- <path>    # perform it
 ```
 
-Preview first and always name the paths: preview is the default and changes
-nothing, `--apply` is the only mutating form and needs an explicit selection (paths
-or `--all`), and nothing you did not select is touched. Incomplete evidence
-refuses with a named reason; there is no force option. An apply records what it
-overwrote and prints a `restore:<id>:before` reference to undo it, retained under
-`[gc].keep_restores_for` — evidence with a lifetime, not a backup. See
-[awa help restore](restore.md).
-
-This is why side-effecting work belongs in `awa run --record`: a build,
-generator, formatter, migration, or deployment run through the wrapper has its
-before/after observation attributed immediately. awa can see a worktree drifted;
-without the wrapper it cannot prove what caused it.
-
-If awa notes that a large watched effect root (e.g. `target/`, `node_modules/`)
-dominated state observation, that is why run, `run ls --near`, and status felt
-slow — not a misconfiguration to fix by rerunning blindly. Prefer
-`awa run --record` for a command whose point is a side effect; reviewing the
-configured `[run]` effect roots is a policy decision, not a routine fix.
-
-## Pick the right mode
-
-- `awa checkpoint` — explicit, user-authored checkpoints.
-- `awa run` — deterministic check: records first, becomes a reusable hit only
-  if the run is clean, non-mutating, and its watched generated-output roots are
-  unchanged.
-- `awa run --record` — supervised history: always executes, never becomes a
-  reusable hit. Use it for side-effecting, deployment, migration, and
-  formatter/fixer workflows where replay would be misleading.
-- `awa run ls` — the reusable-now view (reusable for the current observed
-  inputs and configured effect-observation policy).
-- `awa run log` and `awa run show` — execution history and captured-output
-  inspection.
+Preview is the default. `--apply` is the only mutating form and needs an
+explicit selection (paths or `--all`); nothing you did not select is touched.
+Incomplete evidence refuses with a named reason; there is no force option. An
+apply records what it overwrote and prints a `restore:<id>:before` reference to
+undo it, retained under `[gc].keep_restores_for` — evidence with a lifetime,
+not a backup. See [awa help restore](restore.md).
 
 ## Machine output
 
@@ -115,19 +130,8 @@ so you never parse human text:
 awa status --json                # dashboard facts + a review object
 awa changes --json               # summary, refs, and per-file changes
 awa run ls --near --json         # reusable rows + near misses (reason, sample)
-awa run explain --json -- <command>
+awa run explain --json --stdin null -- <command>   # input-free command
 ```
-
-## Warnings are correctness signals, not noise
-
-- Do not use cache mode for non-idempotent commands or commands that depend on
-  hidden external state; a false hit would skip real work.
-- A "skipped inputs" or "not cached" notice means the result was not made
-  reusable — treat it as a signal, not clutter.
-- `awa run` is cwd-sensitive by design: the execution directory is part of the
-  cache key. Use `--cwd <path>` to make it explicit.
-- `.gitignore` is OFF by default for awa's scan input, so a gitignored file is
-  still a real input that can affect a command.
 
 ## Local evidence is private, not shared
 
@@ -154,26 +158,19 @@ awa docs export --output <directory>   # the complete documentation bundle
 
 ## Where to read more
 
-Each question below has one page that owns it; go straight there rather than
-reading in order.
+Each question below has one page that owns it; go straight there.
 
 - getting and identifying the binary — [awa help install](install.md)
 - a fresh project, first loop — [awa help quickstart](quickstart.md)
-- structuring a review or repeated fix loop —
-  [awa help workflows](workflows.md)
+- a review or repeated fix loop — [awa help workflows](workflows.md)
 - putting paths back after a rewrite — [awa help restore](restore.md)
 - reading the dashboard — [awa help status](status.md)
-- finding and reading an earlier run's output —
-  [awa help inspect](inspect.md)
-- something is slow, stale, blocked, or broken —
+- finding and reading an earlier run — [awa help inspect](inspect.md)
+- something slow, stale, blocked, or broken —
   [awa help troubleshooting](troubleshooting.md)
 - reviewing an existing project's setup — [awa help maintenance](maintenance.md)
 - consuming awa from a script — [awa help json](json.md)
 
-## See also
-
-- [awa help run](run.md)
-- [awa help record](record.md)
-- [awa help checkpoints](checkpoints.md)
-- [awa help privacy](privacy.md)
-- [awa help exit-codes](exit-codes.md)
+See also [awa help run](run.md), [awa help record](record.md),
+[awa help checkpoints](checkpoints.md), [awa help privacy](privacy.md), and
+[awa help exit-codes](exit-codes.md).
