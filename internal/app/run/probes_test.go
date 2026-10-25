@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"slices"
 	"testing"
+	"time"
 
 	apprun "awarer/internal/app/run"
 	"awarer/internal/domain/config"
@@ -239,13 +240,13 @@ func TestDiagnosticsNeverExecuteProbes(t *testing.T) {
 		{Mode: apprun.ModeLast, Request: h.request("check")},
 		{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: first.RunID.String()},
 	} {
-		if _, err := h.svc.Explain(ctx, req); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
-			t.Errorf("explain mode %d = %v, want a refusal without fresh facts", req.Mode, err)
+		if res, err := h.svc.Explain(ctx, req); err != nil || res.Outcome != apprun.OutcomeIncomplete {
+			t.Errorf("explain mode %d = %s, %v; want incomplete without fresh facts", req.Mode, res.Outcome, err)
 		}
 	}
 	for _, near := range []bool{false, true} {
-		if _, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: near}); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
-			t.Errorf("ls near=%v = %v, want a refusal without fresh facts", near, err)
+		if res, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: near}); err != nil || len(res.Unassessed) != 1 {
+			t.Errorf("ls near=%v = %+v, %v; want the run unassessed", near, res.Unassessed, err)
 		}
 	}
 	if _, err := h.svc.Log(ctx, apprun.LogRequest{}); err != nil {
@@ -333,8 +334,150 @@ func TestKnownDenialAnswersDiagnosticsWithoutProbes(t *testing.T) {
 	}
 
 	h.setGrant(t, true)
-	if _, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg}); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
-		t.Fatalf("granted ls = %v, want facts still unassessed", err)
+	if ls, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg}); err != nil || len(ls.Unassessed) != 1 || len(ls.Reusable) != 0 {
+		t.Fatalf("granted ls = %+v, %v; want facts still unassessed", ls, err)
+	}
+}
+
+func newGrantedExplainHarness(t *testing.T) (*harness, *lookupStore) {
+	t.Helper()
+	h, store := newDeniedExplainHarness(t)
+	h.setGrant(t, true)
+	h.prober.stdout["tool"] = "tool 1.0\n"
+	return h, store
+}
+
+func TestGrantedExplainIsIncompleteWithoutALookupInEveryMode(t *testing.T) {
+	h, store := newGrantedExplainHarness(t)
+	first := h.mustRun(t, h.request("check"))
+	if !first.Written {
+		t.Fatalf("granted run not published: %s/%s", first.Reuse.Kind(), first.Reuse.Reason())
+	}
+	calls := h.prober.calls
+	store.keys = nil
+	ctx := context.Background()
+
+	for _, req := range []apprun.ExplainRequest{
+		{Mode: apprun.ModeCommand, Request: h.request("check")},
+		{Mode: apprun.ModeLast, Request: h.request("check")},
+		{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: first.RunID.String()},
+	} {
+		res, err := h.svc.Explain(ctx, req)
+		if err != nil {
+			t.Fatalf("explain mode %d: %v", req.Mode, err)
+		}
+		if res.Outcome != apprun.OutcomeIncomplete || res.Reason != apprun.ReasonExternalFactsUnacquired {
+			t.Errorf("explain mode %d = %s/%s, want incomplete", req.Mode, res.Outcome, res.Reason)
+		}
+		if !res.Subject.IdentityUnavailable || !res.Subject.Key.IsZero() || res.Subject.CacheableKnown() || res.Subject.Exact != (apprun.ExactMatch{Assessment: apprun.ExactIdentityUnavailable}) {
+			t.Errorf("explain mode %d subject = %+v, want unknown key, cacheability and exact entry", req.Mode, res.Subject.Exact)
+		}
+		if !res.Differences.Equal() {
+			t.Errorf("explain mode %d claims a delta %+v", req.Mode, res.Differences)
+		}
+		wantCands := 1
+		if req.Mode == apprun.ModeCommand {
+			wantCands = 0
+		}
+		if len(res.Candidates) != wantCands {
+			t.Fatalf("explain mode %d candidates = %d, want %d", req.Mode, len(res.Candidates), wantCands)
+		}
+		for _, c := range res.Candidates {
+			if c.Reason != "" || len(c.Score.Matched) != 0 || len(c.Score.Different) != 0 || !c.Comparison.Equal() {
+				t.Errorf("explain mode %d candidate = %s %+v, want reason-only without a score", req.Mode, c.Reason, c.Score)
+			}
+		}
+	}
+	if len(store.keys) != 0 {
+		t.Fatalf("explain looked up %v without a current key", store.keys)
+	}
+
+	refresh := h.request("check")
+	refresh.Policy.Refresh = true
+	res, err := h.svc.Explain(ctx, apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: refresh})
+	if err != nil || res.Outcome != apprun.OutcomeMiss || res.Reason != "refresh-requested" || res.Subject.CacheableKnown() || res.Subject.Exact.Assessment != apprun.ExactIdentityUnavailable {
+		t.Fatalf("refresh explain = %s/%s exact %+v, %v; want the refresh decision with unknown identity", res.Outcome, res.Reason, res.Subject.Exact, err)
+	}
+	noCache := h.request("check")
+	noCache.Policy.NoCache = true
+	res, err = h.svc.Explain(ctx, apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: noCache})
+	if err != nil || res.Outcome != apprun.OutcomeDisabled || res.Subject.IdentityUnavailable || !res.Subject.CacheableKnown() {
+		t.Fatalf("no-cache explain = %s identity-unavailable=%v, %v; want the ordinary disabled answer", res.Outcome, res.Subject.IdentityUnavailable, err)
+	}
+	if len(store.keys) != 1 || h.prober.calls != calls {
+		t.Fatalf("lookups %d probes %d; want only the no-cache informational lookup and no probe", len(store.keys), h.prober.calls-calls)
+	}
+
+	h.write(t, "main.src", "v2")
+	res, err = h.svc.Explain(ctx, apprun.ExplainRequest{Mode: apprun.ModeFromRunToNow, Request: h.request("check"), RunRef: first.RunID.String()})
+	if err != nil || res.Outcome != apprun.OutcomeIncomplete || len(res.Candidates) != 1 || !res.Differences.Equal() {
+		t.Fatalf("stored explain after an input change = %+v, %v; want incomplete, not a global miss", res, err)
+	}
+	if c := res.Candidates[0]; c.Reason != runcache.ReasonInputTreeDiffers || len(c.Score.Matched) != 0 || !c.Comparison.Equal() || c.Changed == nil {
+		t.Fatalf("candidate = %s %+v, want its proven input change reason-only with the changed paths", c.Reason, c.Score)
+	}
+}
+
+func TestMixedWindowSeparatesUnassessedRows(t *testing.T) {
+	h := newProbeHarness(t, true)
+	ctx := context.Background()
+	// Run ids are time-ordered, so each run gets its own instant to fix the window.
+	tick := func() { h.clock.now = h.clock.now.Add(time.Second) }
+	disproved := h.mustRun(t, h.request("check"))
+	tick()
+	h.write(t, "main.src", "v2")
+	unassessed := h.mustRun(t, h.request("check"))
+	tick()
+	ordinary := h.mustRun(t, h.request("other"))
+	for _, r := range []apprun.Result{disproved, unassessed, ordinary} {
+		if !r.Written {
+			t.Fatalf("run %s not published", r.RunID.Short())
+		}
+	}
+	calls := h.prober.calls
+	ids := func(es []apprun.LsEntry) []runcache.RunID {
+		var out []runcache.RunID
+		for _, e := range es {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+
+	plain, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg})
+	if err != nil || !slices.Equal(ids(plain.Reusable), []runcache.RunID{ordinary.RunID}) || !slices.Equal(ids(plain.Unassessed), []runcache.RunID{unassessed.RunID}) || !plain.Incomplete() {
+		t.Fatalf("plain ls = %v unassessed %v, %v", ids(plain.Reusable), ids(plain.Unassessed), err)
+	}
+	all, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, All: true})
+	if err != nil || !slices.Equal(ids(all.Reusable), []runcache.RunID{ordinary.RunID, disproved.RunID}) || !slices.Equal(ids(all.Unassessed), []runcache.RunID{unassessed.RunID}) {
+		t.Fatalf("ls --all = %v unassessed %v, %v; want each row once", ids(all.Reusable), ids(all.Unassessed), err)
+	}
+	if r := all.Reusable[1].Reusability.Reason(); r != runcache.ReasonInputTreeDiffers {
+		t.Fatalf("disproved row reason = %s", r)
+	}
+	near, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, Near: true})
+	if err != nil || len(near.NearMisses) != 1 || near.NearMisses[0].Entry.ID != disproved.RunID || !slices.Equal(ids(near.Unassessed), []runcache.RunID{unassessed.RunID}) {
+		t.Fatalf("ls --near = %+v unassessed %v, %v", near.NearMisses, ids(near.Unassessed), err)
+	}
+	if c := near.NearMisses[0]; c.Reason != runcache.ReasonInputTreeDiffers || len(c.Score.Matched) != 0 || len(c.Score.Different) != 0 || !c.Comparison.Equal() {
+		t.Fatalf("near candidate = %s %+v, want a reason-only comparison made without the facts", c.Reason, c.Score)
+	}
+	window, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg, All: true, Limit: 2})
+	if err != nil || !slices.Equal(ids(window.Reusable), []runcache.RunID{ordinary.RunID}) || !slices.Equal(ids(window.Unassessed), []runcache.RunID{unassessed.RunID}) {
+		t.Fatalf("ls --all -n 2 = %v unassessed %v, %v; want the window kept", ids(window.Reusable), ids(window.Unassessed), err)
+	}
+	if h.prober.calls != calls {
+		t.Fatalf("ls ran %d probes", h.prober.calls-calls)
+	}
+}
+
+func TestAnIndependentGateSettlesAGrantedRowWithoutFacts(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.cfg.Run.TTL = config.Duration(time.Hour)
+	h.mustRun(t, h.request("check"))
+	h.clock.now = h.clock.now.Add(2 * time.Hour)
+	ls, err := h.svc.Ls(context.Background(), apprun.LsRequest{Project: h.proj, Config: h.cfg, All: true})
+	if err != nil || len(ls.Unassessed) != 0 || len(ls.Reusable) != 1 || ls.Reusable[0].Reusability.Reason() != runcache.ReasonExpired {
+		t.Fatalf("expired granted row = %+v unassessed %d, %v; want it assessed as expired", ls.Reusable, len(ls.Unassessed), err)
 	}
 }
 

@@ -133,8 +133,24 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 		t.Error("run show discloses probe output")
 	}
 
-	if code, stdout, stderr := awa(t, root, "status"); code != 0 || strings.Contains(stdout, "none for the current state") || !strings.Contains(stdout, "reusable:    unknown") {
+	if code, stdout, stderr := awa(t, root, "status"); code != 0 || strings.Contains(stdout, "none for the current state") || !strings.Contains(stdout, "reusable:    unknown — 1 run(s) need identity facts only awa run acquires") || strings.Contains(stdout, "listing failed") {
 		t.Errorf("status without fresh facts claims a verdict: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	var st struct {
+		Data struct {
+			Review struct {
+				Runs map[string]json.RawMessage `json:"runs"`
+			} `json:"review"`
+		} `json:"data"`
+	}
+	_, stdout, _ = awa(t, root, "status", "--json")
+	if err := json.Unmarshal([]byte(stdout), &st); err != nil {
+		t.Fatalf("status --json: %v\n%s", err, stdout)
+	}
+	for field, want := range map[string]string{"assessment": `"incomplete"`, "reusable": "null", "near": "null", "known_reusable": "0", "unassessed": "1"} {
+		if got := string(st.Data.Review.Runs[field]); got != want {
+			t.Errorf("status runs.%s = %s, want %s", field, got, want)
+		}
 	}
 	for _, args := range [][]string{
 		{"doctor"}, {"config", "effective"}, {"run", "log"}, {"run", "audit"},
@@ -147,15 +163,62 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"run", "explain", "--", "sh", "-c", validationBuild},
-		{"run", "ls"},
-		{"run", "ls", "--near"},
+		{"run", "explain", "--last"},
 	} {
-		if code, _, stderr := awa(t, root, args...); code != 1 || !strings.Contains(stderr, "cannot assess current reuse") {
-			t.Errorf("%v answered without fresh facts: exit %d stderr %q", args, code, stderr)
+		if code, stdout, stderr := awa(t, root, args...); code != 0 || !strings.Contains(stdout, "cache:  incomplete") || !strings.Contains(stdout, "key:    unavailable") || !strings.Contains(stdout, "exact match: not looked up") {
+			t.Errorf("%v without fresh facts: exit %d\n%s\n%s", args, code, stdout, stderr)
 		}
 	}
+	_, stdout, _ = awa(t, root, "run", "explain", "--json", "--", "sh", "-c", validationBuild)
+	var incomplete struct {
+		Data struct {
+			Outcome    string                     `json:"outcome"`
+			Reason     string                     `json:"reason"`
+			Current    map[string]json.RawMessage `json:"current"`
+			ExactMatch map[string]json.RawMessage `json:"exact_match"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &incomplete); err != nil {
+		t.Fatalf("incomplete explain: %v\n%s", err, stdout)
+	}
+	if d := incomplete.Data; d.Outcome != "incomplete" || d.Reason != "external-facts-unacquired" ||
+		string(d.Current["key"]) != "null" || string(d.Current["cacheable"]) != "null" || string(d.Current["assessment"]) != `"identity-unavailable"` ||
+		string(d.ExactMatch["assessment"]) != `"current-identity-unavailable"` || string(d.ExactMatch["exists"]) != "null" || string(d.ExactMatch["healthy"]) != "null" {
+		t.Errorf("incomplete explain JSON = %+v", d)
+	}
+	for _, args := range [][]string{{"run", "ls", "--json"}, {"run", "ls", "--all", "--json"}, {"run", "ls", "--near", "--json"}} {
+		code, stdout, stderr := awa(t, root, args...)
+		var ls struct {
+			Data struct {
+				Assessment string `json:"assessment"`
+				Reusable   []struct {
+					Reusable bool `json:"reusable"`
+				} `json:"reusable"`
+				Unassessed []struct {
+					Reason string `json:"reason"`
+				} `json:"unassessed"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &ls); err != nil || code != 0 {
+			t.Fatalf("%v: exit %d %v\n%s", args, code, err, stderr)
+		}
+		if ls.Data.Assessment != "incomplete" || len(ls.Data.Unassessed) != 1 || ls.Data.Unassessed[0].Reason != "external-facts-unacquired" {
+			t.Errorf("%v = %+v, want one unassessed row", args, ls.Data)
+		}
+		for _, r := range ls.Data.Reusable {
+			if r.Reusable {
+				t.Errorf("%v lists a reusable row without fresh facts", args)
+			}
+		}
+	}
+	if code, stdout, _ := awa(t, root, "run", "ls"); code != 0 || !strings.Contains(stdout, "unassessed (identity facts only awa run acquires):") {
+		t.Errorf("human ls: exit %d\n%s", code, stdout)
+	}
+	if code, stdout, _ := awa(t, root, "run", "ls", "--near"); code != 0 || !strings.Contains(stdout, "reusable now:\n  none among the assessed runs\n") || strings.Contains(stdout, "  none\n") {
+		t.Errorf("human ls --near claims none across unassessed rows: exit %d\n%s", code, stdout)
+	}
 	if l.callCount(t) != 3 {
-		t.Fatalf("explain or ls executed %d probes", l.callCount(t)-3)
+		t.Fatalf("explain, ls or status executed %d probes", l.callCount(t)-3)
 	}
 
 	l.selectVersion(t, "2.0")

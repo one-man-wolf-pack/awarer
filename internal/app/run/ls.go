@@ -106,12 +106,19 @@ func (e LsEntry) Reusable() bool { return e.Reusability.IsReusable() }
 type LsResult struct {
 	Reusable   []LsEntry
 	NearMisses []RunReuseCandidate
+	// Unassessed holds the window's rows whose reuse depends on identity facts only a
+	// run acquires. They appear in no other list, under any view.
+	Unassessed []LsEntry
 	Corrupt    int
 	// Performance carries bounded latency diagnostics for this listing (currently a huge
 	// watched effect root that dominated the single shared effect observation). It is
 	// advisory and empty when no known cause crossed the interactive latency threshold.
 	Performance []perfdiag.Diagnostic
 }
+
+// Incomplete reports whether some row of the window could not be assessed, so counts
+// over the other lists are not counts over the window.
+func (r LsResult) Incomplete() bool { return len(r.Unassessed) > 0 }
 
 // Ls is the current-state reuse view: it reports which recent stored runs are
 // reusable right now (would replay as a cache hit) under their recorded run policy,
@@ -194,9 +201,14 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			continue
 		}
 
-		verdict, cmp, compared, candReport, err := s.reusability(ctx, base, entry, effects, scanCache, req.Near)
+		a, err := s.reusability(ctx, base, entry, effects, scanCache)
 		if err != nil {
 			return LsResult{}, err
+		}
+		verdict := a.verdict
+		if a.unassessed {
+			res.Unassessed = append(res.Unassessed, LsEntry{ID: id, Entry: entry})
+			continue
 		}
 		if verdict.IsReusable() {
 			res.Reusable = append(res.Reusable, LsEntry{ID: id, Entry: entry, Reusability: verdict})
@@ -206,7 +218,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			res.Reusable = append(res.Reusable, LsEntry{ID: id, Entry: entry, Reusability: verdict})
 		}
 		if req.Near {
-			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, cmp, compared, verdict.Reason(), candReport))
+			res.NearMisses = append(res.NearMisses, s.nearCandidate(entry, a, verdict.Reason()))
 		}
 	}
 
@@ -227,22 +239,26 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 // the entry was actually re-keyed against current state (a reusable-kind entry whose
 // inputs/env/config drifted): a short-circuited run — record-only, mutating, or one
 // whose recorded scope could not be re-observed — was never compared, so claiming
-// its categories "matched" would be dishonest — its reason alone explains it.
+// its categories "matched" would be dishonest — its reason alone explains it. A
+// partial comparison, made without the current facts, is likewise reason-only.
 //
-// effectReport is the diagnostic side channel of the effect observation folded into
-// this candidate's current key input, so an effect-state miss carries the root that
-// observation named without a second walk.
+// The assessment's effect report is the diagnostic side channel of the effect
+// observation folded into this candidate's current key input, so an effect-state miss
+// carries the root that observation named without a second walk.
 // The same re-keyed/short-circuited split that decides the score decides the root: a
 // short-circuited candidate's reason is its stored run's own verdict, which today's
 // observation says nothing about, so it keeps the diagnosis without the root.
-func (s *Service) nearCandidate(entry runcache.RunEntry, cmp runcache.KeyComparison, compared bool, reason runcache.MismatchReason, effectReport runcache.EffectReport) RunReuseCandidate {
-	cand := RunReuseCandidate{Entry: entry, Comparison: cmp, Reason: reason}
+func (s *Service) nearCandidate(entry runcache.RunEntry, a lsAssessment, reason runcache.MismatchReason) RunReuseCandidate {
+	cand := RunReuseCandidate{Entry: entry, Comparison: a.cmp, Reason: reason}
 	origin := reasonFromStoredVerdict
-	if compared {
-		cand.setComparison(cmp)
+	if a.compared {
+		cand.setComparison(a.cmp)
+		if a.partial {
+			cand.setReasonOnly()
+		}
 		origin = reasonFromComparison
 	}
-	cand.attachEffect(effectReport, origin)
+	cand.attachEffect(a.effectReport, origin)
 	return cand
 }
 
@@ -293,20 +309,33 @@ func (s *Service) cachedScanFor(base Request, entry runcache.RunEntry, scanCache
 	return scanCache.get(scopeSignature(scope))
 }
 
+// lsAssessment is one row's current-state verdict and the key comparison behind it.
+// cmp is empty for a clean key match and for a short-circuited non-reusable run (which
+// is never re-keyed); compared reports whether the entry was re-keyed against current
+// state at all, and only then is effectReport the report of the effect observation that
+// re-keying used. partial marks a comparison made without the current identity facts:
+// its difference is proof, but not the full delta. unassessed marks a row nothing
+// decides without those facts; its verdict is meaningless.
+type lsAssessment struct {
+	verdict      runcache.RunReusability
+	cmp          runcache.KeyComparison
+	compared     bool
+	partial      bool
+	unassessed   bool
+	effectReport runcache.EffectReport
+}
+
 // reusability computes whether a stored entry is a valid cache-hit candidate right
 // now, reusing the same key derivation a real run would: it rebuilds the current key
 // for the entry's recorded command/cwd/scope under the current config and compares
 // it to the stored key, then applies the same TTL and payload-health gates as the
 // hit path. The worktree scan it needs is taken from scanCache, keyed by the
 // recorded scan policy, so repeated scopes are scanned once.
-//
-// It also returns the typed key comparison behind the verdict — the drift the
-// near-miss view ranks and explains — so a stale run is explained without re-deriving
-// its key. The comparison is empty for a clean key match and for a short-circuited
-// non-reusable run (which is never re-keyed). compared reports whether the entry was
-// re-keyed against current state at all; only then is effectReport the report of the
-// effect observation that re-keying used.
-func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effects *lsEffects, scanCache *lsScans, near bool) (verdict runcache.RunReusability, cmp runcache.KeyComparison, compared bool, effectReport runcache.EffectReport, err error) {
+func (s *Service) reusability(ctx context.Context, base Request, entry runcache.RunEntry, effects *lsEffects, scanCache *lsScans) (lsAssessment, error) {
+	notReusable := func(reason runcache.MismatchReason) (lsAssessment, error) {
+		v, err := runcache.NotReusable(reason)
+		return lsAssessment{verdict: v}, err
+	}
 	// A run the store recorded as non-reusable history — record-only, mutating, or
 	// post-scan-failed — was never a cache candidate, so it can never become reusable
 	// now: short-circuit to its stored reason rather than re-deriving a key for it.
@@ -314,20 +343,18 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	// reusable, and keeps the idempotent-formatter case correct (the first mutating
 	// run stays non-reusable history; only a later no-op run can be reusable).
 	if entry.Reuse.Kind() != runcache.ReuseReusable {
-		v, err := runcache.NotReusable(entry.Reuse.Reason())
-		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return notReusable(entry.Reuse.Reason())
 	}
 	// A recorded scope that cannot be re-observed must not abort the whole listing
 	// when the run configuration identity alone already proves the entry stale: that
 	// identity needs no scan. Without that proof the refusal below stands, since
 	// nothing else establishes the entry's state.
 	if storedScopeProblem(entry) != nil && entry.KeyInput.RunConfigHash != runConfigHash(base.Config, s.deps.Hasher) {
-		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(runcache.DiffRunConfigChanged))
-		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return notReusable(runcache.ReasonFromDiffCode(runcache.DiffRunConfigChanged))
 	}
 	req, err := s.requestFromEntry(base, entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return lsAssessment{}, err
 	}
 	// A recorded scope that observes a directory today's selected policy waives is
 	// proof enough that the current key differs from the recorded one: the entry was
@@ -335,20 +362,19 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	validation, err := selectValidation(req)
 	var conflict *ValidationConflictError
 	if errors.As(err, &conflict) {
-		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(runcache.DiffScopeChanged))
-		return v, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return notReusable(runcache.ReasonFromDiffCode(runcache.DiffScopeChanged))
 	}
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return lsAssessment{}, err
 	}
 	if validation, _, err = s.withPreRunFacts(ctx, req, validation, nil); err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return lsAssessment{}, err
 	}
 	scope := *req.EffectiveScope
 	scope.Waived = waivedDirs(validation)
 	effect, effectReport, err := effects.get(scope.Waived)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return lsAssessment{}, err
 	}
 
 	sig := scopeSignature(scope)
@@ -369,39 +395,46 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 			Now:                s.deps.Clock.Now(),
 		})
 		if err != nil {
-			return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+			return lsAssessment{}, err
 		}
 		scanCache.put(sig, scanRes, newInputReport(s.deps.Clock.Now().Sub(scanStart).Milliseconds(), scanRes.Stats().Files))
 	}
 
 	current := s.currentKeyInputFor(req, scope, validation, scanRes.TreeHash(), effect)
-	cmp = runcache.CompareKeyInputs(entry.KeyInput, current)
-	// A comparison without the current facts is complete only as a proof of some other
-	// difference; a near-miss candidate would also present it as the full key delta.
-	if current.Validation.FactsUnassessed() && (cmp.Equal() || near) {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, ErrExternalFactsUnassessed
+	a := lsAssessment{
+		cmp:          runcache.CompareKeyInputs(entry.KeyInput, current),
+		compared:     true,
+		partial:      current.Validation.FactsUnassessed(),
+		effectReport: effectReport,
+	}
+	settle := func(reason runcache.MismatchReason) (lsAssessment, error) {
+		v, err := runcache.NotReusable(reason)
+		a.verdict = v
+		return a, err
 	}
 
 	// A keyed difference means a real run would not hit this entry: name the most
 	// explanatory difference as the reason.
-	if !cmp.Equal() {
-		v, err := runcache.NotReusable(runcache.ReasonFromDiffCode(cmp.PrimaryReason()))
-		return v, cmp, true, effectReport, err
+	if !a.cmp.Equal() {
+		return settle(runcache.ReasonFromDiffCode(a.cmp.PrimaryReason()))
 	}
 	// Key matches; apply the same freshness and payload gates the hit path enforces.
+	// Each settles the row without the facts a partial comparison lacks.
 	if s.expired(entry, req.Config.Run.TTL) {
-		v, err := runcache.NotReusable(runcache.ReasonExpired)
-		return v, cmp, true, effectReport, err
+		return settle(runcache.ReasonExpired)
 	}
 	healthy, err := s.payloadHealth(entry)
 	if err != nil {
-		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
+		return lsAssessment{}, err
 	}
 	if !healthy {
-		v, err := runcache.NotReusable(runcache.ReasonPayloadMissing)
-		return v, cmp, true, effectReport, err
+		return settle(runcache.ReasonPayloadMissing)
 	}
-	return runcache.Reusable(), cmp, true, effectReport, nil
+	if a.partial {
+		return lsAssessment{unassessed: true}, nil
+	}
+	a.verdict = runcache.Reusable()
+	return a, nil
 }
 
 // currentKeyInputFor builds the key input a real run of the entry's command would

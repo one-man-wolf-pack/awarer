@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"awarer/internal/app/status"
+	domainconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/paths"
+	"awarer/internal/output"
 )
 
 // statusDegradationDoc mirrors the wire shape of one status degradation for tests.
@@ -310,5 +314,73 @@ func TestMixedStoreYieldsPartial(t *testing.T) {
 	}
 	if !doc.Checkpoints.Populated {
 		t.Error("populated = false, want true — a readable checkpoint remains")
+	}
+}
+
+func TestStatusRunCountsAreNullOnlyForAnIncompleteWindow(t *testing.T) {
+	nearest := &nearMissDoc{ShortID: "abc"}
+	cases := []struct {
+		name string
+		doc  reviewRunsDoc
+		want string
+	}{
+		{"complete", reviewRunsDoc{Reusable: 2},
+			`{"assessment":"complete","reusable":2,"near":0,"known_reusable":2,"known_near":0,"unassessed":0,"nearest":null}`},
+		{"incomplete", reviewRunsDoc{Reusable: 1, Unassessed: 3},
+			`{"assessment":"incomplete","reusable":null,"near":null,"known_reusable":1,"known_near":0,"unassessed":3,"nearest":null}`},
+		{"failed listing", reviewRunsDoc{unavailable: true},
+			`{"assessment":"unavailable","reusable":0,"near":0,"known_reusable":0,"known_near":0,"unassessed":0,"nearest":null}`},
+	}
+	for _, c := range cases {
+		b, err := json.Marshal(c.doc)
+		if err != nil || string(b) != c.want {
+			t.Errorf("%s = %s, %v; want %s", c.name, b, err, c.want)
+		}
+	}
+	b, err := json.Marshal(reviewRunsDoc{Near: 2, Unassessed: 1, Nearest: nearest})
+	if err != nil || !strings.Contains(string(b), `"known_near":2`) || !strings.Contains(string(b), `"near":null`) || !strings.Contains(string(b), `"short_id":"abc"`) {
+		t.Errorf("an assessed nearest under an incomplete window = %s, %v", b, err)
+	}
+	next := computeStatusNext(statusResultWithRuns(), false, reviewRunsDoc{Unassessed: 1})
+	for _, n := range next {
+		if n.Reason == "no-reusable-runs" {
+			t.Error("an incomplete window suggests recording a check as if none were reusable")
+		}
+	}
+}
+
+func statusResultWithRuns() status.Result {
+	return status.Result{RunCache: status.RunCacheStatus{Recorded: 1, Populated: true}}
+}
+
+func TestStatusHumanQualifiesANearMissFromAnIncompleteWindow(t *testing.T) {
+	var out, errb bytes.Buffer
+	runs := reviewRunsDoc{
+		Near:       1,
+		Unassessed: 2,
+		Nearest:    &nearMissDoc{ShortID: "1a2b3c4d5e6f", Command: []string{"go", "test", "./..."}, Reason: "input-tree-differs"},
+	}
+	renderStatusReview(output.New(&out, &errb), statusResultWithRuns(), reviewDoc{Runs: runs}, domainconfig.DefaultTimeDisplay())
+
+	var line, nearest string
+	for l := range strings.Lines(out.String()) {
+		switch {
+		case strings.HasPrefix(l, "reusable:"):
+			line = l
+		case strings.Contains(l, "nearest"):
+			nearest = l
+		}
+	}
+	if !strings.Contains(line, "unknown") || !strings.Contains(line, "2 run(s) need identity facts") || strings.Contains(line, "none") {
+		t.Errorf("reusable line = %q, want overall unknown with the unassessed count", line)
+	}
+	if !strings.Contains(out.String(), "assessed:  1 near miss") {
+		t.Errorf("near misses not qualified as assessed:\n%s", out.String())
+	}
+	if !strings.Contains(nearest, "nearest assessed:") || !strings.Contains(nearest, "1a2b3c4d5e6f go test ./...") || !strings.Contains(nearest, "not-reusable(input-tree-differs)") {
+		t.Errorf("nearest line = %q, want the candidate qualified as nearest among assessed rows", nearest)
+	}
+	if strings.Contains(out.String(), "nearest:") {
+		t.Errorf("output claims a nearest candidate across unassessed rows:\n%s", out.String())
 	}
 }

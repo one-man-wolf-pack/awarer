@@ -230,28 +230,34 @@ func runRunLs(w *output.Writer, inv invocation) error {
 	// Human output: without --near, print the reusable rows as a flat list of lines (the
 	// JSON object family above is machine-only; the human view stays a scannable list).
 	if !near {
-		if len(res.Reusable) == 0 {
-			if all {
-				w.Line("no runs recorded")
-			} else {
-				w.Line("no reusable runs for the current state")
+		switch {
+		case len(res.Reusable) > 0:
+			for _, e := range res.Reusable {
+				w.Line(lsLine(e, td, now))
 			}
-			emitPerformanceNotes(w, res.Performance)
-			return nil
+		case res.Incomplete():
+			w.Line("no reusable runs among the assessed runs")
+		case all:
+			w.Line("no runs recorded")
+		default:
+			w.Line("no reusable runs for the current state")
 		}
-		for _, e := range res.Reusable {
-			w.Line(lsLine(e, td, now))
-		}
+		renderUnassessed(w, res.Unassessed, td, now)
 		emitPerformanceNotes(w, res.Performance)
 		return nil
 	}
 
 	// --near: a reusable-now section (identical meaning to plain run ls) followed by a
 	// clearly separated near-miss section, so "no reusable runs" never dead-ends.
+	// An unassessed row may be either, so an empty section is "none" only among the rest.
+	none := "  none"
+	if res.Incomplete() {
+		none = "  none among the assessed runs"
+	}
 	w.Line("reusable now:")
 	reusable := reusableNow(res.Reusable)
 	if len(reusable) == 0 {
-		w.Line("  none")
+		w.Line(none)
 	}
 	for _, e := range reusable {
 		w.Line("  " + lsLine(e, td, now))
@@ -259,7 +265,7 @@ func runRunLs(w *output.Writer, inv invocation) error {
 	w.Line("")
 	w.Line("near misses:")
 	if len(res.NearMisses) == 0 {
-		w.Line("  none")
+		w.Line(none)
 	} else {
 		for _, c := range res.NearMisses {
 			for _, line := range nearLines(c, td, now) {
@@ -267,6 +273,7 @@ func runRunLs(w *output.Writer, inv invocation) error {
 			}
 		}
 	}
+	renderUnassessed(w, res.Unassessed, td, now)
 	warnCorruptRuns(w, res.Corrupt)
 	emitPerformanceNotes(w, res.Performance)
 	return nil
@@ -320,17 +327,34 @@ func changedSampleLines(s runcache.ChangedPathSample) []string {
 	return []string{head}
 }
 
+// renderUnassessed prints the rows no verdict covers as their own section, so they
+// never read as reusable or as a near miss.
+func renderUnassessed(w *output.Writer, rows []apprun.LsEntry, td domainconfig.TimeDisplay, now time.Time) {
+	if len(rows) == 0 {
+		return
+	}
+	w.Line("")
+	w.Line("unassessed (identity facts only awa run acquires):")
+	for _, e := range rows {
+		w.Line("  " + lsLineStatus(e, td, now, "unassessed("+apprun.ReasonExternalFactsUnacquired+")"))
+	}
+}
+
 // lsLine renders a single run for "run ls", ending with the reusability verdict so
 // an agent can see at a glance whether the shown invocation is replayable now.
 func lsLine(e apprun.LsEntry, td domainconfig.TimeDisplay, now time.Time) string {
 	if e.Corrupt {
 		return fmt.Sprintf("%s  [corrupt metadata]  not-reusable(%s)", e.ID.Short(), runcache.ReasonCorrupt)
 	}
-	en := e.Entry
 	status := "reusable"
 	if !e.Reusable() {
 		status = fmt.Sprintf("not-reusable(%s)", e.Reusability.Reason())
 	}
+	return lsLineStatus(e, td, now, status)
+}
+
+func lsLineStatus(e apprun.LsEntry, td domainconfig.TimeDisplay, now time.Time, status string) string {
+	en := e.Entry
 	// Mark a partial stored payload, matching run log: the shown invocation's evidence
 	// is incomplete, so run show of it will not be the full command output.
 	trunc := ""
@@ -1017,12 +1041,30 @@ type lsEntryDoc struct {
 // rather than on the document's top-level type. It always carries the diagnostics block
 // (performance is a stable array, empty when nothing crossed the interactive threshold),
 // so machine-readable latency facts never live only on stderr.
+//
+// assessment is "incomplete" when some window rows need identity facts only a run
+// acquires; those rows are listed in unassessed only, so reusable and near_misses then
+// cover the assessed rows rather than the whole window.
 type lsListDoc struct {
 	Near        bool               `json:"near"`
+	Assessment  string             `json:"assessment"`
 	Reusable    []lsEntryDoc       `json:"reusable"`
 	NearMisses  []nearMissDoc      `json:"near_misses"`
+	Unassessed  []lsUnassessedDoc  `json:"unassessed"`
 	Corrupt     int                `json:"corrupt"`
 	Diagnostics perfDiagnosticsDoc `json:"diagnostics"`
+}
+
+// lsUnassessedDoc has no reusable flag or score: nothing decided either. Key is the
+// recorded key, not a current one.
+type lsUnassessedDoc struct {
+	ID         string               `json:"id"`
+	Command    []string             `json:"command"`
+	CWD        string               `json:"cwd"`
+	Key        string               `json:"key"`
+	StartedAt  string               `json:"started_at"`
+	Reason     string               `json:"reason"`
+	Validation *validationPolicyDoc `json:"validation,omitempty"`
 }
 
 // reusableNow returns only the entries reusable for the current state. Under --all
@@ -1064,10 +1106,29 @@ func lsView(res apprun.LsResult, near bool) lsListDoc {
 			misses = append(misses, nearMissView(c))
 		}
 	}
+	assessment := "complete"
+	if res.Incomplete() {
+		assessment = "incomplete"
+	}
+	unassessed := make([]lsUnassessedDoc, 0, len(res.Unassessed))
+	for _, e := range res.Unassessed {
+		en := e.Entry
+		unassessed = append(unassessed, lsUnassessedDoc{
+			ID:         en.ID.String(),
+			Command:    en.KeyInput.Command.Argv,
+			CWD:        en.KeyInput.CWD.String(),
+			Key:        en.Key.String(),
+			StartedAt:  en.StartedAt.UTC().Format(time.RFC3339Nano),
+			Reason:     apprun.ReasonExternalFactsUnacquired,
+			Validation: validationPolicyView(en.KeyInput.Validation, en.PostRunFacts),
+		})
+	}
 	return lsListDoc{
 		Near:        near,
+		Assessment:  assessment,
 		Reusable:    lsDocs(reusable),
 		NearMisses:  misses,
+		Unassessed:  unassessed,
 		Corrupt:     res.Corrupt,
 		Diagnostics: perfDiagnosticsBlock(res.Performance),
 	}

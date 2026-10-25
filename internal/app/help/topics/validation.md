@@ -138,7 +138,10 @@ so a different report means a miss. Up to 8 probes per policy.
   output; only reuse is lost. Before the run that is `external-facts-unavailable`;
   after it, `external-facts-unavailable-post-run`. Different bytes after the run
   are `external-facts-changed`. Without the grant, explain, `run ls`, and status
-  report that same blocker with every probe `denied`, and run none.
+  report that same blocker with every probe `denied`, and run none. With the
+  grant they run none either, so a run that needs current probe reports is
+  `incomplete` in explain and listed under `unassessed` by `run ls` and status,
+  never a hit or a miss; `awa run` acquires them.
 - **Privacy.** Probe output is never stored or shown, also on failure. Runs keep
   each probe's status and a fingerprint of its stdout. A fingerprint is not
   encryption: a short guessable report can be guessed.

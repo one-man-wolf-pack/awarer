@@ -34,6 +34,9 @@ const (
 	// OutcomeCorrupt means the entry that would be the answer is durably corrupt:
 	// its metadata or payload failed validation. It is never hidden as a miss.
 	OutcomeCorrupt Outcome = "corrupt"
+	// OutcomeIncomplete means current identity needs external facts only a run
+	// acquires, and no other rule decides what a run would do.
+	OutcomeIncomplete Outcome = "incomplete"
 )
 
 // Reason tokens that are not key-input difference codes. Difference-based reasons
@@ -83,6 +86,9 @@ const (
 	ExactLookupUnavailable ExactAssessment = iota
 	ExactComplete
 	ExactHealthUnavailable
+	// ExactIdentityUnavailable means no lookup was performed: without the current key
+	// there is nothing to look up, so existence and health are both unknown.
+	ExactIdentityUnavailable
 )
 
 // ExactHit is a stored entry whose key equals the current key. Healthy is the
@@ -112,7 +118,14 @@ type ExplainSubject struct {
 	// ProbeAuthorization is the current grant check for a policy declaring probes;
 	// reading it runs nothing.
 	ProbeAuthorization runcache.ProbeAuthorization
+	// IdentityUnavailable means a granted policy's facts were not acquired, so there is
+	// no current key and Key is zero.
+	IdentityUnavailable bool
 }
+
+// CacheableKnown reports whether Cacheable is established. A policy blocker proves
+// false without the missing facts; true would still depend on them.
+func (s ExplainSubject) CacheableKnown() bool { return !s.IdentityUnavailable || !s.Cacheable }
 
 // ExplainResult is the full, rendered-by-CLI explanation. Candidates are the shared
 // RunReuseCandidate type run ls --near also uses, so both surfaces rank the same way
@@ -204,6 +217,18 @@ type verdict struct {
 // replay. It does not search for nearest candidates.
 func (s *Service) currentVerdict(ctx context.Context, req Request, kc keyContext) (verdict, error) {
 	var v verdict
+	if kc.KeyInput.Validation.FactsUnassessed() {
+		v.Exact = ExactMatch{Assessment: ExactIdentityUnavailable}
+		switch {
+		case kc.Reason != "":
+			v.Outcome, v.Reason = policyOutcome(kc.Reason.String(), req.StdinMode)
+		case req.Policy.Refresh:
+			v.Outcome, v.Reason = OutcomeMiss, reasonRefreshRequested
+		default:
+			v.Outcome, v.Reason = OutcomeIncomplete, ReasonExternalFactsUnacquired
+		}
+		return v, nil
+	}
 
 	// Resolve the key pointer first, regardless of policy: even a run that would not
 	// use the cache benefits an agent by reporting that a matching entry exists. The
@@ -291,9 +316,7 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
-	if kc.KeyInput.Validation.FactsUnassessed() {
-		return ExplainResult{}, ErrExternalFactsUnassessed
-	}
+	unassessed := kc.KeyInput.Validation.FactsUnassessed()
 	v, err := s.currentVerdict(ctx, req, kc)
 	if err != nil {
 		return ExplainResult{}, err
@@ -301,13 +324,14 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 
 	res := ExplainResult{
 		Subject: ExplainSubject{
-			Key:       kc.Key,
+			Key:       currentKey(kc, unassessed),
 			KeyInput:  kc.KeyInput,
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
 			Exact:     v.Exact,
 
-			ProbeAuthorization: kc.Authorization,
+			ProbeAuthorization:  kc.Authorization,
+			IdentityUnavailable: unassessed,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -367,9 +391,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
-	if kc.KeyInput.Validation.FactsUnassessed() {
-		return ExplainResult{}, ErrExternalFactsUnassessed
-	}
+	unassessed := kc.KeyInput.Validation.FactsUnassessed()
 
 	// The outcome reflects what a real run would do with the current key — the same
 	// key-pointer lookup, TTL, and failure-policy rules as Run — never merely whether
@@ -384,6 +406,15 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	// regardless of whether it is the entry the current key resolves to.
 	cand := newCandidate(stored, kc.KeyInput)
 	cmp := cand.Comparison
+	if unassessed {
+		// Without the current facts the comparison proves only the differences it found;
+		// it is neither the full delta nor a closeness to rank.
+		if cmp.Equal() {
+			cand.Reason = ""
+		}
+		cand.setReasonOnly()
+		cmp = runcache.KeyComparison{}
+	}
 	if hit := v.Exact.Hit; hit != nil && hit.RunID == stored.ID {
 		cand.Healthy = hit.Healthy
 		cand.HealthChecked = v.Exact.Assessment == ExactComplete
@@ -416,13 +447,14 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 
 	res := ExplainResult{
 		Subject: ExplainSubject{
-			Key:       kc.Key,
+			Key:       currentKey(kc, unassessed),
 			KeyInput:  kc.KeyInput,
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
 			Exact:     v.Exact,
 
-			ProbeAuthorization: kc.Authorization,
+			ProbeAuthorization:  kc.Authorization,
+			IdentityUnavailable: unassessed,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -443,6 +475,15 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		}
 	}
 	return res, nil
+}
+
+// currentKey withholds the key built over unacquired facts: it identifies no state a
+// run could look up or publish.
+func currentKey(kc keyContext, unassessed bool) runcache.RunKey {
+	if unassessed {
+		return runcache.RunKey{}
+	}
+	return kc.Key
 }
 
 // requestFromEntry rebuilds a run request from a stored entry's command, cwd,

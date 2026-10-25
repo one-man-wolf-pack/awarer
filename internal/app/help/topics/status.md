@@ -58,6 +58,9 @@ next:
 - `reusable:` counts runs replayable for the current observed state. When none
   are, it reports how many near misses exist and points at `awa run ls --near`;
   a `nearest:` sub-line then names the closest candidate and its reason token.
+  Runs whose reuse needs identity-probe reports only `awa run` acquires make it
+  `unknown`, with their count and what the other runs established; a near miss
+  shown then is the nearest among those others.
   When that reason is `effect-state-differs` or `effect-state-unavailable` *and*
   the run's state was compared against an observation that identified a dominant
   watched root, one further `effect:` line names that root. Otherwise the reason

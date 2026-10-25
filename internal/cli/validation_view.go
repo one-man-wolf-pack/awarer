@@ -62,6 +62,9 @@ func identityFactsLine(v *runcache.ValidationScope, post []runcache.ExternalFact
 		if failed.status == runcache.FactNotAcquired {
 			return "identity probes not run: this run could not be reused anyway"
 		}
+		if failed.status == runcache.FactUnassessed {
+			return "approved identity probes not run: only awa run acquires their reports, so current reuse is not assessed"
+		}
 		if failed.status == runcache.FactDenied {
 			return "reuse unavailable: " + probeDenialLine(auth)
 		}

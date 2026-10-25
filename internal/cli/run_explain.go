@@ -237,9 +237,12 @@ type explainSkippedDoc struct {
 	Samples []explainSkippedSampleDoc `json:"samples"`
 }
 
+// explainCurrentDoc keeps key and cacheable as non-omitted pointers: while identity
+// facts are unacquired, null is the unknown current key, never an empty or partial one.
 type explainCurrentDoc struct {
-	Key           string               `json:"key"`
-	Cacheable     bool                 `json:"cacheable"`
+	Assessment    string               `json:"assessment"`
+	Key           *string              `json:"key"`
+	Cacheable     *bool                `json:"cacheable"`
 	Command       []string             `json:"command"`
 	CWD           string               `json:"cwd"`
 	InputTreeHash string               `json:"input_tree_hash"`
@@ -276,12 +279,20 @@ type explainDoc struct {
 
 func explainView(res apprun.ExplainResult) explainDoc {
 	ki := res.Subject.KeyInput
+	assessment, key, cacheable := "complete", new(res.Subject.Key.String()), new(res.Subject.Cacheable)
+	if res.Subject.IdentityUnavailable {
+		assessment, key = "identity-unavailable", nil
+	}
+	if !res.Subject.CacheableKnown() {
+		cacheable = nil
+	}
 	doc := explainDoc{
 		Outcome: string(res.Outcome),
 		Reason:  res.Reason,
 		Current: explainCurrentDoc{
-			Key:           res.Subject.Key.String(),
-			Cacheable:     res.Subject.Cacheable,
+			Assessment:    assessment,
+			Key:           key,
+			Cacheable:     cacheable,
 			Command:       ki.Command.Argv,
 			CWD:           ki.CWD.String(),
 			InputTreeHash: ki.InputTreeHash.String(),
@@ -320,6 +331,8 @@ func exactView(m apprun.ExactMatch) explainExactDoc {
 		return explainExactDoc{Assessment: "complete", Exists: new(true), RunID: m.Hit.RunID.String(), Healthy: new(m.Hit.Healthy)}
 	case apprun.ExactHealthUnavailable:
 		return explainExactDoc{Assessment: "health-unavailable", Exists: new(true), RunID: m.Hit.RunID.String()}
+	case apprun.ExactIdentityUnavailable:
+		return explainExactDoc{Assessment: "current-identity-unavailable"}
 	default:
 		return explainExactDoc{Assessment: "lookup-unavailable"}
 	}
@@ -337,7 +350,11 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 	if res.Reason != "" {
 		w.Linef("reason: %s", humanReason(res.Reason))
 	}
-	w.Linef("key:    %s", res.Subject.Key.String())
+	if res.Subject.IdentityUnavailable {
+		w.Line("key:    unavailable (identity facts are acquired only by awa run)")
+	} else {
+		w.Linef("key:    %s", res.Subject.Key.String())
+	}
 	if v := res.Subject.KeyInput.Validation; v != nil {
 		if res.Outcome == apprun.OutcomeHit {
 			w.Linef("replay: %s", validationReplayLine(v))
@@ -352,6 +369,8 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 	switch exact := res.Subject.Exact; {
 	case exact.Assessment == apprun.ExactLookupUnavailable:
 		w.Line("exact match: unavailable")
+	case exact.Assessment == apprun.ExactIdentityUnavailable:
+		w.Line("exact match: not looked up (current identity unavailable)")
 	case exact.Assessment == apprun.ExactHealthUnavailable:
 		w.Linef("exact match: %s (health unavailable)", exact.Hit.RunID.Short())
 	case exact.Hit != nil && exact.Hit.Healthy:

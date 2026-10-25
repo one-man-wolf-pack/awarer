@@ -130,6 +130,13 @@ func (c *RunReuseCandidate) setComparison(cmp runcache.KeyComparison) {
 	}
 }
 
+// setReasonOnly drops a comparison made without the current facts, keeping the reason
+// it proved: that comparison never examined the facts, so scoring it would claim they
+// matched.
+func (c *RunReuseCandidate) setReasonOnly() {
+	c.Comparison, c.Score, c.uncomputed = runcache.KeyComparison{}, CandidateScore{}, true
+}
+
 // scoreCategory pairs a stable category name with the difference code that, when
 // present, means the category differs.
 type scoreCategory struct {

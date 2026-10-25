@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -448,10 +449,15 @@ type reviewGitDoc struct {
 // how many near misses exist plus the nearest one. The nearest candidate carries its
 // own optional effect diagnosis inside the shared near-miss object; status adds no
 // second copy of that fact at its own level.
+//
+// Reusable and Near count the assessed rows. When Unassessed rows exist the JSON
+// reports them as known_reusable/known_near and leaves reusable/near null, since the
+// window's totals are then unknown; a nearest candidate is from the assessed rows.
 type reviewRunsDoc struct {
-	Reusable int          `json:"reusable"`
-	Near     int          `json:"near"`
-	Nearest  *nearMissDoc `json:"nearest"`
+	Reusable   int
+	Near       int
+	Unassessed int
+	Nearest    *nearMissDoc
 	// nearestEffect is the same typed diagnosis Nearest.Effect was projected from, kept
 	// unexported so the human dashboard renders the fact through the shared renderer
 	// instead of reading it back out of the JSON shape. Both come from one candidate, so
@@ -460,6 +466,33 @@ type reviewRunsDoc struct {
 	// unavailable marks a section whose listing failed: its zero counts are not a
 	// verdict, so the dashboard points at the warning instead of claiming none.
 	unavailable bool
+}
+
+func (d reviewRunsDoc) MarshalJSON() ([]byte, error) {
+	doc := struct {
+		Assessment    string       `json:"assessment"`
+		Reusable      *int         `json:"reusable"`
+		Near          *int         `json:"near"`
+		KnownReusable int          `json:"known_reusable"`
+		KnownNear     int          `json:"known_near"`
+		Unassessed    int          `json:"unassessed"`
+		Nearest       *nearMissDoc `json:"nearest"`
+	}{
+		Assessment:    "complete",
+		Reusable:      new(d.Reusable),
+		Near:          new(d.Near),
+		KnownReusable: d.Reusable,
+		KnownNear:     d.Near,
+		Unassessed:    d.Unassessed,
+		Nearest:       d.Nearest,
+	}
+	switch {
+	case d.unavailable:
+		doc.Assessment = "unavailable"
+	case d.Unassessed > 0:
+		doc.Assessment, doc.Reusable, doc.Near = "incomplete", nil, nil
+	}
+	return json.Marshal(doc)
 }
 
 // --- status review dashboard: computation ---
@@ -519,7 +552,7 @@ func computeStatusReview(ctx context.Context, w *output.Writer, proj projfs.Proj
 	checkpoint, dirty, baseline := computeStatusChanges(diag, ctx, layout, cfg, proj, res)
 	git := computeStatusGit(diag, ctx, layout.Root())
 	runs, runsPerf := computeStatusRuns(diag, ctx, layout, cfg, proj, res)
-	next := computeStatusNext(res, dirty.Dirty, runs.Reusable, runs.Near)
+	next := computeStatusNext(res, dirty.Dirty, runs)
 	// Baseline freshness against the live git HEAD, best-effort: a git failure degrades
 	// to no freshness note (never a failed status). Only classified when there is a
 	// checkpoint baseline to relate.
@@ -640,18 +673,20 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 		diag.warn("runs", "run-ls-failed", "cannot read reusable runs: "+err.Error())
 		return reviewRunsDoc{unavailable: true}, nil
 	}
+	unassessed := len(ls.Unassessed)
 	if len(ls.Reusable) > 0 {
-		return reviewRunsDoc{Reusable: len(ls.Reusable)}, ls.Performance
+		return reviewRunsDoc{Reusable: len(ls.Reusable), Unassessed: unassessed}, ls.Performance
 	}
 	if ls.Corrupt > 0 {
 		diag.warn("runs", "corrupt", fmt.Sprintf("%d stored run(s) skipped due to corrupt metadata", ls.Corrupt))
 	}
 	if len(ls.NearMisses) == 0 {
-		return reviewRunsDoc{}, ls.Performance
+		return reviewRunsDoc{Unassessed: unassessed}, ls.Performance
 	}
 	nearest := nearMissView(ls.NearMisses[0])
 	return reviewRunsDoc{
 		Near:          len(ls.NearMisses),
+		Unassessed:    unassessed,
 		Nearest:       &nearest,
 		nearestEffect: ls.NearMisses[0].Effect,
 	}, ls.Performance
@@ -662,7 +697,8 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 // exist, or checkpoint when nothing has been recorded yet. Each suggestion carries a
 // machine token (kind/reason) and a tokenized argv alongside the human display line,
 // so an agent acts on it without parsing text and the human sees the same commands.
-func computeStatusNext(res status.Result, dirty bool, reusable, near int) []reviewNextDoc {
+func computeStatusNext(res status.Result, dirty bool, runs reviewRunsDoc) []reviewNextDoc {
+	reusable, near := runs.Reusable, runs.Near
 	// A non-nil slice so the JSON field is a stable empty array rather than null.
 	next := []reviewNextDoc{}
 	if !res.Checkpoints.Populated {
@@ -699,7 +735,7 @@ func computeStatusNext(res status.Result, dirty bool, reusable, near int) []revi
 				Display: "awa run explain -- <command>",
 			},
 		)
-	} else if reusable == 0 && res.RunCache.Populated {
+	} else if reusable == 0 && runs.Unassessed == 0 && res.RunCache.Populated {
 		next = append(next, reviewNextDoc{
 			Kind: "run-record", Reason: "no-reusable-runs",
 			Argv:    []string{"awa", "run", "--", "<command>"},
@@ -740,6 +776,22 @@ func computeStatusNext(res status.Result, dirty bool, reusable, near int) []revi
 }
 
 // --- status review dashboard: human rendering ---
+
+// label names the rows the candidate is nearest among, so a candidate from an
+// incomplete window never reads as nearest across the unassessed rows.
+func renderStatusNearest(w *output.Writer, runs reviewRunsDoc, label string) {
+	n := runs.Nearest
+	if n == nil {
+		return
+	}
+	w.Linef("  %s %s %s not-reusable(%s)", label, n.ShortID, strings.Join(n.Command, " "), n.Reason)
+	// At most one compact detail line, and only where the candidate carries an
+	// observed root the reason token above does not already state. The deeper
+	// commands in "next:" carry the exclude/effect-root/record decision.
+	if detail := effectDetail(runs.nearestEffect); detail != "" {
+		w.Linef("  effect:    %s", detail)
+	}
+}
 
 // renderStatusReview prints the review dashboard from the computed facts, so the
 // human dashboard and the JSON payload are two renderings of one source of truth.
@@ -788,20 +840,18 @@ func renderStatusReview(w *output.Writer, res status.Result, r reviewDoc, td dom
 		switch {
 		case r.Runs.unavailable:
 			w.Line("reusable:    unknown — the run listing failed (see the warning above)")
+		case r.Runs.Unassessed > 0:
+			w.Linef("reusable:    unknown — %d run(s) need identity facts only awa run acquires; %d replayable now among the rest — awa run ls",
+				r.Runs.Unassessed, r.Runs.Reusable)
+			if r.Runs.Near > 0 {
+				w.Linef("  assessed:  %d near miss(es), inspect with: awa run ls --near", r.Runs.Near)
+				renderStatusNearest(w, r.Runs, "nearest assessed:")
+			}
 		case r.Runs.Reusable > 0:
 			w.Linef("reusable:    %d run(s) replayable now — awa run ls", r.Runs.Reusable)
 		case r.Runs.Near > 0:
 			w.Linef("reusable:    none — %d near miss(es), inspect with: awa run ls --near", r.Runs.Near)
-			if n := r.Runs.Nearest; n != nil {
-				w.Linef("  nearest:   %s %s not-reusable(%s)", n.ShortID,
-					strings.Join(n.Command, " "), n.Reason)
-				// At most one compact detail line, and only where the candidate carries an
-				// observed root the reason token above does not already state. The deeper
-				// commands in "next:" carry the exclude/effect-root/record decision.
-				if detail := effectDetail(r.Runs.nearestEffect); detail != "" {
-					w.Linef("  effect:    %s", detail)
-				}
-			}
+			renderStatusNearest(w, r.Runs, "nearest:  ")
 		default:
 			w.Line("reusable:    none for the current state")
 		}

@@ -123,6 +123,22 @@ the outcome, an unreadable entry keeps that `outcome` and `reason`, adds a
 warning, and exits 0. A reader that decodes `null` as `false` misreads unknown
 as absent or unhealthy.
 
+An approved identity probe reports only during `awa run`, so diagnostics may lack
+the current key. Explain then has `current.assessment: "identity-unavailable"`
+(else `complete`), `current.key: null`, `current.cacheable: null` unless a policy
+already proves `false`, and `exact_match.assessment:
+"current-identity-unavailable"` with `exists` and `healthy` `null`: nothing was
+looked up. Unless `--refresh` or a policy decides, the outcome is `incomplete`
+with reason `external-facts-unacquired`, exit 0. A candidate it disproves keeps
+its reason without a score; that is not a miss. `run ls --json` adds
+`assessment` (`complete` or `incomplete`) and an `unassessed` array of such rows
+(id, command, cwd, recorded key, reason), never also in `reusable` or
+`near_misses`. `status --json` marks `review.runs.assessment` as `complete`,
+`incomplete`, or `unavailable` when the run listing failed (then see its
+warning). When incomplete, `review.runs.reusable` and `near` are `null`;
+`known_reusable`, `known_near` and `unassessed` count what was established, and
+`nearest` is from the assessed rows. Read `null` as unknown, never as `0`.
+
 Optional keys, on the other hand, are omitted when they have no value: a
 checkpoint with no message carries no `message` key, a run with capture disabled
 carries no `outputs` block, and a binary with no VCS stamping carries no

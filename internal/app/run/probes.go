@@ -2,7 +2,6 @@ package run
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"awarer/internal/domain/hashing"
@@ -16,7 +15,9 @@ const (
 	probeMaxStderr    = 64 << 10
 )
 
-var ErrExternalFactsUnassessed = errors.New("the selected validation policy requires identity facts that only awa run acquires; this diagnostic cannot assess current reuse without them")
+// ReasonExternalFactsUnacquired is a current-assessment token, not a historical reuse
+// reason: no run records it, so it stays outside runcache's persisted vocabulary.
+const ReasonExternalFactsUnacquired = "external-facts-unacquired"
 
 type factAcquirer func(ctx context.Context, v *runcache.ValidationScope) ([]runcache.ExternalFact, runcache.ProbeAuthorization, error)
 
