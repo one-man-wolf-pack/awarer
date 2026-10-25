@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.5.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.1...v0.5.0) (2026-10-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **run:** with an approved identity probe whose facts are not yet acquired, `awa run explain --json` returns outcome `incomplete` / reason `external-facts-unacquired` with `current.key` and `current.cacheable` null, a new `current.assessment`, and `exact_match.assessment: "current-identity-unavailable"` (exists/healthy null) instead of exiting non-zero; `awa run ls --json` adds `assessment` and `unassessed`; `awa status --json` adds `review.runs.assessment`, `known_reusable`, `known_near` and `unassessed`, and sets `review.runs.reusable`/`near` to null for an incomplete window. Complete documents keep their values. A reader that decodes null as false or 0 misreads unknown.
+* **run:** `awa run explain --from-run` (or `--last` when its selected run turns corrupt before it is read) on a run with corrupt metadata now exits 5 with empty stdout instead of exiting 0 with a `run.explain` document whose `current` fields are empty. Successful document schemas are unchanged.
+* **run:** `awa run explain --json` adds `exact_match.assessment`, and `exact_match.exists` / `exact_match.healthy` may now be `null` when the entry could not be read or verified. A reader that decodes `null` as `false` misreads unknown as absent or unhealthy. Complete assessments keep their previous values.
+
+### Features
+
+* **config:** authorize identity probes with an operator-held grant ([6e614a5](https://github.com/one-man-wolf-pack/awarer/commit/6e614a5d93c40e426077691e908add26c3e3b564))
+* **fsx:** open grant-store nodes without waiting on special files ([0834ae7](https://github.com/one-man-wolf-pack/awarer/commit/0834ae78ae5a5b9833162624b6a8e1da27e875f3))
+* **run:** key a named validation policy on granted identity probe reports ([f43e81c](https://github.com/one-man-wolf-pack/awarer/commit/f43e81cfee82cd98da55b008b4341931abe5c24a))
+* **run:** replay a named validation policy's result without observing its declared directories ([f8963e4](https://github.com/one-man-wolf-pack/awarer/commit/f8963e4c743f2dcf396ea7fc2be591d2dbd4d292))
+
+
+### Bug Fixes
+
+* **fsx:** keep the grant-store kind check lint-clean on linux ([61e105e](https://github.com/one-man-wolf-pack/awarer/commit/61e105ea767ac48b7cd4cb3c684716b145d7dc7b))
+* **run:** fail run explain when the selected stored run's metadata is corrupt ([aefdc3c](https://github.com/one-man-wolf-pack/awarer/commit/aefdc3c910e6eee21824eda4f6c3350105814dea))
+* **run:** report an unreadable exact entry in run explain as unknown, not absent ([dce16b6](https://github.com/one-man-wolf-pack/awarer/commit/dce16b697f32f8de8cc2dc5b213f658800aff6e6))
+* **run:** report unacquired identity facts as an incomplete assessment ([bd387db](https://github.com/one-man-wolf-pack/awarer/commit/bd387db7acef99c71f936a3611effd4cd9cd7697))
+
+
+### Documentation
+
+* condense the agent awa guide and show focused Go test selection ([bfb1bd5](https://github.com/one-man-wolf-pack/awarer/commit/bfb1bd5aec0cf1d8fafd40971081ac1935619cda))
+* **help:** lead the agent guide with retained execution results ([9b86ba1](https://github.com/one-man-wolf-pack/awarer/commit/9b86ba1a557de58f576d9d0be16da82b60f8eb31))
+* **help:** reconcile validation, assessment, and JSON evolution guidance ([7d3b73d](https://github.com/one-man-wolf-pack/awarer/commit/7d3b73d7f4d2dd08a57b3c1533e06a32506ec5ba))
+
+
+### Miscellaneous Chores
+
+* track shared Claude settings that disable automatic commit attribution ([3a62d8f](https://github.com/one-man-wolf-pack/awarer/commit/3a62d8f18f514ca8531f82727db68cc3b055d905))
+
 ## [0.4.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.0...v0.4.1) (2026-10-11)
 
 
