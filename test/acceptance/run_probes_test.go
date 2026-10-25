@@ -95,14 +95,15 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 				Cacheable bool   `json:"cacheable"`
 			} `json:"current"`
 			ExactMatch struct {
-				Exists bool `json:"exists"`
+				Assessment string `json:"assessment"`
+				Exists     *bool  `json:"exists"`
 			} `json:"exact_match"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &explained); err != nil {
 		t.Fatalf("explain: %v\n%s\n%s", err, stdout, stderr)
 	}
-	if e := explained.Data; e.Outcome != "uncached" || e.Current.Cacheable || e.Current.Key != denied.Data.Cache.Key || e.ExactMatch.Exists {
+	if e := explained.Data; e.Outcome != "uncached" || e.Current.Cacheable || e.Current.Key != denied.Data.Cache.Key || e.ExactMatch.Assessment != "complete" || e.ExactMatch.Exists == nil || *e.ExactMatch.Exists {
 		t.Fatalf("denied explain = %+v, want uncached under the run's key %s", e, denied.Data.Cache.Key)
 	}
 

@@ -209,6 +209,7 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 		if err := w.JSON("run.explain", explainView(res)); err != nil {
 			return genericErrorf("%v", err)
 		}
+		emitExplainWarnings(w, res.Warnings)
 		return nil
 	}
 	// Human times follow the same [ui].time policy as run ls/log (explain has no
@@ -249,10 +250,13 @@ type explainCurrentDoc struct {
 	Validation    *validationPolicyDoc `json:"validation,omitempty"`
 }
 
+// explainExactDoc keeps exists/healthy as non-omitted pointers: null is an unknown
+// fact, and folding it into false would claim an absent or unhealthy entry.
 type explainExactDoc struct {
-	Exists  bool   `json:"exists"`
-	RunID   string `json:"run_id"`
-	Healthy bool   `json:"healthy"`
+	Assessment string `json:"assessment"`
+	Exists     *bool  `json:"exists"`
+	RunID      string `json:"run_id"`
+	Healthy    *bool  `json:"healthy"`
 }
 
 type explainDoc struct {
@@ -288,7 +292,7 @@ func explainView(res apprun.ExplainResult) explainDoc {
 			Validation:    validationPolicyView(ki.Validation, nil),
 		},
 		Diagnostics: perfDiagnosticsView(res.Performance),
-		ExactMatch:  exactView(res.Subject.ExactHit),
+		ExactMatch:  exactView(res.Subject.Exact),
 		Differences: diffDocs(res.Differences),
 		Candidates:  nearMissViews(res.Candidates),
 		Warnings:    res.Warnings,
@@ -307,11 +311,18 @@ func skippedView(s runcache.SkippedSummary) explainSkippedDoc {
 	return explainSkippedDoc{Count: s.Count, Allowed: s.Allowed, Samples: samples}
 }
 
-func exactView(hit *apprun.ExactHit) explainExactDoc {
-	if hit == nil {
-		return explainExactDoc{Exists: false}
+func exactView(m apprun.ExactMatch) explainExactDoc {
+	switch m.Assessment {
+	case apprun.ExactComplete:
+		if m.Hit == nil {
+			return explainExactDoc{Assessment: "complete", Exists: new(false), Healthy: new(false)}
+		}
+		return explainExactDoc{Assessment: "complete", Exists: new(true), RunID: m.Hit.RunID.String(), Healthy: new(m.Hit.Healthy)}
+	case apprun.ExactHealthUnavailable:
+		return explainExactDoc{Assessment: "health-unavailable", Exists: new(true), RunID: m.Hit.RunID.String()}
+	default:
+		return explainExactDoc{Assessment: "lookup-unavailable"}
 	}
-	return explainExactDoc{Exists: true, RunID: hit.RunID.String(), Healthy: hit.Healthy}
 }
 
 // --- human output ---
@@ -335,12 +346,15 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 		}
 	}
 
-	if hit := res.Subject.ExactHit; hit != nil {
-		health := "healthy"
-		if !hit.Healthy {
-			health = "unhealthy"
-		}
-		w.Linef("exact match: %s (%s)", hit.RunID.Short(), health)
+	switch exact := res.Subject.Exact; {
+	case exact.Assessment == apprun.ExactLookupUnavailable:
+		w.Line("exact match: unavailable")
+	case exact.Assessment == apprun.ExactHealthUnavailable:
+		w.Linef("exact match: %s (health unavailable)", exact.Hit.RunID.Short())
+	case exact.Hit != nil && exact.Hit.Healthy:
+		w.Linef("exact match: %s (healthy)", exact.Hit.RunID.Short())
+	case exact.Hit != nil:
+		w.Linef("exact match: %s (unhealthy)", exact.Hit.RunID.Short())
 	}
 
 	if len(res.Candidates) > 0 {
@@ -383,7 +397,11 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 		}
 	}
 
-	for _, warn := range res.Warnings {
+	emitExplainWarnings(w, res.Warnings)
+}
+
+func emitExplainWarnings(w *output.Writer, warnings []string) {
+	for _, warn := range warnings {
 		w.Diagnostic("warning: " + warn)
 	}
 }

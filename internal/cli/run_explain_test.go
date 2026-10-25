@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	apprun "awarer/internal/app/run"
+	domainconfig "awarer/internal/domain/config"
 	"awarer/internal/domain/runcache"
+	"awarer/internal/output"
 )
 
 // TestExplainViewSkippedSamplesIncludeReason guards the JSON contract: a skipped
@@ -191,5 +195,62 @@ func TestExplainJSONKeepsEveryDifference(t *testing.T) {
 	view := explainView(apprun.ExplainResult{Outcome: apprun.OutcomeMiss, Differences: cmp})
 	if got := len(view.Differences); got != len(names) {
 		t.Errorf("JSON differences = %d, want all %d: truncation must not reach the machine surface", got, len(names))
+	}
+}
+
+func TestExplainExactMatchProjectsUnknownFactsAsNull(t *testing.T) {
+	id, err := runcache.NewRunID(1, strings.NewReader(strings.Repeat("x", 16)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hit := func(healthy bool) *apprun.ExactHit { return &apprun.ExactHit{RunID: id, Healthy: healthy} }
+	cases := []struct {
+		name  string
+		exact apprun.ExactMatch
+		json  string
+		human string
+	}{
+		{"absent", apprun.ExactMatch{Assessment: apprun.ExactComplete},
+			`{"assessment":"complete","exists":false,"run_id":"","healthy":false}`, ""},
+		{"healthy", apprun.ExactMatch{Assessment: apprun.ExactComplete, Hit: hit(true)},
+			`{"assessment":"complete","exists":true,"run_id":"` + id.String() + `","healthy":true}`, "exact match: " + id.Short() + " (healthy)"},
+		{"unhealthy", apprun.ExactMatch{Assessment: apprun.ExactComplete, Hit: hit(false)},
+			`{"assessment":"complete","exists":true,"run_id":"` + id.String() + `","healthy":false}`, "exact match: " + id.Short() + " (unhealthy)"},
+		{"lookup unavailable", apprun.ExactMatch{Assessment: apprun.ExactLookupUnavailable},
+			`{"assessment":"lookup-unavailable","exists":null,"run_id":"","healthy":null}`, "exact match: unavailable"},
+		{"health unavailable", apprun.ExactMatch{Assessment: apprun.ExactHealthUnavailable, Hit: hit(false)},
+			`{"assessment":"health-unavailable","exists":true,"run_id":"` + id.String() + `","healthy":null}`, "exact match: " + id.Short() + " (health unavailable)"},
+		{"never established", apprun.ExactMatch{},
+			`{"assessment":"lookup-unavailable","exists":null,"run_id":"","healthy":null}`, "exact match: unavailable"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := apprun.ExplainResult{Outcome: apprun.OutcomeDisabled, Reason: "no-cache", Subject: apprun.ExplainSubject{Exact: c.exact}}
+			data, err := json.Marshal(explainView(res))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				ExactMatch json.RawMessage `json:"exact_match"`
+			}
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			if string(doc.ExactMatch) != c.json {
+				t.Errorf("exact_match = %s, want %s", doc.ExactMatch, c.json)
+			}
+
+			var stdout, stderr bytes.Buffer
+			renderExplain(output.New(&stdout, &stderr), res, domainconfig.TimeRelative, time.Unix(0, 0))
+			var got string
+			for line := range strings.Lines(stdout.String()) {
+				if strings.HasPrefix(line, "exact match:") {
+					got = strings.TrimSpace(line)
+				}
+			}
+			if got != c.human {
+				t.Errorf("human exact line = %q, want %q", got, c.human)
+			}
+		})
 	}
 }

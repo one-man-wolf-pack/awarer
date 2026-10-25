@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"slices"
 	"testing"
 
@@ -318,10 +319,14 @@ type lookupStore struct {
 	failWith  error
 	answerAs  *runcache.RunKey
 	stdoutErr error
+	onLookup  func()
 }
 
 func (s *lookupStore) Lookup(key runcache.RunKey) (runcache.CacheEntry, bool, error) {
 	s.keys = append(s.keys, key)
+	if s.onLookup != nil {
+		s.onLookup()
+	}
 	if s.failWith != nil {
 		return runcache.CacheEntry{}, false, s.failWith
 	}
@@ -377,18 +382,30 @@ func TestDeniedExplainProjectsTheRunsOwnKeyAndAnActualLookup(t *testing.T) {
 			t.Fatalf("fact %+v, want denied without a fingerprint", f)
 		}
 	}
-	if res.Subject.ExactHit != nil || !res.Differences.Equal() || len(res.Candidates) != 0 || h.prober.calls != 0 {
-		t.Fatalf("exact %+v diffs %+v candidates %d probes %d", res.Subject.ExactHit, res.Differences, len(res.Candidates), h.prober.calls)
+	if res.Subject.Exact != (apprun.ExactMatch{Assessment: apprun.ExactComplete}) || !res.Differences.Equal() || len(res.Candidates) != 0 || h.prober.calls != 0 {
+		t.Fatalf("exact %+v diffs %+v candidates %d probes %d, want an established absence", res.Subject.Exact, res.Differences, len(res.Candidates), h.prober.calls)
 	}
 }
 
-func TestDeniedExplainNeverReadsAFailedLookupAsAbsence(t *testing.T) {
-	failure := errors.New("injected store failure")
+func TestDeniedExplainReportsAFailedLookupAsUnknown(t *testing.T) {
+	failure := &fs.PathError{Op: "open", Path: "entry", Err: fs.ErrPermission}
+	explainDenied := func(t *testing.T, h *harness) apprun.ExplainResult {
+		t.Helper()
+		calls := h.prober.calls
+		res, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")})
+		if err != nil {
+			t.Fatalf("explain = %v, want a complete degraded report", err)
+		}
+		if res.Outcome != apprun.OutcomeUncached || res.Reason != runcache.ReasonExternalFactsUnavailable.String() || len(res.Warnings) == 0 || h.prober.calls != calls {
+			t.Fatalf("explain = %s/%s warnings %q probes %d", res.Outcome, res.Reason, res.Warnings, h.prober.calls-calls)
+		}
+		return res
+	}
 	t.Run("lookup", func(t *testing.T) {
 		h, store := newDeniedExplainHarness(t)
 		store.failWith = failure
-		if _, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")}); !errors.Is(err, failure) {
-			t.Fatalf("explain = %v, want the lookup failure", err)
+		if exact := explainDenied(t, h).Subject.Exact; exact != (apprun.ExactMatch{Assessment: apprun.ExactLookupUnavailable}) {
+			t.Fatalf("exact = %+v, want lookup-unavailable with no entry", exact)
 		}
 	})
 	t.Run("payload verification", func(t *testing.T) {
@@ -399,8 +416,9 @@ func TestDeniedExplainNeverReadsAFailedLookupAsAbsence(t *testing.T) {
 		h.cfg.Run.AllowIdentityProbes = false
 		store.answerAs = &granted.Key
 		store.stdoutErr = failure
-		if _, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeCommand, Request: h.request("check")}); !errors.Is(err, failure) {
-			t.Fatalf("explain = %v, want the verification failure", err)
+		exact := explainDenied(t, h).Subject.Exact
+		if exact.Assessment != apprun.ExactHealthUnavailable || exact.Hit == nil || exact.Hit.RunID != granted.RunID {
+			t.Fatalf("exact = %+v, want health-unavailable keeping run %s", exact, granted.RunID)
 		}
 	})
 }

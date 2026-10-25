@@ -111,6 +111,18 @@ name the situation with a closed reason token (for example `not-initialized`,
 `not-found`, `ambiguous-reference`, `permission-denied`). A degradation is always
 named that way rather than left for you to infer from what is missing.
 
+`awa run explain --json` states what it established about the current key's
+entry in `exact_match.assessment`. `complete` means the lookup succeeded:
+`exists` is `false` when no entry exists (then `healthy` is `false` too), or
+`true` with its `run_id` and a boolean `healthy`. `lookup-unavailable` means the
+entry could not be read, so `exists` and `healthy` are `null`: unknown, not
+absent. `health-unavailable` keeps `exists: true` and the `run_id`, with
+`healthy: null`: its stored output could not be verified, which is not the same
+as unhealthy. When `--no-cache`, `--refresh`, or another policy already decides
+the outcome, an unreadable entry keeps that `outcome` and `reason`, adds a
+warning, and exits 0. A reader that decodes `null` as `false` misreads unknown
+as absent or unhealthy.
+
 Optional keys, on the other hand, are omitted when they have no value: a
 checkpoint with no message carries no `message` key, a run with capture disabled
 carries no `outputs` block, and a binary with no VCS stamping carries no

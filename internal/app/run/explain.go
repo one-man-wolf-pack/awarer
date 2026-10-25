@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -72,23 +73,42 @@ type ExplainRequest struct {
 	RunRef  string
 }
 
+type ExactAssessment int
+
+const (
+	// ExactLookupUnavailable must stay the zero value: a result that never established
+	// the exact entry (a failed lookup, or a stored-run-corrupt answer that performed
+	// none) then reads as unknown. Making ExactComplete the zero value would turn every
+	// such result into a claim that no entry exists.
+	ExactLookupUnavailable ExactAssessment = iota
+	ExactComplete
+	ExactHealthUnavailable
+)
+
 // ExactHit is a stored entry whose key equals the current key. Healthy is the
-// result of verifying both payloads; an unhealthy exact hit is reported as corrupt,
-// never as a usable hit.
+// result of verifying both payloads and is meaningful only under ExactComplete; an
+// unhealthy exact hit is reported as corrupt, never as a usable hit.
 type ExactHit struct {
 	RunID   runcache.RunID
 	Entry   runcache.RunEntry
 	Healthy bool
 }
 
+// ExactMatch is the exact-entry assessment for the current key. Hit is set whenever
+// the lookup found an entry, including when its health could not be verified.
+type ExactMatch struct {
+	Assessment ExactAssessment
+	Hit        *ExactHit
+}
+
 // ExplainSubject is the current invocation explain reasons about: its computed key
-// and key input, whether it is cacheable, and the exact stored hit if one exists.
+// and key input, whether it is cacheable, and the exact-entry assessment.
 type ExplainSubject struct {
 	Key       runcache.RunKey
 	KeyInput  runcache.KeyInput
 	Cacheable bool
 	Skipped   runcache.SkippedSummary
-	ExactHit  *ExactHit
+	Exact     ExactMatch
 }
 
 // ExplainResult is the full, rendered-by-CLI explanation. Candidates are the shared
@@ -127,6 +147,19 @@ const explainCandidateWindow = defaultLogLimit
 // then reports the outcome, the typed differences, and the nearest stored
 // candidates.
 func (s *Service) Explain(ctx context.Context, req ExplainRequest) (ExplainResult, error) {
+	res, err := s.explain(ctx, req)
+	if err != nil {
+		return ExplainResult{}, err
+	}
+	// Store readers ignore cancellation, so a read that outlived it still completes;
+	// the result must not then be reported as a successful assessment.
+	if err := ctx.Err(); err != nil {
+		return ExplainResult{}, err
+	}
+	return res, nil
+}
+
+func (s *Service) explain(ctx context.Context, req ExplainRequest) (ExplainResult, error) {
 	switch req.Mode {
 	case ModeCommand:
 		return s.explainCommand(ctx, req.Request)
@@ -157,7 +190,7 @@ func (s *Service) Explain(ctx context.Context, req ExplainRequest) (ExplainResul
 type verdict struct {
 	Outcome  Outcome
 	Reason   string
-	Exact    *ExactHit
+	Exact    ExactMatch
 	Warnings []string
 }
 
@@ -166,48 +199,55 @@ type verdict struct {
 // TTL expiry, and payload-health checks. It is the single source of explain's
 // hit/miss/corrupt verdict, so explain can never claim a hit the run would not
 // replay. It does not search for nearest candidates.
-func (s *Service) currentVerdict(req Request, kc keyContext) (verdict, error) {
+func (s *Service) currentVerdict(ctx context.Context, req Request, kc keyContext) (verdict, error) {
 	var v verdict
 
 	// Resolve the key pointer first, regardless of policy: even a run that would not
 	// use the cache benefits an agent by reporting that a matching entry exists. The
 	// lookup is authoritative only when a real run would read the cache (CanRead). A
 	// non-cacheable or --refresh run never reads it, so there the lookup is purely
-	// informational: any error becomes a warning rather than failing the diagnostic,
-	// and the outcome stays policy-driven — exactly what a real run would do.
+	// informational: an expected read failure becomes a warning and leaves the exact
+	// entry unknown — never absent or unhealthy — while the outcome stays
+	// policy-driven, exactly what a real run would do. The store readers ignore
+	// cancellation, so each read is followed by a context check.
 	authoritative := kc.CanRead
-	// Under a known probe denial the lookup is informational, yet its exact_match is
-	// still read as an established absence: a failed lookup must fail the diagnostic
-	// rather than surface as a missing entry.
-	mustEstablish := kc.Reason == runcache.ReasonExternalFactsUnavailable
 	exactCorrupt := false
 	ce, ok, lookErr := s.deps.Store.Lookup(kc.Key)
+	if err := ctx.Err(); err != nil {
+		return verdict{}, err
+	}
 	entry := ce.Entry()
 	switch {
 	case lookErr != nil:
 		switch {
-		case mustEstablish:
-			return verdict{}, lookErr
 		case authoritative && errors.Is(lookErr, runcache.ErrCorruptStore):
 			exactCorrupt = true
 			v.Warnings = append(v.Warnings, "exact key entry is corrupt: "+lookErr.Error())
-		case authoritative:
+		case authoritative, !expectedReadFailure(lookErr):
 			return verdict{}, lookErr
 		default:
 			v.Warnings = append(v.Warnings, "could not read exact key entry: "+lookErr.Error())
 		}
-	case ok:
+	case !ok:
+		v.Exact = ExactMatch{Assessment: ExactComplete}
+	default:
+		hit := &ExactHit{RunID: entry.ID, Entry: entry}
 		healthy, herr := s.payloadHealth(entry)
+		if err := ctx.Err(); err != nil {
+			return verdict{}, err
+		}
 		switch {
-		case herr != nil && (authoritative || mustEstablish):
+		case herr != nil && (authoritative || !expectedReadFailure(herr)):
 			return verdict{}, herr
 		case herr != nil:
 			v.Warnings = append(v.Warnings, "could not verify exact key entry payload: "+herr.Error())
+			v.Exact = ExactMatch{Assessment: ExactHealthUnavailable, Hit: hit}
 		default:
 			if !healthy {
 				v.Warnings = append(v.Warnings, "exact key entry has an unhealthy payload")
 			}
-			v.Exact = &ExactHit{RunID: entry.ID, Entry: entry, Healthy: healthy}
+			hit.Healthy = healthy
+			v.Exact = ExactMatch{Assessment: ExactComplete, Hit: hit}
 		}
 	}
 
@@ -220,16 +260,16 @@ func (s *Service) currentVerdict(req Request, kc keyContext) (verdict, error) {
 		v.Outcome, v.Reason = OutcomeMiss, reasonRefreshRequested
 	case exactCorrupt:
 		v.Outcome, v.Reason = OutcomeCorrupt, reasonStoredRunCorrupt
-	case v.Exact == nil:
+	case v.Exact.Hit == nil:
 		// No entry for the current key: a plain miss the caller explains.
 		v.Outcome = OutcomeMiss
-	case !v.Exact.Healthy:
+	case !v.Exact.Hit.Healthy:
 		v.Outcome, v.Reason = OutcomeCorrupt, reasonExactEntryUnhealthy
-	case req.Policy.NoCacheFailures && v.Exact.Entry.Exit.Failed():
+	case req.Policy.NoCacheFailures && v.Exact.Hit.Entry.Exit.Failed():
 		// Run re-executes a cached failure under --no-cache-failures rather than
 		// replaying it, so explain reports a miss, not a hit.
 		v.Outcome, v.Reason = OutcomeMiss, reasonCachedFailureIgnored
-	case s.expired(v.Exact.Entry, kc.EffCfg.Run.TTL):
+	case s.expired(v.Exact.Hit.Entry, kc.EffCfg.Run.TTL):
 		// An entry past the TTL is stale: Run treats it as a miss and re-executes.
 		v.Outcome, v.Reason = OutcomeMiss, reasonTTLExpired
 	default:
@@ -251,7 +291,7 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 	if kc.KeyInput.Validation.FactsUnassessed() {
 		return ExplainResult{}, ErrExternalFactsUnassessed
 	}
-	v, err := s.currentVerdict(req, kc)
+	v, err := s.currentVerdict(ctx, req, kc)
 	if err != nil {
 		return ExplainResult{}, err
 	}
@@ -262,7 +302,7 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 			KeyInput:  kc.KeyInput,
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
-			ExactHit:  v.Exact,
+			Exact:     v.Exact,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -334,7 +374,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	// key-pointer lookup, TTL, and failure-policy rules as Run — never merely whether
 	// the requested stored entry happens to match. An orphaned, expired, or repointed
 	// entry must not be reported as a replayable hit.
-	v, err := s.currentVerdict(req, kc)
+	v, err := s.currentVerdict(ctx, req, kc)
 	if err != nil {
 		return ExplainResult{}, err
 	}
@@ -343,12 +383,17 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	// regardless of whether it is the entry the current key resolves to.
 	cand := newCandidate(stored, kc.KeyInput)
 	cmp := cand.Comparison
-	healthy, herr := s.payloadHealth(stored)
-	if herr != nil {
-		return ExplainResult{}, herr
+	if hit := v.Exact.Hit; hit != nil && hit.RunID == stored.ID {
+		cand.Healthy = hit.Healthy
+		cand.HealthChecked = v.Exact.Assessment == ExactComplete
+	} else {
+		healthy, herr := s.payloadHealth(stored)
+		if herr != nil {
+			return ExplainResult{}, herr
+		}
+		cand.Healthy = healthy
+		cand.HealthChecked = true
 	}
-	cand.Healthy = healthy
-	cand.HealthChecked = true
 	// The effect diagnosis is a projection of the observation already folded into
 	// kc.KeyInput — the very key input this candidate was compared against — so an
 	// effect-state miss names its root without a second walk of the watched roots.
@@ -374,7 +419,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 			KeyInput:  kc.KeyInput,
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
-			ExactHit:  v.Exact,
+			Exact:     v.Exact,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -603,6 +648,17 @@ func (s *Service) payloadHealth(entry runcache.RunEntry) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// expectedReadFailure reports whether a store read error is one explain may report
+// as an unknown exact entry: a filesystem failure or proven store corruption. A
+// cancellation or any other fault is not, and stays an error.
+func expectedReadFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	_, isPathErr := errors.AsType[*fs.PathError](err)
+	return isPathErr || errors.Is(err, runcache.ErrCorruptStore)
 }
 
 // policyOutcome maps a cacheability reason to the explain outcome and reason. An

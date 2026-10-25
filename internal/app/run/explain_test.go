@@ -2,6 +2,9 @@ package run_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,10 +59,10 @@ func TestExplainExactHit(t *testing.T) {
 	if exp.Outcome != apprun.OutcomeHit || exp.Reason != "exact-key" {
 		t.Errorf("explain = %s/%s, want hit/exact-key", exp.Outcome, exp.Reason)
 	}
-	if exp.Subject.ExactHit == nil || exp.Subject.ExactHit.RunID != runRes.RunID {
-		t.Errorf("exact hit run id mismatch: %+v", exp.Subject.ExactHit)
+	if exp.Subject.Exact.Assessment != apprun.ExactComplete || exp.Subject.Exact.Hit == nil || exp.Subject.Exact.Hit.RunID != runRes.RunID {
+		t.Fatalf("exact match = %+v, want complete with run %s", exp.Subject.Exact, runRes.RunID)
 	}
-	if !exp.Subject.ExactHit.Healthy {
+	if !exp.Subject.Exact.Hit.Healthy {
 		t.Error("exact hit should be healthy")
 	}
 	if h.runner.calls != calls {
@@ -85,7 +88,7 @@ func TestExplainNoCacheDisabled(t *testing.T) {
 	}
 	// The entry still exists; explain reports it for information even though the run
 	// would ignore it under --no-cache.
-	if exp.Subject.ExactHit == nil {
+	if exp.Subject.Exact.Assessment != apprun.ExactComplete || exp.Subject.Exact.Hit == nil {
 		t.Error("explain should still surface the existing exact entry under --no-cache")
 	}
 }
@@ -272,7 +275,7 @@ func TestExplainNoCacheFailuresIgnoresCachedFailure(t *testing.T) {
 	if exp.Outcome != apprun.OutcomeMiss || exp.Reason != "cached-failure-ignored" {
 		t.Errorf("explain = %s/%s, want miss/cached-failure-ignored", exp.Outcome, exp.Reason)
 	}
-	if exp.Subject.ExactHit == nil || !exp.Subject.ExactHit.Healthy {
+	if exp.Subject.Exact.Assessment != apprun.ExactComplete || exp.Subject.Exact.Hit == nil || !exp.Subject.Exact.Hit.Healthy {
 		t.Error("the cached failure should still be reported as an existing healthy entry")
 	}
 }
@@ -473,4 +476,176 @@ func contains(s []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestExplainModesShareTheUnavailableExactAssessment(t *testing.T) {
+	failure := &fs.PathError{Op: "open", Path: "entry", Err: fs.ErrPermission}
+	cases := []struct {
+		name   string
+		inject func(*lookupStore)
+		want   apprun.ExactAssessment
+		found  bool
+	}{
+		{"lookup", func(s *lookupStore) { s.failWith = failure }, apprun.ExactLookupUnavailable, false},
+		{"payload verification", func(s *lookupStore) { s.stdoutErr = failure }, apprun.ExactHealthUnavailable, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &lookupStore{}
+			h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+				store.Store = inner
+				return store
+			}))
+			defer h.cleanup()
+			run, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.cfg.Run.CaptureOutput = false
+			store.answerAs = &run.Key
+			c.inject(store)
+
+			command, err := h.svc.Explain(context.Background(), h.explainCmd("echo", "x"))
+			if err != nil {
+				t.Fatalf("command explain: %v", err)
+			}
+			last, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{Mode: apprun.ModeLast, Request: apprun.Request{Project: h.proj, Config: h.cfg}})
+			if err != nil {
+				t.Fatalf("explain --last: %v", err)
+			}
+			for mode, res := range map[string]apprun.ExplainResult{"command": command, "last": last} {
+				exact := res.Subject.Exact
+				if res.Outcome != apprun.OutcomeUncached || res.Reason != "capture-disabled" || len(res.Warnings) == 0 {
+					t.Errorf("%s = %s/%s warnings %q, want uncached/capture-disabled with a warning", mode, res.Outcome, res.Reason, res.Warnings)
+				}
+				if exact.Assessment != c.want || (exact.Hit != nil) != c.found || (c.found && exact.Hit.RunID != run.RunID) {
+					t.Errorf("%s exact = %+v, want assessment %d found %v (run %s)", mode, exact, c.want, c.found, run.RunID)
+				}
+			}
+			if c.found && (len(last.Candidates) != 1 || last.Candidates[0].HealthChecked) {
+				t.Errorf("stored candidate = %+v, want its unverified health left unchecked", last.Candidates)
+			}
+		})
+	}
+}
+
+func TestExplainCancelledDuringTheExactLookupFails(t *testing.T) {
+	store := &lookupStore{}
+	h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+		store.Store = inner
+		return store
+	}))
+	defer h.cleanup()
+	if _, err := h.svc.Run(context.Background(), h.request("echo", "x")); err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.Run.CaptureOutput = false
+	requests := map[string]apprun.ExplainRequest{
+		"command": h.explainCmd("echo", "x"),
+		"last":    {Mode: apprun.ModeLast, Request: apprun.Request{Project: h.proj, Config: h.cfg}},
+	}
+	for mode, req := range requests {
+		ctx, cancel := context.WithCancel(context.Background())
+		store.onLookup = cancel
+		res, err := h.svc.Explain(ctx, req)
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("%s explain = %s/%s err %v, want the cancellation", mode, res.Outcome, res.Reason, err)
+		}
+	}
+}
+
+type candidateReadFailStore struct {
+	runcache.Store
+	failID runcache.RunID
+	err    error
+	onRead func()
+}
+
+func (s *candidateReadFailStore) OpenStdout(id runcache.RunID) (io.ReadCloser, error) {
+	if id == s.failID && s.onRead != nil {
+		s.onRead()
+	}
+	if id == s.failID && s.err != nil {
+		return nil, s.err
+	}
+	return s.Store.OpenStdout(id)
+}
+
+func TestExplainStoredDistinctCandidateReadFailurePropagates(t *testing.T) {
+	failure := &fs.PathError{Op: "open", Path: "candidate", Err: fs.ErrPermission}
+	store := &candidateReadFailStore{err: failure}
+	h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+		store.Store = inner
+		return store
+	}))
+	defer h.cleanup()
+	h.write(t, "a.txt", "1")
+	older, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.write(t, "a.txt", "2")
+	current, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exp, err := h.svc.Explain(context.Background(), h.explainCmd("echo", "x")); err != nil ||
+		exp.Subject.Exact.Assessment != apprun.ExactComplete || exp.Subject.Exact.Hit == nil ||
+		exp.Subject.Exact.Hit.RunID != current.RunID || !exp.Subject.Exact.Hit.Healthy {
+		t.Fatalf("precondition: exact = %+v err %v, want healthy %s", exp.Subject.Exact, err, current.RunID)
+	}
+	store.failID = older.RunID
+
+	res, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{
+		Mode:    apprun.ModeFromRunToNow,
+		Request: apprun.Request{Project: h.proj, Config: h.cfg},
+		RunRef:  older.RunID.String(),
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("explain --from-run = %+v err %v, want the candidate read failure", res, err)
+	}
+}
+
+func TestExplainStoredCancelledDuringADistinctCandidateReadFails(t *testing.T) {
+	store := &candidateReadFailStore{}
+	h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+		store.Store = inner
+		return store
+	}))
+	defer h.cleanup()
+	older, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh := h.request("echo", "x")
+	refresh.Policy.Refresh = true
+	current, err := h.svc.Run(context.Background(), refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if older.Key != current.Key || older.RunID == current.RunID {
+		t.Fatalf("runs %s/%s keys %s/%s, want distinct runs sharing one key", older.RunID, current.RunID, older.Key, current.Key)
+	}
+	store.failID = older.RunID
+	explainOlder := func(ctx context.Context) (apprun.ExplainResult, error) {
+		return h.svc.Explain(ctx, apprun.ExplainRequest{
+			Mode:    apprun.ModeFromRunToNow,
+			Request: apprun.Request{Project: h.proj, Config: h.cfg},
+			RunRef:  older.RunID.String(),
+		})
+	}
+
+	res, err := explainOlder(context.Background())
+	if err != nil || res.Outcome != apprun.OutcomeHit || res.Subject.Exact.Hit == nil ||
+		res.Subject.Exact.Hit.RunID != current.RunID || len(res.Candidates) != 1 || !res.Candidates[0].HealthChecked {
+		t.Fatalf("uncancelled explain = %+v err %v, want a hit on %s with the candidate verified", res, err, current.RunID)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store.onRead = cancel
+	if res, err := explainOlder(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled explain = %s/%s err %v, want the cancellation", res.Outcome, res.Reason, err)
+	}
 }

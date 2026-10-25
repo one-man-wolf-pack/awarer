@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -17,9 +18,10 @@ type explainJSON struct {
 		Cacheable bool   `json:"cacheable"`
 	} `json:"current"`
 	ExactMatch struct {
-		Exists  bool   `json:"exists"`
-		RunID   string `json:"run_id"`
-		Healthy bool   `json:"healthy"`
+		Assessment string `json:"assessment"`
+		Exists     *bool  `json:"exists"`
+		RunID      string `json:"run_id"`
+		Healthy    *bool  `json:"healthy"`
 	} `json:"exact_match"`
 	Candidates []struct {
 		RunID string `json:"run_id"`
@@ -76,6 +78,9 @@ func TestExplainBeforeRunMisses(t *testing.T) {
 	if !d.Current.Cacheable || !strings.HasPrefix(d.Current.Key, "blake3:") {
 		t.Errorf("current = %+v, want cacheable with a blake3 key", d.Current)
 	}
+	if e := d.ExactMatch; e.Assessment != "complete" || e.Exists == nil || *e.Exists || e.Healthy == nil || e.RunID != "" {
+		t.Errorf("exact match = %+v, want an established absence", e)
+	}
 }
 
 func TestExplainAfterRunHits(t *testing.T) {
@@ -91,7 +96,7 @@ func TestExplainAfterRunHits(t *testing.T) {
 	if d.Outcome != "hit" || d.Reason != "exact-key" {
 		t.Errorf("explain = %s/%s, want hit/exact-key", d.Outcome, d.Reason)
 	}
-	if !d.ExactMatch.Exists || !d.ExactMatch.Healthy || d.ExactMatch.RunID == "" {
+	if e := d.ExactMatch; e.Assessment != "complete" || e.Exists == nil || !*e.Exists || e.Healthy == nil || !*e.Healthy || e.RunID == "" {
 		t.Errorf("exact match = %+v, want an existing healthy entry", d.ExactMatch)
 	}
 }
@@ -243,4 +248,48 @@ func containsStr(s []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestExplainUnreadableExactEntryIsUnknownNotAbsent(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions that bind the current user")
+	}
+	root := initProject(t)
+	h := helper(t)
+	awa(t, root, "run", "--", h, "-out", "x")
+	_, stdout, _ := awa(t, root, "run", "explain", "--json", "--", h, "-out", "x")
+	key := strings.TrimPrefix(decodeExplain(t, stdout).Current.Key, "blake3:")
+	pointers, err := filepath.Glob(filepath.Join(root, ".awa", "*", "*", "*", key[:2], key+".json"))
+	if err != nil || len(pointers) != 1 {
+		t.Fatalf("key pointer for %s = %v (%v)", key, pointers, err)
+	}
+	if err := os.Chmod(pointers[0], 0); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(pointers[0], 0o600) }()
+
+	code, stdout, stderr := awa(t, root, "run", "explain", "--no-cache", "--json", "--", h, "-out", "x")
+	if code != 0 {
+		t.Fatalf("informational explain exit = %d, stderr=%q", code, stderr)
+	}
+	d := decodeExplain(t, stdout)
+	if d.Outcome != "disabled" || d.Reason != "no-cache" || len(d.Warnings) != 1 || !strings.Contains(d.Warnings[0], "could not read exact key entry") {
+		t.Errorf("explain = %s/%s warnings %q, want disabled/no-cache with the read warning", d.Outcome, d.Reason, d.Warnings)
+	}
+	if len(d.Warnings) == 1 && strings.Count(stderr, "warning: "+d.Warnings[0]+"\n") != 1 {
+		t.Errorf("stderr = %q, want the payload warning exactly once", stderr)
+	}
+	if !strings.Contains(stdout, `"exists": null`) || !strings.Contains(stdout, `"healthy": null`) || d.ExactMatch.Assessment != "lookup-unavailable" || d.ExactMatch.RunID != "" {
+		t.Errorf("exact match = %+v, want lookup-unavailable with explicit nulls\n%s", d.ExactMatch, stdout)
+	}
+
+	_, _, humanErr := awa(t, root, "run", "explain", "--no-cache", "--", h, "-out", "x")
+	if strings.Count(humanErr, "warning: could not read exact key entry") != 1 {
+		t.Errorf("human stderr = %q, want the read warning exactly once", humanErr)
+	}
+
+	code, stdout, _ = awa(t, root, "run", "explain", "--json", "--", h, "-out", "x")
+	if code == 0 || stdout != "" {
+		t.Errorf("authoritative explain = exit %d stdout %q, want a failure without a document", code, stdout)
+	}
 }
