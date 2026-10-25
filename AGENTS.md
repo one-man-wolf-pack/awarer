@@ -79,7 +79,7 @@ Wrap it when the output should be retained as inspectable evidence:
 
 ```bash
 awa run --record --stdin null --display tail:200 -- go test ./internal/app/run -run '^TestCommandMatches$'
-awa run show --last --tail 500
+awa run show <run-id> --tail 500
 ```
 
 - **Record or cache.** `--record` always executes and never publishes a reusable
@@ -107,3 +107,14 @@ awa run show --last --tail 500
   only inspect. `awa doctor --repair`, `awa gc`, `awa run rm`, `awa restore --apply`,
   and any config change delete or alter evidence or the worktree: propose them with
   their findings and leave the decision to the maintainer.
+
+Use `--record` when tests, builds or diagnostics need a fresh execution. Keep the
+printed run ID, especially on failure, and cite it with the result. Before rerunning
+only to recover output, use `awa run show <run-id> --tail <n>`; plain `show` is metadata.
+A tail is not the full capture, which may be truncated or disabled. Evidence is local
+and subject to retention; keep a native log and exit status when awa is unsuitable.
+
+`awa help validation` covers opt-in result-only policies and external identity probes.
+A replay recreates no artifacts. Do not change policy or authorize probes just to get
+a hit. Diagnostics never execute probes: `incomplete` / `unassessed` is not a hit or a
+proved miss.
