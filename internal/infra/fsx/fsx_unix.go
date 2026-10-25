@@ -131,7 +131,7 @@ func OpenRegularNoFollowAt(root, rel string) (*os.File, error) {
 		_ = unix.Close(fd)
 		return nil, &os.PathError{Op: "fstat", Path: leaf, Err: err}
 	}
-	if uint32(st.Mode)&unix.S_IFMT != unix.S_IFREG {
+	if fileType(&st) != unix.S_IFREG {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("%w: %s", ErrNotRegular, leaf)
 	}
@@ -212,13 +212,19 @@ func walkDirsFrom(cur int, relDir string, create bool, perm os.FileMode) (int, e
 	return cur, nil
 }
 
+// fileType is the S_IFMT bits of st.Mode.
+func fileType(st *unix.Stat_t) uint32 {
+	//nolint:unconvert // required on darwin and freebsd, where st.Mode is uint16
+	return uint32(st.Mode) & unix.S_IFMT
+}
+
 // checkKindAt classifies name under dir from its no-follow metadata alone.
 func checkKindAt(dir int, name string, want uint32) error {
 	var st unix.Stat_t
 	if err := unix.Fstatat(dir, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return &os.PathError{Op: "fstatat", Path: name, Err: err}
 	}
-	switch kind := uint32(st.Mode) & unix.S_IFMT; {
+	switch kind := fileType(&st); {
 	case kind == want:
 		return nil
 	case kind == unix.S_IFLNK:
