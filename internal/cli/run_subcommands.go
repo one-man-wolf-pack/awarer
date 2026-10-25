@@ -885,7 +885,7 @@ func renderShowMeta(w *output.Writer, e runcache.RunEntry, td domainconfig.TimeD
 	w.Linef("inputs:    tree=%s trust=%s scope=%s", e.KeyInput.InputTreeHash.String(), e.KeyInput.TrustMode.String(), strings.Join(e.KeyInput.IncludeScope, ","))
 	if v := e.KeyInput.Validation; v != nil {
 		w.Linef("policy:    %s", validationPolicyLine(v))
-		if line := identityFactsLine(v, e.PostRunFacts, false); line != "" {
+		if line := identityFactsLine(v, e.PostRunFacts, false, runcache.ProbeAuthorization{}); line != "" {
 			w.Linef("facts:     %s", line)
 		}
 	}

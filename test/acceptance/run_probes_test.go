@@ -62,6 +62,8 @@ argv = ["sh", "` + l.script + `"]
 
 func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 	root := initProject(t)
+	u := newUserConfig(t)
+	awa := u.awa
 	l := newProbeLauncher(t)
 	write(t, root, "src.txt", "v1")
 	write(t, root, "awa.toml", l.policy())
@@ -86,6 +88,9 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 		t.Fatalf("ungranted run reason = %q (%v)\n%s", denied.Data.Cache.Reason, err, stdout)
 	}
 
+	if code, stdout, _ := awa(t, root, "run", "explain", "--", "sh", "-c", validationBuild); code != 0 || !strings.Contains(stdout, "facts:  reuse unavailable: identity probes not approved for this project") || !strings.Contains(stdout, "awa config probes allow") {
+		t.Errorf("denied explain does not point to the grant: exit %d\n%s", code, stdout)
+	}
 	_, stdout, stderr = awa(t, root, "run", "explain", "--json", "--", "sh", "-c", validationBuild)
 	var explained struct {
 		Data struct {
@@ -107,7 +112,10 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 		t.Fatalf("denied explain = %+v, want uncached under the run's key %s", e, denied.Data.Cache.Key)
 	}
 
-	write(t, root, ".awa/config.toml", "[run]\nallow_identity_probes = true\n")
+	u.allow(t, root)
+	if l.callCount(t) != 0 {
+		t.Fatalf("approving executed %d probes", l.callCount(t))
+	}
 	if code, _, stderr := runIt(t); code != 0 || isHit(stderr) || l.callCount(t) != 2 || !strings.Contains(stderr, "facts:    1 identity probe reported the same bytes") {
 		t.Fatalf("granted miss: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
 	}
@@ -156,7 +164,9 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 	}
 
 	calls := l.callCount(t)
-	write(t, root, ".awa/config.toml", "[run]\nallow_identity_probes = false\n")
+	if code, _, stderr := awa(t, root, "config", "probes", "revoke"); code != 0 {
+		t.Fatalf("revoke: exit %d stderr %q", code, stderr)
+	}
 	for _, args := range [][]string{
 		{"run", "explain", "--json", "--", "sh", "-c", validationBuild},
 		{"run", "ls", "--all", "--json"},
@@ -195,11 +205,200 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 	}
 }
 
-func TestIdentityProbeGrantOnlyFromThePrivateConfig(t *testing.T) {
+// userConfig is an isolated per-user configuration home, so a test's grants are never
+// the operator's real ones. HOME, XDG_CONFIG_HOME and AppData cover where
+// os.UserConfigDir looks on each platform.
+type userConfig struct{ env []string }
+
+func newUserConfig(t *testing.T) userConfig {
+	t.Helper()
+	return userConfigAt(t.TempDir())
+}
+
+func userConfigAt(home string) userConfig {
+	return userConfig{env: []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"AppData=" + filepath.Join(home, "AppData"),
+	}}
+}
+
+func (u userConfig) awa(t *testing.T, dir string, args ...string) (int, string, string) {
+	t.Helper()
+	return awaEnv(t, dir, u.env, args...)
+}
+
+func (u userConfig) allow(t *testing.T, root string) string {
+	t.Helper()
+	code, stdout, stderr := u.awa(t, root, "config", "probes", "allow")
+	if code != 0 || !strings.Contains(stdout, "approved identity probes for ") || !strings.Contains(stdout, "unsandboxed") {
+		t.Fatalf("allow: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	return stdout
+}
+
+type probeAuthorizationDoc struct {
+	Data struct {
+		Origins            map[string]string `json:"origins"`
+		ProbeAuthorization *struct {
+			Root     string `json:"root"`
+			State    string `json:"state"`
+			Cause    string `json:"cause"`
+			Policies []struct {
+				Name     string `json:"name"`
+				Approved bool   `json:"approved"`
+			} `json:"policies"`
+		} `json:"probe_authorization"`
+	} `json:"data"`
+}
+
+func (u userConfig) authorization(t *testing.T, root string) probeAuthorizationDoc {
+	t.Helper()
+	code, stdout, stderr := u.awa(t, root, "config", "effective", "--json")
+	var doc probeAuthorizationDoc
+	if code != 0 || json.Unmarshal([]byte(stdout), &doc) != nil || doc.Data.ProbeAuthorization == nil {
+		t.Fatalf("config effective: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	for key := range doc.Data.Origins {
+		if strings.Contains(key, "probe") && !strings.HasPrefix(key, "run.validation") {
+			t.Errorf("authorization leaked into config origins as %q", key)
+		}
+	}
+	return doc
+}
+
+func TestNoCheckoutFileCanAuthorizeProbes(t *testing.T) {
+	u := newUserConfig(t)
+	for _, layer := range []string{".awa/config.toml", "awa.toml"} {
+		t.Run(layer, func(t *testing.T) {
+			root := initProject(t)
+			l := newProbeLauncher(t)
+			write(t, root, "awa.toml", l.policy())
+			body := "[run]\nallow_identity_probes = true\n"
+			if layer == "awa.toml" {
+				body = l.policy() + "\n" + body
+			}
+			write(t, root, layer, body)
+			code, _, stderr := u.awa(t, root, "run", "--", "sh", "-c", validationBuild)
+			if code != 4 || !strings.Contains(stderr, "allow_identity_probes") || l.callCount(t) != 0 {
+				t.Fatalf("a checkout-supplied permission: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+			}
+		})
+	}
+}
+
+func TestProbeGrantIsScopedToTheCanonicalProjectRoot(t *testing.T) {
+	u := newUserConfig(t)
 	root := initProject(t)
-	write(t, root, "awa.toml", "[run]\nallow_identity_probes = true\n")
-	code, _, stderr := awa(t, root, "run", "--", "true")
-	if code != 4 || !strings.Contains(stderr, ".awa/config.toml") {
-		t.Fatalf("shared grant: exit %d stderr %q", code, stderr)
+	l := newProbeLauncher(t)
+	write(t, root, "src.txt", "v1")
+	write(t, root, "awa.toml", l.policy())
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	runIn := func(dir string) (int, string) {
+		t.Helper()
+		code, _, stderr := u.awa(t, dir, "run", "--", "sh", "-c", validationBuild)
+		return code, stderr
+	}
+
+	if doc := u.authorization(t, root); doc.Data.ProbeAuthorization.State != "absent" || len(doc.Data.ProbeAuthorization.Policies) != 1 || doc.Data.ProbeAuthorization.Policies[0].Approved {
+		t.Fatalf("before allow = %+v", doc.Data.ProbeAuthorization)
+	}
+	out := u.allow(t, alias)
+	canon, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, canon) || !strings.Contains(out, l.script) {
+		t.Errorf("allow did not show the canonical root and probe argv:\n%s", out)
+	}
+	for _, args := range [][]string{{"config", "effective"}, {"config", "validate"}, {"config", "probes", "allow"}} {
+		u.awa(t, root, args...)
+	}
+	if l.callCount(t) != 0 {
+		t.Fatalf("grant management or inspection executed %d probes", l.callCount(t))
+	}
+	doc := u.authorization(t, root)
+	if a := doc.Data.ProbeAuthorization; a.State != "recorded" || a.Root != canon || !a.Policies[0].Approved {
+		t.Fatalf("after allow via an alias = %+v, want the canonical root approved", a)
+	}
+	if code, stderr := runIn(root); code != 0 || l.callCount(t) != 2 {
+		t.Fatalf("approved run: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+	}
+	if code, stderr := runIn(alias); code != 0 || !isHit(stderr) || l.callCount(t) != 3 {
+		t.Fatalf("run through the alias: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+	}
+
+	copied := filepath.Join(t.TempDir(), "copy")
+	if err := os.CopyFS(copied, os.DirFS(root)); err != nil {
+		t.Fatal(err)
+	}
+	if code, stderr := runIn(copied); code != 0 || l.callCount(t) != 3 || !strings.Contains(stderr, "not approved for this project") {
+		t.Fatalf("a copied project inherited the grant: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+	}
+
+	write(t, root, "awa.toml", strings.Replace(l.policy(), `name = "tool"`, `name = "renamed"`, 1))
+	// Editing awa.toml is an ordinary input change, so this misses and runs both
+	// phases; what matters is that the renamed probe is still approved.
+	if code, stderr := runIn(root); code != 0 || l.callCount(t) != 5 {
+		t.Fatalf("a renamed probe lost approval: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+	}
+	write(t, root, "awa.toml", strings.Replace(l.policy(), `["sh", "`+l.script, `["sh", "-e", "`+l.script, 1))
+	if code, stderr := runIn(root); code != 0 || l.callCount(t) != 5 || !strings.Contains(stderr, "changed since they were approved") {
+		t.Fatalf("a changed probe argv kept approval: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
+	}
+	if doc := u.authorization(t, root); doc.Data.ProbeAuthorization.Policies[0].Approved {
+		t.Fatal("inspection reports a changed context as approved")
+	}
+
+	if code, stdout, _ := u.awa(t, root, "config", "probes", "revoke", "--json"); code != 0 || !strings.Contains(stdout, `"removed": true`) {
+		t.Fatalf("revoke: exit %d\n%s", code, stdout)
+	}
+	if code, stdout, _ := u.awa(t, root, "config", "probes", "revoke", "--json"); code != 0 || !strings.Contains(stdout, `"removed": false`) {
+		t.Fatalf("second revoke: exit %d\n%s", code, stdout)
+	}
+	for _, args := range [][]string{{"config", "probes"}, {"config", "probes", "grant"}, {"config", "probes", "allow", "extra"}} {
+		if code, _, _ := u.awa(t, root, args...); code != 2 {
+			t.Errorf("%v: exit %d, want a usage error", args, code)
+		}
+	}
+	if l.callCount(t) != 5 {
+		t.Fatalf("revoke executed %d probes", l.callCount(t)-5)
+	}
+}
+
+func TestUnusableProbeGrantStoresNeverAuthorize(t *testing.T) {
+	root := initProject(t)
+	l := newProbeLauncher(t)
+	write(t, root, "src.txt", "v1")
+	write(t, root, "awa.toml", l.policy())
+
+	// A home inside the project would let the checkout carry its own grant.
+	inside := userConfigAt(filepath.Join(root, "home"))
+	if code, stdout, stderr := inside.awa(t, root, "config", "probes", "allow"); code != 1 || strings.Contains(stdout, "approved") || !strings.Contains(stderr, "inside the project") {
+		t.Fatalf("allow into the project: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	if doc := inside.authorization(t, root); doc.Data.ProbeAuthorization.State != "unavailable" || doc.Data.ProbeAuthorization.Cause != "store-inside-project" {
+		t.Fatalf("inspection = %+v", doc.Data.ProbeAuthorization)
+	}
+	code, stdout, stderr := inside.awa(t, root, "run", "--", "sh", "-c", validationBuild)
+	if code != 0 || stdout != "checked\n" || l.callCount(t) != 0 || !strings.Contains(stderr, "grant is unavailable (store-inside-project)") {
+		t.Fatalf("run with the store inside the project: exit %d probes %d\n%s\n%s", code, l.callCount(t), stdout, stderr)
+	}
+
+	// A home that cannot hold a directory makes allow fail, never report consent.
+	file := filepath.Join(t.TempDir(), "home")
+	write(t, filepath.Dir(file), "home", "not a directory")
+	broken := userConfigAt(file)
+	if code, stdout, stderr := broken.awa(t, root, "config", "probes", "allow"); code != 1 || strings.Contains(stdout, "approved") || !strings.Contains(stderr, "the approval is not confirmed") {
+		t.Fatalf("allow into an unusable store: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	if code, _, _ := broken.awa(t, root, "config", "effective"); code != 0 {
+		t.Fatalf("an unusable store failed inspection: exit %d", code)
+	}
+	if l.callCount(t) != 0 {
+		t.Fatalf("an unusable store executed %d probes", l.callCount(t))
 	}
 }

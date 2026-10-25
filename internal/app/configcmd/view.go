@@ -99,7 +99,6 @@ type RunView struct {
 	ExtraEffectRoots     []string         `json:"extra_effect_roots"`
 	EffectiveEffectRoots []string         `json:"effective_effect_roots"`
 	Validation           []ValidationView `json:"validation"`
-	AllowIdentityProbes  bool             `json:"allow_identity_probes"`
 }
 
 type ValidationView struct {
@@ -193,7 +192,6 @@ func NewView(c config.Config) View {
 			ExtraEffectRoots:      slices.Clone(c.Run.WatchedEffectRoots),
 			EffectiveEffectRoots:  config.EffectiveEffectRoots(c.Run.WatchedEffectRoots),
 			Validation:            validationViews(c.Run.Validation),
-			AllowIdentityProbes:   c.Run.AllowIdentityProbes,
 		},
 		GC: GCView{
 			KeepLastCheckpoints: c.GC.KeepLastCheckpoints,

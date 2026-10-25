@@ -78,6 +78,7 @@ var docCoverage = map[string]coverageOwner{
 	"command:config validate":  {topic: "quickstart"},
 	"command:config template":  {topic: "quickstart"},
 	"command:config init":      {topic: "quickstart"},
+	"command:config probes":    {topic: "validation"},
 	"command:state resolve":    {topic: "integrations"},
 	"command:state compare":    {topic: "integrations"},
 	"command:docs export":      {topic: "agents"},

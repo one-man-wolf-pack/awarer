@@ -10,7 +10,9 @@ import (
 
 	apprun "awarer/internal/app/run"
 	"awarer/internal/domain/config"
+	"awarer/internal/domain/hashing"
 	"awarer/internal/domain/runcache"
+	"awarer/internal/infra/blake3hash"
 )
 
 func newProbeHarness(t *testing.T, grant bool) *harness {
@@ -20,10 +22,31 @@ func newProbeHarness(t *testing.T, grant bool) *harness {
 		{Name: "tool", Argv: []string{"tool", "--version"}},
 		{Name: "linker", Argv: []string{"linker", "-v"}},
 	}
-	h.cfg.Run.AllowIdentityProbes = grant
+	h.setGrant(t, grant)
 	h.prober.stdout["tool"] = "tool 1.0\n"
 	h.prober.stdout["linker"] = "linker 7\n"
 	return h
+}
+
+// setGrant approves the probe contexts of the harness's current policies, the way
+// awa config probes allow would, or revokes the project's grant.
+func (h *harness) setGrant(t *testing.T, grant bool) {
+	t.Helper()
+	if !grant {
+		if _, _, err := h.grants.Revoke(h.rootAbs); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+		return
+	}
+	var contexts []hashing.TreeHash
+	for _, p := range h.cfg.Run.Validation {
+		if len(p.IdentityProbes) > 0 {
+			contexts = append(contexts, runcache.PolicyGrantContext(blake3hash.New(), p))
+		}
+	}
+	if _, err := h.grants.Allow(h.rootAbs, contexts); err != nil {
+		t.Fatalf("allow: %v", err)
+	}
 }
 
 func (h *harness) mustRun(t *testing.T, req apprun.Request) apprun.Result {
@@ -188,6 +211,8 @@ func TestProbeLabelsAreNotIdentityButDefinitionsAre(t *testing.T) {
 	}
 	h.cfg.Run.Validation[0].IdentityProbes[0].Argv = []string{"tool", "-V"}
 	h.prober.stdout["tool"] = "tool 1.0\n"
+	// Approve the changed definition so this checks identity, not authorization.
+	h.setGrant(t, true)
 	if res := h.mustRun(t, h.request("check")); res.Status == runcache.CacheHit {
 		t.Fatal("a changed probe argv reused the old result")
 	}
@@ -274,7 +299,7 @@ func TestCancellationAfterTheKeyStartsNoChild(t *testing.T) {
 func TestKnownDenialAnswersDiagnosticsWithoutProbes(t *testing.T) {
 	h := newProbeHarness(t, true)
 	first := h.mustRun(t, h.request("check"))
-	h.cfg.Run.AllowIdentityProbes = false
+	h.setGrant(t, false)
 	calls := h.prober.calls
 	ctx := context.Background()
 	denied := []runcache.FactStatus{runcache.FactDenied, runcache.FactDenied}
@@ -307,7 +332,7 @@ func TestKnownDenialAnswersDiagnosticsWithoutProbes(t *testing.T) {
 		t.Fatalf("diagnostics ran %d probes", h.prober.calls-calls)
 	}
 
-	h.cfg.Run.AllowIdentityProbes = true
+	h.setGrant(t, true)
 	if _, err := h.svc.Ls(ctx, apprun.LsRequest{Project: h.proj, Config: h.cfg}); !errors.Is(err, apprun.ErrExternalFactsUnassessed) {
 		t.Fatalf("granted ls = %v, want facts still unassessed", err)
 	}
@@ -410,10 +435,10 @@ func TestDeniedExplainReportsAFailedLookupAsUnknown(t *testing.T) {
 	})
 	t.Run("payload verification", func(t *testing.T) {
 		h, store := newDeniedExplainHarness(t)
-		h.cfg.Run.AllowIdentityProbes = true
+		h.setGrant(t, true)
 		h.prober.stdout["tool"] = "tool 1\n"
 		granted := h.mustRun(t, h.request("check"))
-		h.cfg.Run.AllowIdentityProbes = false
+		h.setGrant(t, false)
 		store.answerAs = &granted.Key
 		store.stdoutErr = failure
 		exact := explainDenied(t, h).Subject.Exact
@@ -431,12 +456,13 @@ func assertReasonOnly(t *testing.T, where string, c apprun.RunReuseCandidate, re
 }
 
 func TestRevokedGrantLeavesCandidatesReasonOnly(t *testing.T) {
-	h := newProbeHarness(t, true)
+	h := newProbeHarness(t, false)
 	h.cfg.Run.Validation[0].IdentityProbes = h.cfg.Run.Validation[0].IdentityProbes[:1]
+	h.setGrant(t, true)
 	granted := h.mustRun(t, h.request("check"))
 	ordinary := h.mustRun(t, h.request("other"))
 	h.write(t, "main.src", "v2")
-	h.cfg.Run.AllowIdentityProbes = false
+	h.setGrant(t, false)
 	calls := h.prober.calls
 	ctx := context.Background()
 
@@ -469,7 +495,7 @@ func TestRevokedGrantLeavesCandidatesReasonOnly(t *testing.T) {
 func TestRevokedGrantInlineDiagnosisIsReasonOnly(t *testing.T) {
 	h := newProbeHarness(t, true)
 	h.mustRun(t, h.request("check"))
-	h.cfg.Run.AllowIdentityProbes = false
+	h.setGrant(t, false)
 	calls := h.prober.calls
 	denied := h.mustRun(t, h.request("check"))
 	diag, err := h.svc.DiagnoseRun(context.Background(), denied, h.cfg.Run.TTL)
@@ -503,11 +529,77 @@ func TestChangedAcquiredFactKeepsItsDeltaWithoutAnAllMatchedScore(t *testing.T) 
 func TestInlineCandidateRecordedUnderDenialIsReasonOnly(t *testing.T) {
 	h := newProbeHarness(t, false)
 	h.mustRun(t, h.request("check"))
-	h.cfg.Run.AllowIdentityProbes = true
+	h.setGrant(t, true)
 	granted := h.mustRun(t, h.request("check"))
 	diag, err := h.svc.DiagnoseRun(context.Background(), granted, h.cfg.Run.TTL)
 	if err != nil || diag.Nearest == nil {
 		t.Fatalf("inline = %+v, %v", diag, err)
 	}
 	assertReasonOnly(t, "inline", *diag.Nearest, runcache.ReasonExternalFactsUnavailable)
+}
+
+func TestRevocationBetweenPhasesStopsTheLaterPhase(t *testing.T) {
+	h := newProbeHarness(t, true)
+	h.prober.onProbe = func(runcache.ProbeSpec) {
+		if h.prober.calls == 2 {
+			h.setGrant(t, false)
+		}
+	}
+	res := h.mustRun(t, h.request("check"))
+	if h.prober.calls != 2 || h.runner.calls != 1 {
+		t.Fatalf("probes %d child %d, want the started pre-run phase only and the child", h.prober.calls, h.runner.calls)
+	}
+	if got := factStatuses(res.Execution.PostRunFacts); !slices.Equal(got, []runcache.FactStatus{runcache.FactDenied, runcache.FactDenied}) {
+		t.Fatalf("post-run facts = %v, want denied", got)
+	}
+	if res.Written || res.Reuse.Reason() != runcache.ReasonExternalFactsUnavailablePostRun {
+		t.Fatalf("reuse = %s/%s written=%v, want non-reusable post-run unavailability", res.Reuse.Kind(), res.Reuse.Reason(), res.Written)
+	}
+}
+
+func TestGrantCoversOnlyTheApprovedProbeContext(t *testing.T) {
+	h := newProbeHarness(t, false)
+	h.cfg.Run.Validation = append(h.cfg.Run.Validation, config.ValidationPolicy{
+		Name: "lint", Argv: []string{"lint"}, CWD: ".", UnobservedDirs: []string{"target"},
+		IdentityProbes: []config.IdentityProbe{{Name: "tool", Argv: []string{"tool", "--version"}}},
+	})
+	h.setGrant(t, true)
+
+	h.cfg.Run.Validation[0].IdentityProbes[0].Name = "renamed"
+	h.cfg.Run.Validation[0].Name = "renamed-policy"
+	if res := h.mustRun(t, h.request("check")); !res.Execution.ProbeAuthorization.Granted() || h.prober.calls == 0 {
+		t.Fatalf("a label-only change lost approval: %+v", res.Execution.ProbeAuthorization)
+	}
+
+	calls := h.prober.calls
+	h.cfg.Run.Validation[0].IdentityProbes[0].Argv = []string{"tool", "--other"}
+	res := h.mustRun(t, h.request("check"))
+	if h.prober.calls != calls || res.Execution.ProbeAuthorization.Cause != runcache.ProbeCauseContextChanged {
+		t.Fatalf("a changed probe argv ran %d probes, authorization %+v", h.prober.calls-calls, res.Execution.ProbeAuthorization)
+	}
+	if got := factStatuses(res.Execution.KeyInput.Validation.Facts); !slices.Equal(got, []runcache.FactStatus{runcache.FactDenied, runcache.FactDenied}) {
+		t.Fatalf("facts = %v, want denied", got)
+	}
+	if res := h.mustRun(t, h.request("lint")); !res.Execution.ProbeAuthorization.Granted() || h.prober.calls != calls+2 {
+		t.Fatalf("an unrelated unchanged policy lost approval: %+v", res.Execution.ProbeAuthorization)
+	}
+
+	calls = h.prober.calls
+	other, err := runcache.NewExecutionCWD("sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.Run.Validation[1].CWD = "sub"
+	h.writeUnder(t, "sub/.keep", "")
+	req := h.request("lint")
+	req.CWD, req.AbsDir = other, h.rootAbs+"/sub"
+	if res := h.mustRun(t, req); h.prober.calls != calls || res.Execution.ProbeAuthorization.Granted() {
+		t.Fatalf("a changed policy cwd kept approval: %+v", res.Execution.ProbeAuthorization)
+	}
+
+	h.setGrant(t, true)
+	h.setGrant(t, false)
+	if res := h.mustRun(t, req); h.prober.calls != calls || res.Execution.ProbeAuthorization.Cause != runcache.ProbeCauseNoGrant {
+		t.Fatalf("a revoked grant still authorized: %+v", res.Execution.ProbeAuthorization)
+	}
 }

@@ -25,6 +25,7 @@ import (
 	"awarer/internal/infra/blake3hash"
 	"awarer/internal/infra/effectfs"
 	"awarer/internal/infra/lockfile"
+	"awarer/internal/infra/probegrants"
 	"awarer/internal/infra/process"
 	"awarer/internal/infra/runstore"
 	"awarer/internal/infra/sqliteindex"
@@ -628,7 +629,7 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 		} else {
 			w.Diagnostic("  policy:   " + validationPolicyLine(v))
 		}
-		if line := identityFactsLine(v, res.Execution.PostRunFacts, res.Status == runcache.CacheHit); line != "" {
+		if line := identityFactsLine(v, res.Execution.PostRunFacts, res.Status == runcache.CacheHit, res.Execution.ProbeAuthorization); line != "" {
 			w.Diagnostic("  facts:    " + line)
 		}
 	}
@@ -1165,6 +1166,7 @@ func buildRunService(ctx context.Context, layout paths.Layout, cfg domainconfig.
 		Store:          runstore.New(layout, hasher),
 		Runner:         proc,
 		Prober:         proc,
+		Grants:         probegrants.New(hasher),
 		Resolver:       proc,
 		EffectObserver: effectobserve.New(effectfs.New(hasher), hasher),
 		Env:            osEnv{},

@@ -341,7 +341,7 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	if err != nil {
 		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
-	if validation, err = s.withPreRunFacts(ctx, req, validation, nil); err != nil {
+	if validation, _, err = s.withPreRunFacts(ctx, req, validation, nil); err != nil {
 		return runcache.RunReusability{}, runcache.KeyComparison{}, false, runcache.EffectReport{}, err
 	}
 	scope := *req.EffectiveScope

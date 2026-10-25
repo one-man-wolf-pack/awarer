@@ -869,6 +869,12 @@ var configSubcommands = []subcommand{
 		examples: []string{"awa config init --local", "awa config init --shared --force"},
 		topic:    "config",
 	}},
+	{name: "probes", summary: "approve or revoke this project's identity probes (config probes allow|revoke)", caps: []capability{capRoot, capConfig, capJSON}, run: runConfigProbes, help: commandHelp{
+		usage:    []string{"config probes allow", "config probes revoke"},
+		long:     "Manage the operator grant that lets awa run execute the identity probes validation policies declare. allow shows and approves the current project's effective probe contexts (each policy's argv and cwd with its literal probe argv), replacing any earlier approval for this project; revoke removes the grant. The grant is per-user state outside the project, addressed by the canonical project root: a symlink alias shares it, a moved or copied project needs its own. No config file can set it. Neither command runs or resolves a probe; config effective shows the grant beside the configuration.",
+		examples: []string{"awa config probes allow", "awa config probes revoke --json"},
+		topic:    "validation",
+	}},
 }
 
 // configCapabilities is the coarse set route validates "awa config" against;
@@ -880,7 +886,7 @@ func configCapabilities() []capability { return unionCapabilities(configSubcomma
 // configSubcommands, so the subcommand names live in exactly one place.
 var configCmdHelp = commandHelp{
 	usage: []string{"config <subcommand>"},
-	long:  "Inspect or scaffold configuration. path, show, effective, and validate act on the layered stack (--root/--config); effective also applies a --trust-mode/--strict override. init writes a scaffold (--root, but no --config). template prints an annotated template to stdout and needs no project.",
+	long:  "Inspect or scaffold configuration. path, show, effective, and validate act on the layered stack (--root/--config); effective also applies a --trust-mode/--strict override. init writes a scaffold (--root, but no --config). template prints an annotated template to stdout and needs no project. probes allow|revoke manages the per-user identity probe grant, which is not a config layer.",
 	topic: "config",
 }
 
@@ -890,13 +896,13 @@ func runConfig(w *output.Writer, inv invocation) error {
 		return configHelp(w, inv)
 	}
 	if len(inv.args) == 0 {
-		return usageErrorf("config requires a subcommand: path, show, effective, validate, template, or init")
+		return usageErrorf("config requires a subcommand: path, show, effective, validate, template, init, or probes")
 	}
 	sub := inv.args[0]
 
 	spec := lookupSubcommand(configSubcommands, sub)
 	if spec == nil {
-		return usageErrorf("unknown config subcommand %q: want path, show, effective, validate, template, or init", sub)
+		return usageErrorf("unknown config subcommand %q: want path, show, effective, validate, template, init, or probes", sub)
 	}
 	return dispatchSubcommand(w, "config", spec, inv)
 }
@@ -1131,16 +1137,21 @@ func runConfigEffective(w *output.Writer, inv invocation) error {
 		return classifyConfigLoad(err)
 	}
 	view := configcmd.NewView(loaded.Config())
+	auth := inspectProbeAuthorization(opts, loaded)
 	if opts.JSON {
 		// The section views stay at the top level of data (embedded, not nested under
 		// a "config" key) so the established config.effective contract is unchanged;
 		// origins is added additively alongside them, as stable layer tokens.
+		// The probe grant is a sibling of origins, never a config section: it is
+		// operator authorization, and no layer can supply it.
 		return w.JSON("config.effective", struct {
 			configcmd.View
-			Origins map[string]string `json:"origins"`
-		}{view, originTokens(loaded)})
+			Origins            map[string]string                 `json:"origins"`
+			ProbeAuthorization *configcmd.ProbeAuthorizationView `json:"probe_authorization"`
+		}{view, originTokens(loaded), auth})
 	}
 	renderEffective(w, view, loaded)
+	renderProbeAuthorization(w, auth)
 	return nil
 }
 
@@ -1360,7 +1371,6 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	kv("run.extra_effect_roots", "extra_effect_roots = %s", quoteList(v.Run.ExtraEffectRoots))
 	w.Linef("effective_effect_roots = %s", quoteList(v.Run.EffectiveEffectRoots))
 	kv("run.validation", "validation = %s", validationList(v.Run.Validation))
-	kv("run.allow_identity_probes", "allow_identity_probes = %t", v.Run.AllowIdentityProbes)
 	w.Line("")
 	w.Line("[gc]")
 	kv("gc.keep_last_checkpoints", "keep_last_checkpoints = %d", v.GC.KeepLastCheckpoints)

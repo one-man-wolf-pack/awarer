@@ -77,7 +77,6 @@ type overlayRun struct {
 	CacheFailedRuns  *bool                `toml:"cache_failed_runs"`
 	ExtraEffectRoots *[]string            `toml:"extra_effect_roots"`
 	Validation       *[]overlayValidation `toml:"validation"`
-	AllowProbes      *bool                `toml:"allow_identity_probes"`
 }
 
 type overlayValidation struct {
@@ -442,17 +441,6 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 			}
 			cfg.Run.Validation = policies
 			origins["run.validation"] = layer
-		}
-		if r.AllowProbes != nil {
-			// Probes are executable project configuration: a committed awa.toml or an
-			// explicit --config file must not be able to authorize their execution, so
-			// the grant is refused everywhere except the private project config.
-			if layer != config.LayerLocal {
-				return layerErr(layer, path, "run.allow_identity_probes",
-					fmt.Errorf("may be set only in the private project config .awa/config.toml"))
-			}
-			cfg.Run.AllowIdentityProbes = *r.AllowProbes
-			origins["run.allow_identity_probes"] = layer
 		}
 	}
 

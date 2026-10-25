@@ -920,6 +920,21 @@
               "takes_value": false
             }
           ]
+        },
+        {
+          "name": "probes",
+          "summary": "approve or revoke this project's identity probes (config probes allow|revoke)",
+          "usage": [
+            "config probes allow",
+            "config probes revoke"
+          ],
+          "topic": "validation",
+          "operands": "none",
+          "capabilities": [
+            "--root",
+            "--config",
+            "--json"
+          ]
         }
       ]
     },

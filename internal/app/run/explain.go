@@ -109,6 +109,9 @@ type ExplainSubject struct {
 	Cacheable bool
 	Skipped   runcache.SkippedSummary
 	Exact     ExactMatch
+	// ProbeAuthorization is the current grant check for a policy declaring probes;
+	// reading it runs nothing.
+	ProbeAuthorization runcache.ProbeAuthorization
 }
 
 // ExplainResult is the full, rendered-by-CLI explanation. Candidates are the shared
@@ -303,6 +306,8 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
 			Exact:     v.Exact,
+
+			ProbeAuthorization: kc.Authorization,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -416,6 +421,8 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 			Cacheable: kc.Reason == "",
 			Skipped:   kc.Skipped,
 			Exact:     v.Exact,
+
+			ProbeAuthorization: kc.Authorization,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,

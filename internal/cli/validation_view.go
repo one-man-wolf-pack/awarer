@@ -51,7 +51,9 @@ func validationPolicyView(v *runcache.ValidationScope, post []runcache.ExternalF
 	return doc
 }
 
-func identityFactsLine(v *runcache.ValidationScope, post []runcache.ExternalFact, hit bool) string {
+// identityFactsLine summarizes the facts; auth is the live grant check, zero for a
+// stored run whose authorization cause was never recorded.
+func identityFactsLine(v *runcache.ValidationScope, post []runcache.ExternalFact, hit bool, auth runcache.ProbeAuthorization) string {
 	if v == nil || len(v.Probes) == 0 {
 		return ""
 	}
@@ -61,7 +63,7 @@ func identityFactsLine(v *runcache.ValidationScope, post []runcache.ExternalFact
 			return "identity probes not run: this run could not be reused anyway"
 		}
 		if failed.status == runcache.FactDenied {
-			return "reuse unavailable: identity probes not granted (set run.allow_identity_probes in .awa/config.toml)"
+			return "reuse unavailable: " + probeDenialLine(auth)
 		}
 		return fmt.Sprintf("reuse unavailable: identity probe %s %s before the run", failed.label, failed.status)
 	}
@@ -80,6 +82,21 @@ func identityFactsLine(v *runcache.ValidationScope, post []runcache.ExternalFact
 		}
 	}
 	return fmt.Sprintf("%s reported the same bytes before and after the run", probeCount(n))
+}
+
+// probeDenialLine says why probes were not run and where to act. It never suggests
+// the command itself failed: denial costs reuse, not the run.
+func probeDenialLine(auth runcache.ProbeAuthorization) string {
+	switch auth.Cause {
+	case runcache.ProbeCauseContextChanged:
+		return "identity probes changed since they were approved for this project (review with 'awa config effective', approve with 'awa config probes allow')"
+	case runcache.ProbeCauseNoGrant:
+		return "identity probes not approved for this project (review with 'awa config effective', approve with 'awa config probes allow')"
+	case runcache.ProbeCauseNone:
+		return "identity probes were not authorized for this project (see 'awa config effective')"
+	default:
+		return fmt.Sprintf("the identity probe grant is unavailable (%s), so probes were not run (see 'awa config effective')", auth.Cause)
+	}
 }
 
 type unavailableProbe struct {

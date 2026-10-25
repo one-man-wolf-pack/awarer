@@ -23,33 +23,14 @@ func TestComposeDecodesIdentityProbes(t *testing.T) {
 	if len(probes) != 1 || probes[0].Name != "rustc" || !slices.Equal(probes[0].Argv, []string{"rustc", "-vV"}) {
 		t.Fatalf("identity probes = %+v", probes)
 	}
-	if cfg.Run.AllowIdentityProbes {
-		t.Fatal("declaring a probe granted permission to execute it")
-	}
 }
 
-func TestIdentityProbeGrantIsAcceptedOnlyFromThePrivateLayer(t *testing.T) {
-	grant := "[run]\nallow_identity_probes = true\n"
-	for _, layer := range []config.Layer{config.LayerShared, config.LayerConfig} {
-		t.Run(layer.String(), func(t *testing.T) {
-			_, _, err := Compose([]NamedOverlay{
-				{Layer: config.LayerLocal, Overlay: overlay(t, "[run]\nallow_identity_probes = false\n")},
-				{Layer: layer, Path: "/p/file.toml", Overlay: overlay(t, grant)},
-			})
-			if err == nil || !strings.Contains(err.Error(), "run.allow_identity_probes") || !strings.Contains(err.Error(), ".awa/config.toml") {
-				t.Fatalf("Compose = %v, want a refusal naming the private config", err)
-			}
-		})
-	}
-	cfg, origins, err := Compose([]NamedOverlay{
-		{Layer: config.LayerShared, Overlay: overlay(t, sharedProbes)},
-		{Layer: config.LayerLocal, Overlay: overlay(t, grant)},
-	})
-	if err != nil {
-		t.Fatalf("Compose: %v", err)
-	}
-	if !cfg.Run.AllowIdentityProbes || origins["run.allow_identity_probes"] != config.LayerLocal {
-		t.Fatalf("grant = %t from %s, want true from local", cfg.Run.AllowIdentityProbes, origins["run.allow_identity_probes"])
+// No config file can grant probe execution: the former private-layer permission key is
+// an unknown key everywhere, so a checkout carrying it cannot authorize itself.
+func TestNoConfigLayerCanGrantIdentityProbes(t *testing.T) {
+	_, err := DecodeOverlay([]byte("[run]\nallow_identity_probes = true\n"))
+	if err == nil || !strings.Contains(err.Error(), "allow_identity_probes") {
+		t.Fatalf("DecodeOverlay = %v, want an unknown-key refusal", err)
 	}
 }
 

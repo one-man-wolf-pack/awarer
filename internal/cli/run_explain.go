@@ -344,6 +344,9 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 		} else {
 			w.Linef("policy: %s", validationPolicyLine(v))
 		}
+		if line := identityFactsLine(v, nil, false, res.Subject.ProbeAuthorization); line != "" {
+			w.Linef("facts:  %s", line)
+		}
 	}
 
 	switch exact := res.Subject.Exact; {

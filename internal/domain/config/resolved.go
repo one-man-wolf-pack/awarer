@@ -128,7 +128,6 @@ var keySpecs = []keySpec{
 	{"run.cache_failed_runs", func(a, b Config) bool { return a.Run.CacheFailedRuns != b.Run.CacheFailedRuns }},
 	{"run.extra_effect_roots", func(a, b Config) bool { return !slices.Equal(a.Run.WatchedEffectRoots, b.Run.WatchedEffectRoots) }},
 	{"run.validation", func(a, b Config) bool { return !validationEqual(a.Run.Validation, b.Run.Validation) }},
-	{"run.allow_identity_probes", func(a, b Config) bool { return a.Run.AllowIdentityProbes != b.Run.AllowIdentityProbes }},
 	{"gc.keep_last_checkpoints", func(a, b Config) bool { return a.GC.KeepLastCheckpoints != b.GC.KeepLastCheckpoints }},
 	{"gc.keep_runs_for", func(a, b Config) bool { return a.GC.KeepRunsFor != b.GC.KeepRunsFor }},
 	{"gc.keep_restores_for", func(a, b Config) bool { return a.GC.KeepRestoresFor != b.GC.KeepRestoresFor }},

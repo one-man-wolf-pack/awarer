@@ -278,7 +278,6 @@ func TestChangedKeysMapsEachFieldToItsKey(t *testing.T) {
 		{"run.validation", func(c *Config) {
 			c.Run.Validation = []ValidationPolicy{{Name: "v", Argv: []string{"x"}, CWD: ".", UnobservedDirs: []string{"t"}}}
 		}},
-		{"run.allow_identity_probes", func(c *Config) { c.Run.AllowIdentityProbes = !d.Run.AllowIdentityProbes }},
 		{"gc.keep_last_checkpoints", func(c *Config) { c.GC.KeepLastCheckpoints = d.GC.KeepLastCheckpoints + 1 }},
 		{"gc.keep_runs_for", func(c *Config) { c.GC.KeepRunsFor = d.GC.KeepRunsFor + 1 }},
 		{"gc.keep_restores_for", func(c *Config) { c.GC.KeepRestoresFor = d.GC.KeepRestoresFor + 1 }},

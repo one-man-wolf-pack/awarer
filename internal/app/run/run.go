@@ -23,10 +23,13 @@ const maxSkippedSamples = 16
 
 // Deps are the ports the run service depends on.
 type Deps struct {
-	Scanner  Scanner
-	Store    runcache.Store
-	Runner   runcache.Runner
-	Prober   runcache.Prober
+	Scanner Scanner
+	Store   runcache.Store
+	Runner  runcache.Runner
+	Prober  runcache.Prober
+	// Grants answers whether the operator approved a policy's probe context for this
+	// project. A nil Grants approves nothing, so no wiring gap can authorize a probe.
+	Grants   ProbeGrants
 	Resolver ExecutableResolver
 	// EffectObserver computes the bounded effect signature over the watched
 	// generated-output roots. It is a correctness dependency: a run that does not
@@ -259,6 +262,9 @@ type Execution struct {
 	// which is honest where a zero summary would falsely read as "empty".
 	Output       *Output
 	PostRunFacts []runcache.ExternalFact
+	// ProbeAuthorization is this invocation's pre-run grant check. It is not
+	// persisted: a stored run keeps only its facts, so its zero value means unknown.
+	ProbeAuthorization runcache.ProbeAuthorization
 }
 
 // Output is the execution-level summary of a run's captured streams.
@@ -299,6 +305,11 @@ func summarizeStream(c runcache.OutputCapture) StreamSummary {
 // DurationMs returns the wall-clock duration of the execution in milliseconds.
 func (e Execution) DurationMs() int64 {
 	return e.FinishedAt.Sub(e.StartedAt).Milliseconds()
+}
+
+func withAuthorization(e Execution, auth runcache.ProbeAuthorization) Execution {
+	e.ProbeAuthorization = auth
+	return e
 }
 
 // executionFromEntry projects a stored or replayed entry into an execution result.
@@ -382,7 +393,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 				Recorded:     true,
 				Reuse:        entry.Reuse,
 				ExitCode:     entry.Exit.Code,
-				Execution:    executionFromEntry(entry),
+				Execution:    withAuthorization(executionFromEntry(entry), kc.Authorization),
 				Performance:  runPerformance([]inputReport{kc.InputReport}, kc.EffectReport),
 				effectReport: kc.EffectReport,
 			}, nil
@@ -466,7 +477,7 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 	var postFacts []runcache.ExternalFact
 	var factsReason runcache.MismatchReason
 	if probesDeclared(validation) && kc.CanWrite && (!failed || cacheFailedOK) {
-		postFacts, err = kc.acquire(ctx, validation)
+		postFacts, _, err = kc.acquire(ctx, validation)
 		if err != nil {
 			if pending != nil {
 				_ = pending.Discard()
@@ -515,6 +526,8 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 		EffectGuard:  effect,
 		Output:       output,
 		PostRunFacts: postFacts,
+
+		ProbeAuthorization: kc.Authorization,
 	}
 
 	// A run id and a durable record are produced whenever output was captured, so a
@@ -651,7 +664,10 @@ type keyContext struct {
 	// stdin-not-keyed, no-cache, skipped-inputs). It is a record-only run's reuse
 	// reason, used directly without re-parsing a stringified token.
 	Reason runcache.MismatchReason
-	// Diagnostics and ungranted runs hold no acquirer, so they cannot execute a probe.
+	// Authorization is the pre-run grant check for a policy declaring probes.
+	Authorization runcache.ProbeAuthorization
+	// Diagnostics hold no acquirer, so they cannot execute a probe; a run's acquirer
+	// checks the grant again at every phase before it starts one.
 	acquire factAcquirer
 }
 
@@ -715,10 +731,11 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	// input and effect observations the key is built from: whatever a probe changes is
 	// then seen by those observations instead of slipping between them and the lookup.
 	var acquire factAcquirer
-	if acquireFacts && req.Config.Run.AllowIdentityProbes {
+	if acquireFacts {
 		acquire = s.acquirerFor(req, childEnv)
 	}
-	if validation, err = s.withPreRunFacts(ctx, req, validation, acquire); err != nil {
+	validation, auth, err := s.withPreRunFacts(ctx, req, validation, acquire)
+	if err != nil {
 		return keyContext{}, err
 	}
 
@@ -784,59 +801,56 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	}
 
 	return keyContext{
-		EffCfg:       req.Config,
-		EffScope:     effScope,
-		InputReport:  inputReport,
-		KeyInput:     keyInput,
-		Key:          key,
-		ChildEnv:     childEnv,
-		ResolvedPath: resolvedPath,
-		Skipped:      summary,
-		EffectPre:    effectPre,
-		EffectReport: effectReport,
-		beforeScan:   scanRes,
-		CanRead:      canRead,
-		CanWrite:     canWrite,
-		BaseStatus:   baseStatus,
-		Reason:       reason,
-		acquire:      acquire,
+		EffCfg:        req.Config,
+		EffScope:      effScope,
+		InputReport:   inputReport,
+		KeyInput:      keyInput,
+		Key:           key,
+		ChildEnv:      childEnv,
+		ResolvedPath:  resolvedPath,
+		Skipped:       summary,
+		EffectPre:     effectPre,
+		EffectReport:  effectReport,
+		beforeScan:    scanRes,
+		CanRead:       canRead,
+		CanWrite:      canWrite,
+		BaseStatus:    baseStatus,
+		Reason:        reason,
+		Authorization: auth,
+		acquire:       acquire,
 	}, nil
 }
 
-func (s *Service) withPreRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) (*runcache.ValidationScope, error) {
+func (s *Service) withPreRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) (*runcache.ValidationScope, runcache.ProbeAuthorization, error) {
 	if !probesDeclared(v) {
-		return v, nil
+		return v, runcache.ProbeAuthorization{}, nil
 	}
-	facts, err := s.preRunFacts(ctx, req, v, acquire)
+	facts, auth, err := s.preRunFacts(ctx, req, v, acquire)
 	if err != nil || facts == nil {
-		return v, err
+		return v, auth, err
 	}
 	out, err := v.WithFacts(facts)
 	if err != nil {
-		return nil, err
+		return nil, auth, err
 	}
-	return &out, nil
+	return &out, auth, nil
 }
 
 // Diagnostics share this so their known facts match a run's: no probe runs merely to
-// enrich history, and a missing grant is a known denial rather than unassessed.
-func (s *Service) preRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) ([]runcache.ExternalFact, error) {
-	known := func(st runcache.FactStatus) []runcache.ExternalFact {
-		facts := make([]runcache.ExternalFact, len(v.Probes))
-		for i := range facts {
-			facts[i] = runcache.UnavailableFact(st)
-		}
-		return facts
+// enrich history, and a missing grant is a known denial rather than unassessed. Reading
+// the grant executes and resolves nothing.
+func (s *Service) preRunFacts(ctx context.Context, req Request, v *runcache.ValidationScope, acquire factAcquirer) ([]runcache.ExternalFact, runcache.ProbeAuthorization, error) {
+	if canRead, canWrite, _, _ := cacheability(req.Config, req, false); !canRead && !canWrite {
+		return deniedFacts(v, runcache.FactNotAcquired), runcache.ProbeAuthorization{}, nil
 	}
-	switch canRead, canWrite, _, _ := cacheability(req.Config, req, false); {
-	case !canRead && !canWrite:
-		return known(runcache.FactNotAcquired), nil
-	case !req.Config.Run.AllowIdentityProbes:
-		return known(runcache.FactDenied), nil
-	case acquire == nil:
-		return nil, nil
+	if acquire != nil {
+		return acquire(ctx, v)
 	}
-	return acquire(ctx, v)
+	auth := s.authorizeProbes(req, v)
+	if !auth.Granted() {
+		return deniedFacts(v, runcache.FactDenied), auth, nil
+	}
+	return nil, auth, nil
 }
 
 // buildKeyInput assembles the typed key input from the request, the effective

@@ -24,6 +24,7 @@ import (
 	"awarer/internal/domain/worktree"
 	"awarer/internal/infra/blake3hash"
 	"awarer/internal/infra/effectfs"
+	"awarer/internal/infra/probegrants"
 	"awarer/internal/infra/projfs"
 	"awarer/internal/infra/runstore"
 	"awarer/internal/infra/sqliteindex"
@@ -112,6 +113,7 @@ type harness struct {
 	env      *mapEnv
 	clock    *fakeClock
 	store    *runstore.Repo
+	grants   *probegrants.Store
 	proj     projfs.Project
 	cfg      config.Config
 	rootAbs  string
@@ -202,11 +204,15 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	if hc.decorateStore != nil {
 		svcStore = hc.decorateStore(store)
 	}
+	// The grant store lives in its own temp dir, never the operator's real one and
+	// never inside the project.
+	grants := probegrants.NewAt(t.TempDir(), hasher)
 	svc := apprun.New(apprun.Deps{
 		Scanner:        scan,
 		Store:          svcStore,
 		Runner:         runner,
 		Prober:         prober,
+		Grants:         grants,
 		Resolver:       resolver,
 		EffectObserver: observer,
 		Env:            env,
@@ -216,7 +222,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	})
 	return &harness{
 		svc: svc, runner: runner, prober: prober, resolver: resolver, env: env, clock: clock, store: store,
-		proj: proj, cfg: cfg, rootAbs: layout.Root(),
+		grants: grants, proj: proj, cfg: cfg, rootAbs: layout.Root(),
 		cleanup: func() { _ = idx.Close() },
 	}
 }

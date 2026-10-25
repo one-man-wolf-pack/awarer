@@ -29,7 +29,7 @@ var publicCommands = []string{
 var publicSubcommands = [][]string{
 	{"run", "ls"}, {"run", "log"}, {"run", "show"}, {"run", "rm"}, {"run", "explain"}, {"run", "audit"},
 	{"config", "path"}, {"config", "show"}, {"config", "effective"},
-	{"config", "validate"}, {"config", "template"}, {"config", "init"},
+	{"config", "validate"}, {"config", "template"}, {"config", "init"}, {"config", "probes"},
 	{"state", "resolve"}, {"state", "compare"},
 	{"docs", "export"},
 }
@@ -230,6 +230,7 @@ func TestUnknownInputsAreUsageErrors(t *testing.T) {
 		{"run", "log", "--strict"},            // trust-mode on a history-only subcommand that ignores it
 		{"config", "init"},                    // requires --shared or --local
 		{"config", "not-a-subcommand"},        // unknown config subcommand
+		{"config", "probes"},                  // requires allow or revoke
 		{"gc", "--runs-only", "--blobs-only"}, // mutually exclusive filters
 	}
 	for _, args := range cases {

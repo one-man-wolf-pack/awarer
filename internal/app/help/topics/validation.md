@@ -98,28 +98,41 @@ name = "rustc"                       # a label for output only
 argv = ["rustc", "-vV"]              # a literal command, never a shell line
 ```
 
-```toml
-[run]                                # in .awa/config.toml only
-allow_identity_probes = true
+```text
+awa config probes allow              # approve this project's probes
+awa config probes revoke             # withdraw that approval
 ```
 
 A probe is a command whose exact stdout becomes part of the policy's cache key,
 so a different report means a miss. Up to 8 probes per policy.
 
-- **Permission.** Probes are code from the project config. They run only when
-  `allow_identity_probes = true` is set in the private `.awa/config.toml`; in
-  `awa.toml` or a `--config` file that key is a config error. The grant covers
-  every probe this checkout's config declares, including ones added or edited
-  later. It is not a sandbox: a probe can do anything a command can.
+- **Permission.** Probes are code from the project config, so no config file
+  can let them run. `awa config probes allow` shows each policy's argv, cwd and
+  probe argv and approves exactly those for this project, running none of them;
+  `revoke` withdraws it. Each allow replaces the approval with exactly the
+  probes the current config declares; it does not remember others, so a policy
+  absent then (on another branch, say) needs allow again when it returns.
+  The grant is per-user state outside the project (in the OS user config
+  directory, under `awa/probe-grants`), keyed by the project's canonical path: a
+  symlink to the same directory shares it, a moved or copied project, another
+  worktree or a project in another place needs its own. A new or changed probe,
+  policy argv or cwd is denied until approved again; renaming a probe or policy
+  is not. Approval is for these commands at this path, not for what their
+  executables do: a project replaced at the same path keeps it, and a changed
+  script or tool behind the same argv is not detected. It is not a sandbox: a
+  probe can do anything a command can. A missing, unreadable or damaged grant,
+  or one stored inside the project, authorizes nothing. `awa config effective`
+  shows the grant apart from the config layers.
 - **When.** Only `awa run`, never explain, `run ls`, show, status, doctor, or
   config. A run that could be reused runs the probes before it looks up a result,
   also when that becomes a hit, and again after the command before it stores a
   reusable result. `--record`, `--no-cache`, disabled capture, unkeyed stdin, and fast trust mode
   skip them. Each runs in the command's cwd with the command's sanitized
-  environment and null stdin.
+  environment and null stdin. The grant is checked again before each phase, so a
+  revoke stops the next phase, not a probe already running.
 - **Bounds.** Each probe gets 10 s, 64 KiB of stdout, and 64 KiB of stderr; one
   phase of probes gets 30 s. Exceeding a bound ends that probe.
-- **Unavailable.** A probe that is not granted, is not found, fails to start,
+- **Unavailable.** A probe that is not approved, is not found, fails to start,
   exits non-zero or by a signal, times out, prints nothing, or overflows a bound
   makes the facts unavailable. The command still runs with its own exit code and
   output; only reuse is lost. Before the run that is `external-facts-unavailable`;
