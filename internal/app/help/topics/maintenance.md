@@ -47,7 +47,7 @@ free of secrets. Treat it as one input to the review, never as its conclusion.
 
 ## Inputs, history, retention, and effects are different choices
 
-Four settings look alike and answer different questions:
+Five settings look alike and answer different questions:
 
 - **Run input scope** (excludes for run, `.awaignore`) — what a command's key is
   computed from. Excluding a path a command reads makes it invisible to the key.
@@ -57,6 +57,9 @@ Four settings look alike and answer different questions:
   scanned and still a run input; new checkpoints keep its hash, not its bytes.
 - **Effect observation** (`[run].extra_effect_roots`) — a bounded watch on
   generated directories, so deleting or changing them misses instead of hitting.
+- **Validation policy** (`[[run.validation]]`) — one exact invocation's waiver
+  of named directories for result-only replay; never a global exclude
+  ([awa help validation](validation.md)).
 
 A secret file a command still reads, such as a local env file, stays an input:
 keep its bytes out of checkpoints with hash-only retention rather than excluding
@@ -71,8 +74,11 @@ files a build wrote.
 
 Generated, vendored, and agent-owned directories have no universal answer. Decide
 per directory from what the project's commands do with it: input, output, both,
-or neither. A command that mutates the worktree belongs under
-`awa run --record`; making it look cacheable by hiding what it writes trades a
+or neither. A command whose output is needed afterwards, or that has side
+effects, belongs under `awa run --record`. A check that only rewrites a build
+directory can use a validation policy instead, but only when that directory's
+prior contents cannot change its result and its files are not needed after a
+replay. Making a command look cacheable by excluding what it writes trades a
 miss for a false hit.
 
 ## Environment the commands consume
@@ -106,8 +112,8 @@ awa run audit -n 50     # a smaller window (at most 1000)
 The audit reads only each selected run's metadata, under a per-run and a total
 byte budget. It does not scan the worktree or effect roots and opens no captured
 output or manifest, though finding the newest runs may still list every stored
-run id. Its denominator is
-the retained runs in the window, so it reports counts, never a hit rate. Each run
+run id. Its denominator is the retained runs in the window, so it reports
+counts, never a hit rate. Each run
 counts once by its primary stored reason, which can hide another condition:
 `--record` with piped input is stored as `record-only`, not `stdin-not-keyed`.
 A selected run that is corrupt, incompatible, vanished, unreadable, or over
@@ -123,7 +129,9 @@ awa run explain --from-run <id> --to-now  # a stored run's inputs against now
 awa run explain -- <command>              # the key and decision, without running
 ```
 
-The reason tokens are listed in [awa help run](run.md). Read them per command.
+The ordinary reason tokens are listed in [awa help run](run.md), validation and
+identity-probe ones in [awa help validation](validation.md). Read them per
+command.
 `input-tree-differs` usually means the inputs really changed; read its path
 sample before calling it a scope problem, and never exclude a real input to get
 hits. A repeated `env-mismatch` points at the environment, while `mutated-state`
@@ -131,15 +139,12 @@ or `record-only` usually means the command is not a cache candidate at all.
 
 ## Commands that need no input
 
-An inherited pipe or regular file is passed to the command and makes the run
-non-reusable, because those bytes are not keyed. A terminal or the null device
-(`</dev/null`) gives the command end-of-file by default and does not by itself
-prevent reuse. `--allow-tty` passes the terminal through and makes the run
-non-reusable. When a command genuinely needs no input but awa's own input is a
-pipe or file, `--stdin null` gives it end-of-file deliberately. That is a choice
-about what the command receives, not a promise of a hit: every other reuse
-condition still applies, so never use it to silence a command that reads stdin.
-Upstream pipeline effects and the exact option are in [awa help run](run.md).
+An inherited pipe or file makes the run non-reusable, because those bytes are
+not keyed; a terminal or the null device does not. When a command needs no
+input but awa's own input is a pipe or file, `--stdin null` gives it
+end-of-file. That changes what the command receives, not the other reuse
+conditions, so never use it to silence a command that reads stdin. Details are
+in [awa help run](run.md).
 
 Evidence is per project root. A run supervised from one checkout observes that
 checkout; it says nothing about edits in another worktree the command happened
@@ -155,8 +160,8 @@ or `awa run rm`.
 selected, what it retains, and what blocks it. It is not a report of the whole
 store's size (that is doctor's `store:` line), and it is not a secret sanitizer —
 it removes only what retention allows. Its byte figures are logical file lengths
-for the selected candidates, can be a lower bound, and need not match disk usage. The workflow and every
-reason token are in [awa help gc](gc.md).
+for the selected candidates, can be a lower bound, and need not match disk
+usage. The workflow and every reason token are in [awa help gc](gc.md).
 
 ## What a config change does not undo
 
@@ -189,6 +194,7 @@ Propose, with the evidence that justifies it, and let the owner decide:
 - [awa help config](../reference/configuration.md)
 - [awa help ignores](ignores.md)
 - [awa help run](run.md)
+- [awa help validation](validation.md)
 - [awa help record](record.md)
 - [awa help inspect](inspect.md)
 - [awa help privacy](privacy.md)

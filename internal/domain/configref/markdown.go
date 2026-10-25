@@ -127,42 +127,36 @@ func PrecedenceMarkdown() string {
 func EffectVsExcludeMarkdown() string {
 	return "## Effect roots vs excludes\n" +
 		"\n" +
-		"The central run-cache decision:\n" +
+		"The central run-cache decision for a generated or scratch directory:\n" +
 		"\n" +
-		"- The command **writes or refreshes** a generated directory during the run,\n" +
-		"  and that output is disposable — it may safely be absent after a replay\n" +
-		"  → `[run].extra_excludes` or `.awaignore`. Otherwise the self-generated\n" +
-		"  output makes every run non-reusable.\n" +
-		"- The command **writes** output you actually need on disk afterwards\n" +
-		"  → `awa run --record`. Excluding it would let a replay report success with\n" +
-		"  the output missing.\n" +
-		"- The command only **reads** an already-produced generated directory that the\n" +
-		"  run input scan no longer sees → `[run].extra_effect_roots`. Later changes to\n" +
-		"  that generated state should invalidate reuse.\n" +
-		"- That directory is still **visible to the input scan** → configure nothing.\n" +
-		"  Its contents already key the run; an effect root would add no coverage.\n" +
-		"- The command is a deploy, migration, formatter, live probe, or otherwise\n" +
-		"  non-reusable → `awa run --record`. Keep durable evidence without\n" +
-		"  publishing a reusable hit.\n" +
+		"- The command **writes** output you need afterwards, or has side effects\n" +
+		"  (deploy, migration, formatter, live probe) → `awa run --record`. A replay\n" +
+		"  recreates no files, so it could report success with the output missing.\n" +
+		"- One exact check **rewrites** a directory whose prior contents cannot change\n" +
+		"  its result and whose files are not needed after a replay → a\n" +
+		"  `[[run.validation]]` policy for result-only reuse (`awa help validation`).\n" +
+		"  Both assertions must hold; awa checks neither.\n" +
+		"- The command only **reads** a generated directory the run input scan no longer\n" +
+		"  sees → `[run].extra_effect_roots`, so later changes to it invalidate reuse.\n" +
+		"- The input scan still **sees** that directory → configure nothing; its\n" +
+		"  contents already key the run.\n" +
+		"- No command's result depends on the path, even if one writes it (scratch,\n" +
+		"  logs) → `[run].extra_excludes` or `.awaignore`.\n" +
 		"\n" +
-		"Picking an effect-root selector (literal, never globs):\n" +
-		"\n" +
-		"- The same directory name at **any** depth, typically repeated across\n" +
-		"  monorepo packages → a name: `extra_effect_roots = [\"bin\"]`.\n" +
-		"- Exactly **one** location → a project-relative path:\n" +
-		"  `extra_effect_roots = [\"artifacts/bin\"]`, which watches neither `other/bin`\n" +
-		"  nor `other/artifacts/bin`.\n" +
+		"An effect-root selector is literal, never a glob: a name such as\n" +
+		"`extra_effect_roots = [\"bin\"]` matches at **any** depth, for example across\n" +
+		"monorepo packages; a path such as `[\"artifacts/bin\"]` matches only there, not\n" +
+		"`other/bin` or `other/artifacts/bin`.\n" +
 		"\n" +
 		"Rules:\n" +
 		"\n" +
-		"- Writing to a watched effect root during the run makes the result\n" +
-		"  non-reusable.\n" +
-		"- The two lists are separate: the watched set is the built-in effect roots\n" +
-		"  plus `extra_effect_roots`. An exclude you add yourself is NOT watched, so\n" +
-		"  an excluded, unwatched directory is invisible to the cache in both\n" +
-		"  directions.\n" +
-		"- Excluding a path therefore weakens what `awa run` can observe, so do it\n" +
-		"  intentionally.\n" +
+		"- Writing to a watched root during the run makes the result non-reusable,\n" +
+		"  unless a matched validation policy waives that exact directory.\n" +
+		"- The watched set is the built-in effect roots plus `extra_effect_roots`. An\n" +
+		"  exclude neither silences a watched root nor is watched itself, so an\n" +
+		"  excluded, unwatched directory is invisible to the cache for every command.\n" +
+		"- Never exclude a real dependency to get hits: a miss is cheaper than a false\n" +
+		"  hit.\n" +
 		"- awa will not auto-edit config to improve the cache hit rate."
 }
 

@@ -28,6 +28,12 @@ different question â€” which stored runs are reusable for the *current* state â€
 a run missing from `ls` is not missing from history. `awa run ls --all` lists the
 non-reusable ones too, each with its reason token.
 
+A run whose [validation policy](validation.md) has approved identity probes
+that only `awa run` executes may be listed apart as unassessed, also with
+`--all`: its reuse is unknown, neither reusable nor non-reusable. Without the
+approval, or when another reason already decides, the run is assessed as usual.
+The JSON form is in [awa help json](json.md).
+
 There is no time-range filter. To find a run from a particular moment, narrow
 with `--command` and read the timestamps, choosing how they are rendered with
 `--time relative`, `--time local`, or `--time utc`.
@@ -131,6 +137,7 @@ markers, not awa state references.
 ## See also
 
 - [awa help run](run.md)
+- [awa help validation](validation.md)
 - [awa help record](record.md)
 - [awa help refs](refs.md)
 - [awa help privacy](privacy.md)

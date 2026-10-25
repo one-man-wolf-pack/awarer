@@ -1,8 +1,12 @@
 # JSON output, exit origin, and script rules
 
-`--json` turns a command's human report into a stable machine document. Use it
-for anything automated: the human text is allowed to change wording, the JSON
-shape is not.
+`--json` turns a command's human report into a machine document. Use it for
+anything automated: human wording can change in any release, while the JSON
+contract is the one this help and the command reference describe for your
+installed version. Before 1.0 that contract is not frozen, but an incompatible
+change is an explicit decision, disclosed in the release notes and here, such as
+the `null` unknowns under `run explain` below. A new field can appear without a
+schema change, so ignore keys you do not know.
 
 ## The envelope
 
@@ -16,7 +20,8 @@ Every JSON payload is wrapped the same way:
 The envelope's `schema_version` versions the envelope itself. Provider contracts
 carried inside `data` — `awa-state/v1` for resolved state, `awa-evidence/v1` for
 run evidence — are versioned independently and appear as their own
-`provider_contract` fields.
+`provider_contract` fields. A payload transition need not change either: the
+explain unknowns below kept `schema_version` 1.
 
 Payload goes to stdout. Diagnostics, notes, hints, and errors go to stderr, so a
 script can capture stdout alone and get only the document.
@@ -143,10 +148,10 @@ Optional keys, on the other hand, are omitted when they have no value: a
 checkpoint with no message carries no `message` key, a run with capture disabled
 carries no `outputs` block, and a binary with no VCS stamping carries no
 `revision`. Read anything a document is not obliged to carry with a
-present-or-default access rather than a direct index. What is stable is the
-envelope plus the keys a document always carries — `awa run ls --json` always has
-its `diagnostics.performance` array, empty when nothing crossed the latency
-threshold, so machine-readable latency facts never live only on stderr.
+present-or-default access rather than a direct index. What a version guarantees
+is the envelope plus the keys a document always carries — `awa run ls --json`
+always has its `diagnostics.performance` array, empty when nothing crossed the
+latency threshold, so machine-readable latency facts never live only on stderr.
 
 ## Reading the run audit
 

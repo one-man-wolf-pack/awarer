@@ -1,21 +1,21 @@
 # awa for coding agents
 
 Use awa for three things: retained execution results you can read again,
-explicit checkpoints of the worktree, and reusable deterministic checks. You do
-not need prior knowledge of the project — the commands below are the whole
-workflow.
+explicit checkpoints of the worktree, and reusable deterministic checks. The
+commands below are the whole workflow; no prior knowledge of the project is
+needed.
 
 ## Review the worktree
 
-Start with the dashboard — it is the single entry point before a review:
+Start a review with the dashboard:
 
 ```text
 awa status                       # checkpoint, dirty summary, reusable/near
                                  # runs, and the commands to run next
 ```
 
-Before a meaningful change, checkpoint the worktree, then review what changed
-since it (replace the placeholder with a specific message):
+Before a meaningful change, checkpoint with a specific message, then review
+what changed since it:
 
 ```text
 awa checkpoint -m "<specific-checkpoint-message>"
@@ -23,10 +23,9 @@ awa changes <checkpoint-id>..now
 awa diff <checkpoint-id>..now [-- <path>]
 ```
 
-Keep the id `awa checkpoint` prints and compare against it. Plain `awa changes`
-and `awa diff` use `latest..now`, but `latest` is shared project-local state: it
-moves whenever any agent or user checkpoints. If a baseline surprises you,
-inspect recent checkpoints with `awa log -n 5`.
+Compare against the id `awa checkpoint` prints. Plain `awa changes` and
+`awa diff` use `latest..now`, and `latest` moves whenever any agent or user
+checkpoints; `awa log -n 5` shows recent checkpoints.
 
 A clean delta means only "no changes since that baseline". Before you declare
 work ready, inspect the full current uncommitted worktree, not just the delta.
@@ -47,10 +46,11 @@ awa changes run:<run-id>:before..run:<run-id>:after   # what it changed
 `--stdin null` is only for a command that reads no input; drop it otherwise.
 
 `--record` always executes and never becomes a reusable hit. Use it for fresh
-results and for side-effecting work — builds, generators, formatters,
-migrations, deployments — where replay would mislead. Its before/after
-observation attributes the effect immediately; without the wrapper awa can see
-that the worktree drifted but cannot prove what caused it.
+results and side-effecting work: builds, generators, formatters, migrations,
+deployments. Its before/after observation shows what the command changed;
+without the wrapper awa sees drift but not its cause. A check whose build
+directory neither affects its result nor is needed after a replay may instead
+use an exact [validation policy](validation.md), which replays the result only.
 
 A copyable paragraph for a project's agent instructions:
 
@@ -72,9 +72,9 @@ fine. Finding and reading runs: [awa help inspect](inspect.md).
 
 ## Reuse a deterministic check safely
 
-Without `--record`, `awa run` records first and becomes a reusable hit only if
-the run is clean, non-mutating, and its watched generated-output roots are
-unchanged:
+Without `--record`, `awa run` still records the run; it becomes a reusable hit
+only if it is clean and left its observed inputs and watched generated-output
+roots unchanged:
 
 ```text
 awa run --stdin null --display tail:200 -- <command>
@@ -87,7 +87,7 @@ awa run show --last --grep "<pattern>"      # convenience: the newest run
 
 A pipe or file on stdin, which agent harnesses usually supply, is passed
 through unkeyed, so that run is never reusable (`stdin-not-keyed`); the null
-device is not. Use `--stdin null` only when the command reads no input.
+device is not.
 
 Warnings here are correctness signals, not noise:
 
@@ -95,14 +95,13 @@ Warnings here are correctness signals, not noise:
   hidden external state; a false hit would skip real work.
 - A "skipped inputs" or "not cached" notice means the result was not made
   reusable.
-- `awa run` is cwd-sensitive by design: the execution directory is part of the
-  cache key. Use `--cwd <path>` to make it explicit.
+- The execution directory is part of the cache key; `--cwd <path>` makes it
+  explicit.
 - `.gitignore` is OFF by default for awa's scan input, so a gitignored file is
   still a real input that can affect a command.
-- A note that a large watched effect root (e.g. `target/`, `node_modules/`)
-  dominated state observation explains why run, `run ls --near`, and status
-  felt slow. Do not rerun blindly; reviewing the configured `[run]` effect
-  roots is a policy decision, not a routine fix.
+- A note that a large watched effect root (e.g. `target/`) dominated state
+  observation explains a slow run, `run ls --near`, or status. Do not rerun
+  blindly; changing the `[run]` effect roots is a policy decision.
 
 ## Repairing an accidental rewrite
 
@@ -114,17 +113,15 @@ awa restore <checkpoint-id> -- <path>            # preview; changes nothing
 awa restore --apply <checkpoint-id> -- <path>    # perform it
 ```
 
-Preview is the default. `--apply` is the only mutating form and needs an
-explicit selection (paths or `--all`); nothing you did not select is touched.
-Incomplete evidence refuses with a named reason; there is no force option. An
-apply records what it overwrote and prints a `restore:<id>:before` reference to
-undo it, retained under `[gc].keep_restores_for` — evidence with a lifetime,
-not a backup. See [awa help restore](restore.md).
+`--apply` is the only mutating form and needs an explicit selection (paths or
+`--all`); nothing unselected is touched. Incomplete evidence refuses with a
+named reason; there is no force option. An apply prints a `restore:<id>:before`
+reference that undoes it, retained under `[gc].keep_restores_for`: evidence
+with a lifetime, not a backup. See [awa help restore](restore.md).
 
 ## Machine output
 
-For automation, add `--json` — every review surface has a stable machine form
-so you never parse human text:
+For automation, add `--json` instead of parsing human text:
 
 ```text
 awa status --json                # dashboard facts + a review object
@@ -148,7 +145,7 @@ awa run explain --json --stdin null -- <command>   # input-free command
 
 ## Discovering awa itself
 
-Each of these answers for the version you have installed, without a network:
+These answer for the installed version, offline:
 
 ```text
 awa version                            # the installed version
@@ -158,7 +155,7 @@ awa docs export --output <directory>   # the complete documentation bundle
 
 ## Where to read more
 
-Each question below has one page that owns it; go straight there.
+Each question below has one owning page:
 
 - getting and identifying the binary — [awa help install](install.md)
 - a fresh project, first loop — [awa help quickstart](quickstart.md)
