@@ -47,7 +47,11 @@ and two commands read the table more precisely than the one-line meanings above:
   damaged data. `awa run explain` is the opposite case: it executes nothing, so
   it never reports a cache verdict as a non-zero code — a non-zero exit from it
   is always awa refusing to answer (no project, invalid config, bad invocation),
-  never "this would miss".
+  never "this would miss". `--last` skips runs with corrupt metadata and says
+  so, but a run named by `--from-run` (or one that turns corrupt after `--last`
+  picked it) cannot define the current invocation, so explain exits 5 with no
+  output document; a corrupt entry under an established current key is still
+  the exit-0 verdict `corrupt`.
 - Code 6 is for a command that could not do its job without the lock. `awa gc`
   answers two different lock questions. A writer's lock suppresses its whole
   destructive pass — nothing is deleted, the obstruction is reported as a blocked

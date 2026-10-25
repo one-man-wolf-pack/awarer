@@ -77,9 +77,9 @@ type ExactAssessment int
 
 const (
 	// ExactLookupUnavailable must stay the zero value: a result that never established
-	// the exact entry (a failed lookup, or a stored-run-corrupt answer that performed
-	// none) then reads as unknown. Making ExactComplete the zero value would turn every
-	// such result into a claim that no entry exists.
+	// the exact entry (a failed or corrupt lookup) then reads as unknown. Making
+	// ExactComplete the zero value would turn every such result into a claim that no
+	// entry exists.
 	ExactLookupUnavailable ExactAssessment = iota
 	ExactComplete
 	ExactHealthUnavailable
@@ -344,11 +344,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 	stored, err := s.deps.Store.Get(id)
 	if err != nil {
 		if errors.Is(err, runcache.ErrCorruptStore) {
-			return ExplainResult{
-				Outcome:  OutcomeCorrupt,
-				Reason:   reasonStoredRunCorrupt,
-				Warnings: append(warnings, err.Error()),
-			}, nil
+			return ExplainResult{}, fmt.Errorf("cannot explain stored run %s: %w; run awa doctor to inspect it", id.Short(), err)
 		}
 		return ExplainResult{}, err
 	}

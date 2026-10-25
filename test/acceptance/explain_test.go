@@ -293,3 +293,63 @@ func TestExplainUnreadableExactEntryIsUnknownNotAbsent(t *testing.T) {
 		t.Errorf("authoritative explain = exit %d stdout %q, want a failure without a document", code, stdout)
 	}
 }
+
+func corruptRunMeta(t *testing.T, meta string) {
+	t.Helper()
+	if err := os.Remove(meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte("{ not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExplainCorruptStoredSourceFails(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+	awa(t, root, "run", "--", h, "-out", "x")
+	meta := singleRunMetaFile(t, root)
+	id := filepath.Base(filepath.Dir(meta))
+	corruptRunMeta(t, meta)
+
+	for _, mode := range [][]string{nil, {"--json"}} {
+		args := append([]string{"run", "explain", "--from-run", id, "--to-now"}, mode...)
+		code, stdout, stderr := awa(t, root, args...)
+		if code != 5 || stdout != "" {
+			t.Errorf("explain %v = exit %d stdout %q, want exit 5 without a document", mode, code, stdout)
+		}
+		if !strings.Contains(stderr, id[:12]) || !strings.Contains(stderr, "corrupt") {
+			t.Errorf("explain %v stderr = %q, want the run %s and its corruption", mode, stderr, id[:12])
+		}
+	}
+}
+
+func TestExplainLastSkipsNewerCorruptRun(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+	awa(t, root, "run", "--", h, "-out", "old")
+	older := singleRunMetaFile(t, root)
+	awa(t, root, "run", "--", h, "-out", "new")
+	metas, err := filepath.Glob(filepath.Join(root, ".awa", "runs", "entries", "*", "*", "meta.json"))
+	if err != nil || len(metas) != 2 {
+		t.Fatalf("run metadata = %v (%v), want two runs", metas, err)
+	}
+	newer := metas[0]
+	if newer == older {
+		newer = metas[1]
+	}
+	corruptRunMeta(t, newer)
+
+	code, stdout, stderr := awa(t, root, "run", "explain", "--last", "--json")
+	if code != 0 {
+		t.Fatalf("explain --last exit = %d, stderr=%q", code, stderr)
+	}
+	d := decodeExplain(t, stdout)
+	newerID := filepath.Base(filepath.Dir(newer))
+	if d.Outcome != "hit" || len(d.Candidates) != 1 || d.Candidates[0].RunID != filepath.Base(filepath.Dir(older)) {
+		t.Errorf("explain --last = %s candidates %+v, want a hit on the older readable run", d.Outcome, d.Candidates)
+	}
+	if !strings.Contains(stderr, "corrupt metadata") || !strings.Contains(stderr, newerID[:12]) {
+		t.Errorf("stderr = %q, want the skipped corrupt run %s disclosed", stderr, newerID[:12])
+	}
+}

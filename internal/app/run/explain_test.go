@@ -3,10 +3,12 @@ package run_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -647,5 +649,79 @@ func TestExplainStoredCancelledDuringADistinctCandidateReadFails(t *testing.T) {
 	store.onRead = cancel
 	if res, err := explainOlder(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled explain = %s/%s err %v, want the cancellation", res.Outcome, res.Reason, err)
+	}
+}
+
+func TestExplainFromRunCorruptSourceFails(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	res, err := h.svc.Run(context.Background(), h.request("echo", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := filepath.Join(h.rootAbs, ".awa", "runs", "entries",
+		res.RunID.String()[:2], res.RunID.String(), "meta.json")
+	if err := os.Chmod(meta, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte("{ not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exp, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{
+		Mode:    apprun.ModeFromRunToNow,
+		Request: apprun.Request{Project: h.proj, Config: h.cfg},
+		RunRef:  res.RunID.String(),
+	})
+	if !errors.Is(err, runcache.ErrCorruptStore) || !strings.Contains(err.Error(), res.RunID.Short()) {
+		t.Fatalf("explain --from-run corrupt source = %+v err %v, want a corruption error naming %s", exp, err, res.RunID.Short())
+	}
+	if exp.Outcome != "" || exp.Reason != "" || !exp.Subject.Key.IsZero() || exp.Warnings != nil {
+		t.Errorf("explain returned a partial result alongside its error: %+v", exp)
+	}
+}
+
+type corruptOnSourceReadStore struct {
+	runcache.Store
+	target runcache.RunID
+	reads  int
+}
+
+func (s *corruptOnSourceReadStore) Get(id runcache.RunID) (runcache.RunEntry, error) {
+	if id == s.target {
+		s.reads++
+		if s.reads > 1 {
+			return runcache.RunEntry{}, fmt.Errorf("%w: injected", runcache.ErrCorruptStore)
+		}
+	}
+	return s.Store.Get(id)
+}
+
+func TestExplainLastSourceCorruptAfterSelectionFails(t *testing.T) {
+	store := &corruptOnSourceReadStore{}
+	h := newHarness(t, withStoreDecorator(func(inner runcache.Store) runcache.Store {
+		store.Store = inner
+		return store
+	}))
+	defer h.cleanup()
+	if _, err := h.svc.Run(context.Background(), h.request("echo", "old")); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.now = h.clock.now.Add(time.Second)
+	newest, err := h.svc.Run(context.Background(), h.request("echo", "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.target = newest.RunID
+
+	exp, err := h.svc.Explain(context.Background(), apprun.ExplainRequest{
+		Mode:    apprun.ModeLast,
+		Request: apprun.Request{Project: h.proj, Config: h.cfg},
+	})
+	if !errors.Is(err, runcache.ErrCorruptStore) || !strings.Contains(err.Error(), newest.RunID.Short()) {
+		t.Fatalf("explain --last = %+v err %v, want the selected run's corruption naming %s", exp, err, newest.RunID.Short())
+	}
+	if store.reads != 2 {
+		t.Errorf("target metadata read %d times, want selection plus one source read", store.reads)
 	}
 }
