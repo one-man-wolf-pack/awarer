@@ -29,6 +29,11 @@ var ErrUnsafeName = errors.New("fsx: name must be a single path component")
 // caller can map to its own store-corruption sentinel.
 var ErrNotDirectory = errors.New("fsx: not a directory")
 
+// ErrNotRegular is returned by OpenRegularNoFollowAt when the target is a special node
+// (a FIFO, device or socket) rather than a regular file. It is rejected from its
+// metadata, before any open could wait for a FIFO peer or touch a device.
+var ErrNotRegular = errors.New("fsx: not a regular file")
+
 // hasNonDirectoryAncestorUnder reports whether some ancestor of rel under root is
 // demonstrably a plain non-directory — the condition that makes rel unopenable no matter
 // what sits at its own name.
@@ -548,6 +553,15 @@ func ReplaceBytesNoFollow(root, relDir, name string, data []byte, perm os.FileMo
 		return err
 	}
 	defer func() { _ = dir.Close() }()
+	return ReplaceBytesAt(dir, name, data, perm)
+}
+
+// ReplaceBytesAt is ReplaceBytesNoFollow's replacing half, taking an already-open
+// directory: it atomically renames a complete temp over name and syncs dir.
+func ReplaceBytesAt(dir *os.File, name string, data []byte, perm os.FileMode) (err error) {
+	if err := checkLeafName(name); err != nil {
+		return err
+	}
 	tmp, tmpName, err := CreateTempAt(dir, publishTempPrefix)
 	if err != nil {
 		return err

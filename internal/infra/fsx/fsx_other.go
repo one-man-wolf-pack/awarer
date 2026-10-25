@@ -60,6 +60,50 @@ func OpenNoFollowAt(root, rel string) (*os.File, error) {
 	return f, err
 }
 
+// OpenRegularNoFollowAt opens the regular file at rel under root for reading, refusing
+// a symlinked final component and any non-regular target. These platforms have no FIFO
+// that a read open waits on, so the kind is read from Lstat and confirmed on the opened
+// handle, matching this file's weaker path-joining OpenNoFollowAt contract.
+func OpenRegularNoFollowAt(root, rel string) (*os.File, error) {
+	if err := checkRel(rel); err != nil {
+		return nil, err
+	}
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, &os.PathError{Op: "open", Path: p, Err: errSymlinkRejected}
+		}
+		return nil, fmt.Errorf("%w: %s", ErrNotRegular, p)
+	}
+	f, err := OpenNoFollowAt(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", ErrNotRegular, p)
+	}
+	return f, nil
+}
+
+// OpenDirOnlyNoFollow is OpenDirNoFollow here: these platforms have no FIFO a
+// directory open waits on, so the existing traversal already cannot stall.
+func OpenDirOnlyNoFollow(root, relDir string) (*os.File, error) {
+	return OpenDirNoFollow(root, relDir)
+}
+
+// MkdirAllDirOnlyNoFollow is MkdirAllNoFollow here, for the same reason.
+func MkdirAllDirOnlyNoFollow(root, relDir string, perm os.FileMode) (*os.File, error) {
+	return MkdirAllNoFollow(root, relDir, perm)
+}
+
 // StatNoFollowAt reports whether rel under root exists and is stat-able without opening
 // it for reading and without following a symlink final component. It is a metadata-only
 // capability: it never returns a readable descriptor, so a caller structurally cannot read

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -92,6 +93,141 @@ func OpenNoFollowAt(root, rel string) (*os.File, error) {
 		cur = next
 	}
 	return os.NewFile(uintptr(cur), filepath.Join(root, filepath.FromSlash(rel))), nil
+}
+
+// OpenRegularNoFollowAt opens the regular file at rel under root for reading without
+// ever blocking on a special node. Like OpenNoFollowAt it refuses a symlink at every
+// component below root, but each component's kind is read with fstatat before it is
+// opened: intermediates go through walkDirsFrom, and the leaf must be a regular file
+// and is opened with O_NONBLOCK and confirmed by fstat. A node swapped in between the
+// stat and the open therefore still cannot stall the open: O_NONBLOCK opens a FIFO
+// without a peer, and fstat then rejects it. A non-directory component reports
+// ErrNotDirectory, a special leaf ErrNotRegular, a symlink ELOOP and an absent
+// component os.ErrNotExist. Root itself must be a directory.
+func OpenRegularNoFollowAt(root, rel string) (*os.File, error) {
+	if err := checkRel(rel); err != nil {
+		return nil, err
+	}
+	relDir, leaf := path.Split(rel)
+	cur, err := openRootDir(root)
+	if err != nil {
+		return nil, err
+	}
+	if relDir != "" {
+		if cur, err = walkDirsFrom(cur, strings.TrimSuffix(relDir, "/"), false, 0); err != nil {
+			return nil, err
+		}
+	}
+	defer func() { _ = unix.Close(cur) }()
+	if err := checkKindAt(cur, leaf, unix.S_IFREG); err != nil {
+		return nil, err
+	}
+	fd, err := unix.Openat(cur, leaf, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "openat", Path: leaf, Err: noFollowErr(err)}
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return nil, &os.PathError{Op: "fstat", Path: leaf, Err: err}
+	}
+	if uint32(st.Mode)&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("%w: %s", ErrNotRegular, leaf)
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		_ = unix.Close(fd)
+		return nil, &os.PathError{Op: "fcntl", Path: leaf, Err: err}
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(root, filepath.FromSlash(rel))), nil
+}
+
+// OpenDirOnlyNoFollow opens the directory at relDir under root without ever opening a
+// node that is not a directory, so a FIFO or device on the path is rejected from its
+// kind instead of being waited on. Errors classify as in OpenRegularNoFollowAt. Unlike
+// OpenDirNoFollow it never opens a component before knowing it is a directory; the
+// caller closes the returned file.
+func OpenDirOnlyNoFollow(root, relDir string) (*os.File, error) {
+	return dirOnly(root, relDir, false, 0)
+}
+
+// MkdirAllDirOnlyNoFollow is OpenDirOnlyNoFollow creating each missing component with
+// perm, the creation counterpart for a path that must never wait on a special node.
+func MkdirAllDirOnlyNoFollow(root, relDir string, perm os.FileMode) (*os.File, error) {
+	return dirOnly(root, relDir, true, perm)
+}
+
+func dirOnly(root, relDir string, create bool, perm os.FileMode) (*os.File, error) {
+	if err := checkRel(relDir); err != nil {
+		return nil, err
+	}
+	cur, err := openRootDir(root)
+	if err != nil {
+		return nil, err
+	}
+	if cur, err = walkDirsFrom(cur, relDir, create, perm); err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(cur), filepath.Join(root, filepath.FromSlash(relDir))), nil
+}
+
+func openRootDir(root string) (int, error) {
+	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, &os.PathError{Op: "open", Path: root, Err: err}
+	}
+	return fd, nil
+}
+
+// walkDirsFrom descends relDir from the anchor descriptor, which it takes ownership of
+// and always closes or returns. Every component's kind is read with fstatat before it
+// is opened, and it is opened with O_NOFOLLOW|O_DIRECTORY, so a symlink reports ELOOP,
+// another non-directory ErrNotDirectory, and a node swapped in after the stat fails
+// the O_DIRECTORY open at once rather than waiting as a FIFO would. With create, an
+// absent component is made with mkdirat and then checked like any other.
+func walkDirsFrom(cur int, relDir string, create bool, perm os.FileMode) (int, error) {
+	for _, c := range strings.Split(relDir, "/") {
+		err := checkKindAt(cur, c, unix.S_IFDIR)
+		if create && errors.Is(err, unix.ENOENT) {
+			if mErr := unix.Mkdirat(cur, c, uint32(perm.Perm())); mErr != nil && !errors.Is(mErr, unix.EEXIST) {
+				_ = unix.Close(cur)
+				return -1, &os.PathError{Op: "mkdirat", Path: c, Err: mErr}
+			}
+			err = checkKindAt(cur, c, unix.S_IFDIR)
+		}
+		if err != nil {
+			_ = unix.Close(cur)
+			return -1, err
+		}
+		next, oerr := unix.Openat(cur, c, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		_ = unix.Close(cur)
+		if oerr != nil {
+			if errors.Is(oerr, unix.ENOTDIR) {
+				return -1, fmt.Errorf("%w: %s", ErrNotDirectory, c)
+			}
+			return -1, &os.PathError{Op: "openat", Path: c, Err: noFollowErr(oerr)}
+		}
+		cur = next
+	}
+	return cur, nil
+}
+
+// checkKindAt classifies name under dir from its no-follow metadata alone.
+func checkKindAt(dir int, name string, want uint32) error {
+	var st unix.Stat_t
+	if err := unix.Fstatat(dir, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return &os.PathError{Op: "fstatat", Path: name, Err: err}
+	}
+	switch kind := uint32(st.Mode) & unix.S_IFMT; {
+	case kind == want:
+		return nil
+	case kind == unix.S_IFLNK:
+		return &os.PathError{Op: "openat", Path: name, Err: unix.ELOOP}
+	case want == unix.S_IFDIR:
+		return fmt.Errorf("%w: %s", ErrNotDirectory, name)
+	default:
+		return fmt.Errorf("%w: %s", ErrNotRegular, name)
+	}
 }
 
 // StatNoFollowAt reports whether rel under root exists and is stat-able without opening
