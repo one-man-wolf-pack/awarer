@@ -168,12 +168,18 @@ failed-not-cached         the command failed and policy declines to cache it
 ## Inspect and explain
 
 ```text
+awa run log --command <text>  history of executions, any reuse state, newest first
+awa run show <run-id>         metadata only: exit, reuse, stream byte counts
+awa run show <run-id> --tail 200   captured output; or --stdout, --stderr
 awa run ls                    runs reusable for the current state
 awa run ls --near             also recent near misses: reason, changed-path sample
-awa run log                   chronological run history, newest first
-awa run show --last           a run's metadata and captured output
 awa run explain -- <command>  the cache decision, without running
 ```
+
+`run ls` and `run explain` assess reuse now; they are not history. A run
+missing from `ls` is still in `run log`, and a failed or record-only run is
+read without changing any cache policy. `--last` instead of an id selects the
+newest run. Finding and reading runs: [awa help inspect](inspect.md).
 
 None of these runs identity probes. If [validation policy](validation.md)
 probes are approved but have not run, explain says `incomplete` with no key

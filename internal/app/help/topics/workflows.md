@@ -138,6 +138,37 @@ awa changes run:<id>:before..run:<id>:after
 `<id>` is the run id the record printed. A recorded run always executes and never
 becomes a reusable hit — that is the point of it.
 
+## Experiments with temporary inputs
+
+A run keeps the command, exit status, and captured output, and the hash of each
+observed input — not the input's bytes. When you will want to read a temporary
+input again after it is reverted or deleted — a scratch project file, a probe, a
+reduced test case — preserve that exact state before running the command. After
+an optional baseline checkpoint, create or edit the temporary input first, then:
+
+```text
+awa checkpoint -m "<experiment-message>"     # the state the command will see
+awa run --record -- <command>
+awa diff <experiment-checkpoint-id>..now -- <path>   # later: what changed since
+```
+
+Each reference answers one question. The experiment checkpoint holds the input's
+bytes, subject to its storage policy. The baseline was taken before the edit, so
+it does not. The run holds the output and the identities it observed, so
+`run:<id>:before` proves which content was present but cannot show it. Write
+down the project, the run id, and the experiment checkpoint id together; ids are
+local to that project's `.awa/` store, and `--last` only names whichever run is
+newest. A small safe fixture or fragment kept with the work is an alternative to
+the checkpoint.
+
+Some inputs keep no bytes either way: excluded and protected paths, including
+anything under `.awa/`, are outside input observation, so a probe kept there
+contributes neither its content nor its hash to the run; hash-only paths such as
+env files keep only their hash. Do not weaken
+exclusion or hash-only rules to keep them. Retained bytes show what was present,
+not what the command actually read. None of this is needed for an ordinary
+command whose input you will not revisit.
+
 ## Several agents in one worktree
 
 `.awa/` is shared project-local state, so concurrent agents see each other's

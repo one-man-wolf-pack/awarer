@@ -38,19 +38,23 @@ rerunning it. When a fresh result is required, record it; the run prints its id:
 
 ```text
 awa run --record --stdin null --display tail:200 -- <command>
-awa run show <run-id> --tail 500
-awa run log -n 5                 # recent run ids, newest first
+awa run log --command "<text>"   # earlier executions, newest first
+awa run show <run-id>            # metadata only: exit, reuse, byte counts
+awa run show <run-id> --tail 500 # captured output; or --stdout, --stderr
 awa changes run:<run-id>:before..run:<run-id>:after   # what it changed
 ```
 
 `--stdin null` is only for a command that reads no input; drop it otherwise.
+`run ls` and `run explain` answer "reusable now?", not "what ran?": a
+non-reusable or record-only run is still evidence you can read.
 
 `--record` always executes and never becomes a reusable hit. Use it for fresh
 results and side-effecting work: builds, generators, formatters, migrations,
-deployments. Its before/after observation shows what the command changed;
-without the wrapper awa sees drift but not its cause. A check whose build
-directory neither affects its result nor is needed after a replay may instead
-use an exact [validation policy](validation.md), which replays the result only.
+deployments. Its before/after observation shows which observed paths the
+command changed; without the wrapper awa sees drift but not its cause. A check
+whose build directory neither affects its result nor is needed after a replay
+may instead use an exact [validation policy](validation.md), which replays the
+result only.
 
 A copyable paragraph for a project's agent instructions:
 
@@ -58,17 +62,31 @@ A copyable paragraph for a project's agent instructions:
 Run tests, builds, and diagnostics that need a fresh result with
 `awa run --record -- <command>`; awa keeps the command, exit status, and
 captured output in this project's local store. Note the run id it prints,
-especially after a failure, and use it to refer to that result. Before
-rerunning a command only to see its output again, read it with
-`awa run show <run-id> --tail <n>` (plain `show` prints metadata only). A
-tail is not all captured output, and capture can be truncated or disabled.
-See `awa help inspect`.
+especially after a failure, and use it to refer to that result; find an
+earlier run with `awa run log --command <text>`. Before rerunning a command
+only to see its output again, read it with `awa run show <run-id> --tail <n>`
+(plain `show` prints metadata only). A tail is not all captured output, and
+capture can be truncated or disabled. See `awa help inspect`.
 ```
 
-A run id is local to this project's `.awa/` store, not a shareable link.
-Capture limits and retention apply, so no complete or indefinite log is
-promised. Trivial shell commands need no wrapper, and a justified rerun is
-fine. Finding and reading runs: [awa help inspect](inspect.md).
+A run id is local to this project's `.awa/` store, not a shareable link: name
+the project with it. Capture limits and retention apply, so no complete or
+indefinite log is promised. Trivial shell commands need no wrapper, and a
+justified rerun is fine. Finding and reading runs: [awa help inspect](inspect.md).
+
+## Inputs you may need to read later
+
+A run keeps its output, its status, and each observed input's hash, not its
+bytes: `run:<id>:before` can identify a temporary file but never show its text.
+When an experiment's input must stay inspectable, preserve that exact state
+before running: make the change, then `awa checkpoint`, or keep a safe fixture.
+A checkpoint taken before the change does not hold it. Note the project, run
+id, and checkpoint id together. Most commands need none of this.
+
+Excluded, protected, and hash-only paths keep no bytes; a probe kept under
+`.awa/` is not observed even when the run executes it. Do not weaken privacy
+to keep them. Retained bytes alone do not prove the command read them. Steps:
+[awa help workflows](workflows.md).
 
 ## Reuse a deterministic check safely
 
@@ -105,30 +123,18 @@ Warnings here are correctness signals, not noise:
 
 ## Repairing an accidental rewrite
 
-When a generator or formatter rewrites files it should not have, put the
-selected paths back from a checkpoint:
-
-```text
-awa restore <checkpoint-id> -- <path>            # preview; changes nothing
-awa restore --apply <checkpoint-id> -- <path>    # perform it
-```
-
-`--apply` is the only mutating form and needs an explicit selection (paths or
-`--all`); nothing unselected is touched. Incomplete evidence refuses with a
-named reason; there is no force option. An apply prints a `restore:<id>:before`
-reference that undoes it, retained under `[gc].keep_restores_for`: evidence
-with a lifetime, not a backup. See [awa help restore](restore.md).
+`awa restore <checkpoint-id> -- <path>` previews putting selected paths back
+from a checkpoint and changes nothing; `--apply` is the only mutating form and
+needs an explicit selection (paths or `--all`). Incomplete evidence refuses with
+a named reason; there is no force option. The `restore:<id>:before` undo
+reference is retained under `[gc].keep_restores_for`: evidence with a lifetime,
+not a backup. See [awa help restore](restore.md).
 
 ## Machine output
 
-For automation, add `--json` instead of parsing human text:
-
-```text
-awa status --json                # dashboard facts + a review object
-awa changes --json               # summary, refs, and per-file changes
-awa run ls --near --json         # reusable rows + near misses (reason, sample)
-awa run explain --json --stdin null -- <command>   # input-free command
-```
+For automation, add `--json` instead of parsing human text, e.g.
+`awa status --json` or `awa run ls --near --json`; see
+[awa help json](json.md).
 
 ## Local evidence is private, not shared
 
@@ -140,18 +146,13 @@ awa run explain --json --stdin null -- <command>   # input-free command
   wrapped command: captured stdout/stderr is stored verbatim as evidence.
 - An executed child gets `AWA_RUN=1`. It is advisory and forgeable: it grants
   nothing and proves nothing.
-- After a repo is moved, copied, or shared, run `awa doctor` to check the
-  guard, permissions, and root hygiene.
+- After a repo is moved, copied, or shared, `awa doctor` checks the guard,
+  permissions, and root hygiene.
 
 ## Discovering awa itself
 
-These answer for the installed version, offline:
-
-```text
-awa version                            # the installed version
-awa help topics                        # every operational topic
-awa docs export --output <directory>   # the complete documentation bundle
-```
+`awa version`, `awa help topics`, and `awa docs export --output <directory>`
+(the complete documentation bundle) answer for the installed version, offline.
 
 ## Where to read more
 
@@ -160,13 +161,11 @@ Each question below has one owning page:
 - getting and identifying the binary — [awa help install](install.md)
 - a fresh project, first loop — [awa help quickstart](quickstart.md)
 - a review or repeated fix loop — [awa help workflows](workflows.md)
-- putting paths back after a rewrite — [awa help restore](restore.md)
 - reading the dashboard — [awa help status](status.md)
 - finding and reading an earlier run — [awa help inspect](inspect.md)
 - something slow, stale, blocked, or broken —
   [awa help troubleshooting](troubleshooting.md)
 - reviewing an existing project's setup — [awa help maintenance](maintenance.md)
-- consuming awa from a script — [awa help json](json.md)
 
 See also [awa help run](run.md), [awa help record](record.md),
 [awa help checkpoints](checkpoints.md), [awa help privacy](privacy.md), and

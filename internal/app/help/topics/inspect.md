@@ -26,7 +26,10 @@ command line — the executable or its arguments, joined by single spaces — so
 recorded, including failed, mutating, and record-only runs. `awa run ls` is a
 different question — which stored runs are reusable for the *current* state — so
 a run missing from `ls` is not missing from history. `awa run ls --all` lists the
-non-reusable ones too, each with its reason token.
+non-reusable ones too, each with its reason token. To find an earlier execution,
+use `run log --command`, not `ls` or `run explain`: a failed, mutating, or
+record-only run is still readable evidence, and reading it needs no cache-policy
+change.
 
 A run whose [validation policy](validation.md) has approved identity probes
 that only `awa run` executes may be listed apart as unassessed, also with
@@ -47,19 +50,24 @@ loads no configuration, so its default stays `relative` whatever `[ui]` says.
 ## Read the output
 
 ```text
-awa run show --last
-awa run show --last --tail 500
-awa run show --last --grep "<pattern>"
-awa run show <id> --meta
+awa run show <id>
+awa run show <id> --tail 500
+awa run show <id> --grep "<pattern>"
 awa run show <id> --stdout
 awa run show <id> --stderr
+awa run show --last --tail 500
 ```
 
 `<id>` is a run id (a unique prefix is enough) and `<pattern>` is a regular
-expression. Exactly one of an id or `--last` selects the run.
+expression. Exactly one of an id or `--last` selects the run. `--last` is a
+convenience for the newest readable run, which moves whenever anyone records
+another run in this project; keep the id when referring to a result. Ids belong
+to this project's `.awa/` store, so `show` from another project does not find
+them.
 
-- `--meta` is metadata only: command, cwd, exit, duration, cacheability, reuse
-  state, mutation outcome, key, and per-stream byte counts.
+- Plain `show` and `--meta` print metadata only, never captured output:
+  command, cwd, exit, duration, cacheability, reuse state, mutation outcome,
+  key, and per-stream byte counts. Read output with one of the forms below.
 - `--stdout` and `--stderr` write one raw stream and nothing else, so they are
   safe to pipe.
 - `--tail <n>` and `--grep <pattern>` filter what is shown; combined with a
@@ -103,8 +111,12 @@ awa diff run:<id>:before..run:<id>:after
 ```
 
 That is the honest way to answer "what did that command actually do", and it is
-the standard follow-up after a record-only run. Where one side has no stored file
-contents, `diff` reports the change as hash-only rather than inventing content.
+the standard follow-up after a record-only run. A run observation records each
+observed file's hash, not its bytes, so `diff` over run references reports a
+regular-file change as hash-only rather than inventing content, and cannot show
+a temporary input after it is gone. Excluded and protected paths, `.awa/`
+included, are not observed at all. To keep an experiment's input readable, see
+[awa help agents](agents.md).
 
 ## Delete stored runs
 

@@ -15,7 +15,7 @@ observed before/after state around the run — as durable history.
 
 ```text
 awa run --record --display tail:200 -- ansible-playbook site.yml
-awa run show --last --tail 500                 # inspect the recorded run
+awa run show --last --tail 500                 # its captured output
 awa changes run:<id>:before..run:<id>:after    # what the command changed
 awa run log                                    # every recorded run
 awa log --all                                  # full timeline: checkpoints
@@ -54,6 +54,8 @@ and it is never a cache hit: a recorded run carries the reuse reason
 `record-only` and is never offered for replay, however clean it was. Nor does it
 capture anything awa does not observe — network services, databases, wall-clock
 behavior, and files outside the project root are all outside the evidence.
+It does not keep the bytes of input files either: the before/after states record
+their hashes, which show what was present, not what the command read.
 
 ## Evidence of what changed
 
@@ -65,8 +67,12 @@ awa changes run:<id>:before..run:<id>:after
 awa diff run:<id>:before..run:<id>:after
 ```
 
-`<id>` is the run id printed in the footer. Ignored and protected paths are
-outside the observed scope, so a change confined to them does not appear here.
+`<id>` is the run id printed in the footer. These states identify content but do
+not store it, so `diff` shows a regular-file change as hash-only. Ignored and
+protected paths are outside the observed scope, so a change confined to them does
+not appear here; a probe kept under `.awa/` is not observed even when the run
+executes it. To keep a temporary input readable, checkpoint it before the run: see
+[awa help workflows](workflows.md).
 
 ## See also
 
