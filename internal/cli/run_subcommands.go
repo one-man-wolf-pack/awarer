@@ -316,7 +316,7 @@ func nearLines(c apprun.RunReuseCandidate, td domainconfig.TimeDisplay, now time
 			en.ID.Short(),
 			FormatTime(td, en.StartedAt, now),
 			exitLabel(en.Exit),
-			strings.Join(en.KeyInput.Command.Argv, " "),
+			commandPreview(en.KeyInput.Command.Argv),
 			c.Reason,
 		),
 	}
@@ -431,7 +431,7 @@ func lsLineStatus(e apprun.LsEntry, td domainconfig.TimeDisplay, now time.Time, 
 		durLabel(en),
 		shortHex(en.Key.Hex()),
 		en.KeyInput.CWD.String(),
-		strings.Join(en.KeyInput.Command.Argv, " "),
+		commandPreview(en.KeyInput.Command.Argv),
 		trunc,
 		status,
 	)
@@ -949,7 +949,7 @@ func logLine(le apprun.LogEntry, td domainconfig.TimeDisplay, now time.Time) str
 		durLabel(e),
 		shortHex(e.Key.Hex()),
 		reuse,
-		strings.Join(e.KeyInput.Command.Argv, " "),
+		commandPreview(e.KeyInput.Command.Argv),
 		flags,
 	)
 }

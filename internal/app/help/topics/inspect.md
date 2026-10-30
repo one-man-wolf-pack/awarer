@@ -22,6 +22,11 @@ awa run ls --all
 command line — the executable or its arguments, joined by single spaces — so
 `--command "xtask check"` finds `cargo xtask check`.
 
+Listing rows show the command as a one-line preview: line breaks, control and
+bidirectional-text characters are escaped, and a long command ends in `…`. That shortens only the
+display, not stored output; `--command` still matches the full text, and
+`awa run show <id>` prints it whole.
+
 `awa run log` is chronological history, newest first: everything that was
 recorded, including failed, mutating, and record-only runs. `awa run ls` is a
 different question — which stored runs are reusable for the *current* state — so

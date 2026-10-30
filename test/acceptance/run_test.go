@@ -638,6 +638,62 @@ func TestRunCommandFilterSearchesArguments(t *testing.T) {
 	}
 }
 
+// TestRunLongCommandPreviewKeepsFullEvidence records a run with a large multiline
+// argument whose unique suffix lies past any preview. History rows stay one bounded
+// line each, while the command filter, full metadata and JSON still see the whole argv.
+func TestRunLongCommandPreviewKeepsFullEvidence(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+	const tail = "PREVIEW_TAIL_7f3a"
+	// The helper ignores trailing operands.
+	prompt := "first line\nsecond line\n" + strings.Repeat("filler ", 200) + tail
+	argv := []string{h, "-out", "long", prompt}
+	if code, _, stderr := awa(t, root, append([]string{"run", "--"}, argv...)...); code != 0 {
+		t.Fatalf("run: exit %d, %s", code, stderr)
+	}
+
+	oneBoundedRow := func(name, out string) {
+		t.Helper()
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) != 1 || strings.Contains(out, tail) || !strings.Contains(out, "…") {
+			t.Errorf("%s: want one elided row without the tail, got:\n%s", name, out)
+		}
+	}
+	code, human, _ := awa(t, root, "run", "log")
+	if code != 0 {
+		t.Fatalf("run log: exit %d", code)
+	}
+	oneBoundedRow("run log", human)
+	code, human, _ = awa(t, root, "run", "log", "--command", tail)
+	if code != 0 {
+		t.Fatalf("run log --command: exit %d", code)
+	}
+	oneBoundedRow("run log --command <tail>", human)
+	code, human, _ = awa(t, root, "run", "ls", "--all", "--command", tail)
+	if code != 0 {
+		t.Fatalf("run ls --all --command: exit %d", code)
+	}
+	oneBoundedRow("run ls --all --command <tail>", human)
+
+	_, jsonOut, _ := awa(t, root, "run", "log", "--json", "--command", tail)
+	var env struct {
+		Data []struct {
+			ID      string   `json:"id"`
+			Command []string `json:"command"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &env); err != nil {
+		t.Fatalf("run log --json: %v\n%s", err, jsonOut)
+	}
+	if len(env.Data) != 1 || !slices.Equal(env.Data[0].Command, argv) {
+		t.Fatalf("run log --json --command <tail> = %+v, want the run with its full argv", env.Data)
+	}
+	_, meta, _ := awa(t, root, "run", "show", env.Data[0].ID, "--meta")
+	if !strings.Contains(meta, prompt) {
+		t.Errorf("run show --meta lost the full command:\n%s", meta)
+	}
+}
+
 // TestRunShowMetadataOnlyPayloadHealth pins the split: metadata inspection is
 // byte-free, so a missing payload does not make `run show` (default or --json) fail —
 // it reports the stream's inspectability as "missing" and stays a clean success. Only

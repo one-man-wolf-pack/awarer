@@ -681,7 +681,7 @@ func renderTimelineHuman(w *output.Writer, res timeline.Result, td domainconfig.
 				continue
 			}
 			if e.Kind == timeline.EntryRun {
-				line += "  " + strings.Join(r.Command, " ")
+				line += "  " + commandPreview(r.Command)
 				line += "  " + timelineExit(r.Exit)
 				line += "  " + formatDurationMs(r.DurationMs)
 				line += "  " + r.Reuse.String()

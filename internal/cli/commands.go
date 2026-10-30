@@ -790,7 +790,7 @@ func renderStatusNearest(w *output.Writer, runs reviewRunsDoc, label string) {
 	if n == nil {
 		return
 	}
-	w.Linef("  %s %s %s not-reusable(%s)", label, n.ShortID, strings.Join(n.Command, " "), n.Reason)
+	w.Linef("  %s %s %s not-reusable(%s)", label, n.ShortID, commandPreview(n.Command), n.Reason)
 	// At most one compact detail line, and only where the candidate carries an
 	// observed root the reason token above does not already state. The deeper
 	// commands in "next:" carry the exclude/effect-root/record decision.
