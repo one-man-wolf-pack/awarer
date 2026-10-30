@@ -22,24 +22,27 @@ import (
 // and it never scans the current worktree, so it uses default config for the store
 // hasher only. It deliberately does not call loadProjectConfig; leaving that seam out
 // is what keeps run show inspectable under a broken config.
-func buildRunShowContext(ctx context.Context, opts GlobalOptions) (*apprun.Service, *apprunevidence.Service, func(), error) {
+//
+// It also returns the root of the project it discovered, so a lookup miss can name
+// the store that was actually searched.
+func buildRunShowContext(ctx context.Context, opts GlobalOptions) (*apprun.Service, *apprunevidence.Service, string, func(), error) {
 	proj, err := resolveProject(opts)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	layout, err := proj.Paths()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	cfg := domainconfig.Defaults()
 	svc, cleanup, err := buildRunService(ctx, layout, cfg, indexNone, nil)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	resolver, resolverCleanup, err := buildStateResolver(layout, cfg, nil)
 	if err != nil {
 		cleanup()
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	hasher := blake3hash.New()
 	evidence := apprunevidence.NewService(runstore.New(layout, hasher), stateprovider.NewAssessor(resolver))
@@ -47,7 +50,7 @@ func buildRunShowContext(ctx context.Context, opts GlobalOptions) (*apprun.Servi
 		resolverCleanup()
 		cleanup()
 	}
-	return svc, evidence, combined, nil
+	return svc, evidence, layout.Root(), combined, nil
 }
 
 // The documents below are the awa-evidence/v1 wire shape for "run show --json". The

@@ -116,7 +116,9 @@ Every execution and hit ends with a footer: storage state
 the inspect command, plus the before/after compare for a non-reusable run. A
 common miss adds a bounded preview: the nearest previous run, why it is not
 reusable, a sample of changed inputs, and the `run explain` / `run ls --near`
-follow-ups.
+follow-ups. When that nearest run was deliberately recorded (`--record` or
+`--no-cache`), the follow-up is `run show <id> --tail 50` instead: it is history
+to read, not a miss to fix.
 
 ## Why a run is not reusable
 

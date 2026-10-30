@@ -58,6 +58,9 @@ next:
 - `reusable:` counts runs replayable for the current observed state. When none
   are, it reports how many near misses exist and points at `awa run ls --near`;
   a `nearest:` sub-line then names the closest candidate and its reason token.
+  A deliberately recorded candidate (`record-only` or `no-cache`) adds a
+  `history:` line with `awa run show <id> --tail 50`: it is history to read, not
+  a miss.
   Runs whose reuse needs identity-probe reports only `awa run` acquires make it
   `unknown`, with their count and what the other runs established; a near miss
   shown then is the nearest among those others.

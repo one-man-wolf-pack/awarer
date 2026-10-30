@@ -110,6 +110,10 @@ type LsResult struct {
 	// run acquires. They appear in no other list, under any view.
 	Unassessed []LsEntry
 	Corrupt    int
+	// WindowEmpty reports that the candidate window held no stored run reference at
+	// all, so the store has no recorded runs. Zero rows do not establish that: the
+	// window may hold references skipped as incompatible or vanished, or filtered out.
+	WindowEmpty bool
 	// Performance carries bounded latency diagnostics for this listing (currently a huge
 	// watched effect root that dominated the single shared effect observation). It is
 	// advisory and empty when no known cause crossed the interactive latency threshold.
@@ -166,7 +170,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 	scanCache := newLsScans()
 	defer scanCache.close()
 
-	res := LsResult{Reusable: make([]LsEntry, 0, len(refs))}
+	res := LsResult{Reusable: make([]LsEntry, 0, len(refs)), WindowEmpty: len(refs) == 0}
 	for _, id := range refs {
 		entry, err := s.deps.Store.Get(id)
 		switch {

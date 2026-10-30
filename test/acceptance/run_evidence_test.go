@@ -287,20 +287,11 @@ func newestRunMeta(t *testing.T, root string) string {
 // machine half of that disclosure: without this test, deleting its projection would
 // leave every other test green, because they exercise the app aggregate and the human
 // formatter but never the emitted document.
-func TestAcceptanceRunShowLastDisclosesSkippedIncompatibleRuns(t *testing.T) {
-	root := initProject(t)
-	h := helper(t)
-
-	const marker = "OLDER-READABLE"
-	if code, _, stderr := awa(t, root, "run", "--", h, "-out", marker); code != 0 {
-		t.Fatalf("first run exit = %d, stderr = %q", code, stderr)
-	}
-	if code, _, stderr := awa(t, root, "run", "--", h, "-out", "NEWER"); code != 0 {
-		t.Fatalf("second run exit = %d, stderr = %q", code, stderr)
-	}
-
-	// Restamp the newest record with a schema this build does not speak. The number is
-	// read back out of the document so the fixture carries no version literal.
+// restampNewestRunIncompatible restamps the newest stored run with a schema this build
+// does not speak. The number is read back out of the document so the fixture carries
+// no version literal.
+func restampNewestRunIncompatible(t *testing.T, root string) {
+	t.Helper()
 	meta := newestRunMeta(t, root)
 	raw, err := os.ReadFile(meta)
 	if err != nil {
@@ -325,6 +316,21 @@ func TestAcceptanceRunShowLastDisclosesSkippedIncompatibleRuns(t *testing.T) {
 	if err := os.WriteFile(meta, out, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAcceptanceRunShowLastDisclosesSkippedIncompatibleRuns(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+
+	const marker = "OLDER-READABLE"
+	if code, _, stderr := awa(t, root, "run", "--", h, "-out", marker); code != 0 {
+		t.Fatalf("first run exit = %d, stderr = %q", code, stderr)
+	}
+	if code, _, stderr := awa(t, root, "run", "--", h, "-out", "NEWER"); code != 0 {
+		t.Fatalf("second run exit = %d, stderr = %q", code, stderr)
+	}
+
+	restampNewestRunIncompatible(t, root)
 
 	// The JSON document carries the skip structurally.
 	code, showJSON, stderr := awa(t, root, "run", "show", "--last", "--json")

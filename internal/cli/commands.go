@@ -463,6 +463,10 @@ type reviewRunsDoc struct {
 	// instead of reading it back out of the JSON shape. Both come from one candidate, so
 	// the dashboard line and the machine object cannot disagree.
 	nearestEffect *apprun.EffectDiagnosis
+	// nearestHistory is the human follow-up for a deliberately recorded nearest run
+	// (see recordedHistoryFollowUp), empty otherwise. It is human-only: the typed
+	// next actions and the JSON nearest object do not carry it.
+	nearestHistory string
 	// unavailable marks a section whose listing failed: its zero counts are not a
 	// verdict, so the dashboard points at the warning instead of claiming none.
 	unavailable bool
@@ -684,11 +688,13 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 		return reviewRunsDoc{Unassessed: unassessed}, ls.Performance
 	}
 	nearest := nearMissView(ls.NearMisses[0])
+	history, _ := recordedHistoryFollowUp(ls.NearMisses[0])
 	return reviewRunsDoc{
-		Near:          len(ls.NearMisses),
-		Unassessed:    unassessed,
-		Nearest:       &nearest,
-		nearestEffect: ls.NearMisses[0].Effect,
+		Near:           len(ls.NearMisses),
+		Unassessed:     unassessed,
+		Nearest:        &nearest,
+		nearestEffect:  ls.NearMisses[0].Effect,
+		nearestHistory: history,
 	}, ls.Performance
 }
 
@@ -790,6 +796,9 @@ func renderStatusNearest(w *output.Writer, runs reviewRunsDoc, label string) {
 	// commands in "next:" carry the exclude/effect-root/record decision.
 	if detail := effectDetail(runs.nearestEffect); detail != "" {
 		w.Linef("  effect:    %s", detail)
+	}
+	if runs.nearestHistory != "" {
+		w.Linef("  history:   %s", runs.nearestHistory)
 	}
 }
 

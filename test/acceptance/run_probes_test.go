@@ -211,10 +211,12 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 			}
 		}
 	}
-	if code, stdout, _ := awa(t, root, "run", "ls"); code != 0 || !strings.Contains(stdout, "unassessed (identity facts only awa run acquires):") {
+	// The history pointer is added without turning the unassessed row into a miss.
+	if code, stdout, _ := awa(t, root, "run", "ls"); code != 0 || !strings.Contains(stdout, "unassessed (identity facts only awa run acquires):") ||
+		!strings.Contains(stdout, "no reusable runs among the assessed runs\nhistory: awa run log  #") {
 		t.Errorf("human ls: exit %d\n%s", code, stdout)
 	}
-	if code, stdout, _ := awa(t, root, "run", "ls", "--near"); code != 0 || !strings.Contains(stdout, "reusable now:\n  none among the assessed runs\n") || strings.Contains(stdout, "  none\n") {
+	if code, stdout, _ := awa(t, root, "run", "ls", "--near"); code != 0 || !strings.Contains(stdout, "reusable now:\n  none among the assessed runs\n  history: awa run log  #") || strings.Contains(stdout, "  none\n") {
 		t.Errorf("human ls --near claims none across unassessed rows: exit %d\n%s", code, stdout)
 	}
 	if l.callCount(t) != 3 {

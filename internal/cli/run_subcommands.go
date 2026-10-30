@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -227,9 +228,20 @@ func runRunLs(w *output.Writer, inv invocation) error {
 		return w.JSON("run.ls", lsView(res, near))
 	}
 
-	// Human output: without --near, print the reusable rows as a flat list of lines (the
-	// JSON object family above is machine-only; the human view stays a scannable list).
+	renderLsHuman(w, res, all, near, command, td, now)
+	return nil
+}
+
+// renderLsHuman renders the human run ls view (plain, --all, or --near) from one
+// listing result. It only projects what Ls already decided; it reads nothing.
+func renderLsHuman(w *output.Writer, res apprun.LsResult, all, near bool, command string, td domainconfig.TimeDisplay, now time.Time) {
+	// Without --near, print the reusable rows as a flat list of lines (the JSON object
+	// family is machine-only; the human view stays a scannable list).
+	// Under --all the rows include non-reusable ones, so "nothing reusable" is decided
+	// by the reusable-now rows, not by the row count.
+	noneReusable := len(reusableNow(res.Reusable)) == 0
 	if !near {
+		knownEmpty := false
 		switch {
 		case len(res.Reusable) > 0:
 			for _, e := range res.Reusable {
@@ -237,14 +249,27 @@ func runRunLs(w *output.Writer, inv invocation) error {
 			}
 		case res.Incomplete():
 			w.Line("no reusable runs among the assessed runs")
-		case all:
+		case all && res.WindowEmpty:
+			// Only an empty reference window proves the store holds no runs.
 			w.Line("no runs recorded")
+			knownEmpty = true
+		case all && command != "":
+			// The filter only searches the recent window, so an empty result says
+			// nothing about older matching runs.
+			w.Line("no recent runs match the command filter")
+		case all:
+			// The window held references none of which could be listed (an
+			// incompatible or vanished record), which says nothing about older runs.
+			w.Line("no readable runs among the recent runs")
 		default:
 			w.Line("no reusable runs for the current state")
 		}
+		if noneReusable && !knownEmpty {
+			w.Line(runHistoryHint(command))
+		}
 		renderUnassessed(w, res.Unassessed, td, now)
 		emitPerformanceNotes(w, res.Performance)
-		return nil
+		return
 	}
 
 	// --near: a reusable-now section (identical meaning to plain run ls) followed by a
@@ -256,8 +281,9 @@ func runRunLs(w *output.Writer, inv invocation) error {
 	}
 	w.Line("reusable now:")
 	reusable := reusableNow(res.Reusable)
-	if len(reusable) == 0 {
+	if noneReusable {
 		w.Line(none)
+		w.Line("  " + runHistoryHint(command))
 	}
 	for _, e := range reusable {
 		w.Line("  " + lsLine(e, td, now))
@@ -276,7 +302,6 @@ func runRunLs(w *output.Writer, inv invocation) error {
 	renderUnassessed(w, res.Unassessed, td, now)
 	warnCorruptRuns(w, res.Corrupt)
 	emitPerformanceNotes(w, res.Performance)
-	return nil
 }
 
 // nearLines renders one near-miss candidate: a header line naming the run and why it
@@ -305,6 +330,44 @@ func nearLines(c apprun.RunReuseCandidate, td domainconfig.TimeDisplay, now time
 		lines = append(lines, "    hint: "+h.Message)
 	}
 	return lines
+}
+
+// runHistoryHint points a reuse listing that found nothing reusable at run history.
+// It makes no claim about what history holds: the listing only assessed a recent
+// window, and non-reusable executions are still readable evidence there.
+func runHistoryHint(command string) string {
+	cmd := "awa run log"
+	if command != "" {
+		cmd += " --command " + shellWord(command)
+	}
+	return "history: " + cmd + "  # recorded executions, any reuse state"
+}
+
+// recordedHistoryFollowUp returns the follow-up for a nearest candidate that was
+// deliberately recorded (stored kind record-only with reason record-only or no-cache):
+// read its stored output by its explicit id, rather than chase a cache miss there is
+// nothing to repair for. The record-only kind alone is not deliberate — stdin,
+// capture, observation and authorization blockers share it and keep their routing.
+// It decides from the run's own stored verdict, never from rendered text, and reads
+// nothing; run show reports any payload problem itself.
+func recordedHistoryFollowUp(c apprun.RunReuseCandidate) (string, bool) {
+	r := c.Entry.Reuse
+	if r.Kind() != runcache.ReuseRecordOnly || (r.Reason() != runcache.ReasonRecordOnly && r.Reason() != runcache.ReasonNoCache) {
+		return "", false
+	}
+	return "awa run show " + c.Entry.ID.String() + " --tail 50", true
+}
+
+// shellWord renders s as one POSIX shell word for a copyable command line: bare when
+// it holds only characters no shell treats specially, single-quoted otherwise.
+func shellWord(s string) string {
+	plain := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@%+,", r)
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // changedSampleLines renders a bounded changed-path sample, declaring the true total
@@ -488,7 +551,7 @@ func runRunShow(w *output.Writer, inv invocation) error {
 	// run show is a stored-only operation: it discovers the .awa/ store without loading
 	// or validating current project config, so a malformed awa.toml/config.toml never
 	// blocks inspection of durable run evidence, and it never scans the current worktree.
-	svc, evidence, cleanup, err := buildRunShowContext(inv.invCtx(), inv.options)
+	svc, evidence, root, cleanup, err := buildRunShowContext(inv.invCtx(), inv.options)
 	if err != nil {
 		return classifyRunError(err)
 	}
@@ -496,6 +559,12 @@ func runRunShow(w *output.Writer, inv invocation) error {
 
 	id, skipped, err := resolveShowID(inv.invCtx(), svc, ref, last)
 	if err != nil {
+		// An explicit reference that matched no stored run names the project whose
+		// store was searched: run ids are project-local, and absence here says
+		// nothing about another project. Every other failure keeps its own class.
+		if !last && errors.Is(err, runcache.ErrNotFound) {
+			return notFoundErrorf("run %s not found in project %s\nrun ids are local to the project that recorded them; use --root <path> to read another project's runs", ref, root)
+		}
 		return classifyRunError(err)
 	}
 	// The human diagnostics carry the skip; the JSON path carries it structurally on

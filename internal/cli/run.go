@@ -704,7 +704,8 @@ func prePostCompareRef(idToken string) string {
 // clean miss (one that became reusable or was left uncached) with a nearest previous
 // run, it names that run, why it is not reusable, a bounded changed-input sample, and
 // at most one advisory hint. It always points at the deeper `run explain` command for
-// any non-hit, and adds `run ls --near` when a nearest candidate is shown.
+// any non-hit, and adds `run ls --near` when a nearest candidate is shown — or, for a
+// deliberately recorded nearest run, the `run show` command that reads its output.
 //
 // It stays quiet where it would only repeat what the footer already said: a hit needs
 // no diagnosis, and a mutating or record-only run already leads with its reason and
@@ -750,7 +751,13 @@ func emitCacheDiagnosis(w *output.Writer, res apprun.Result, sum apprun.RunExecu
 		w.Diagnostic("  explain:  awa run explain -- " + strings.Join(argv, " "))
 	}
 	if showBlock {
-		w.Diagnostic("  near:     awa run ls --near")
+		// A deliberately recorded nearest run is history to read, not a near miss to
+		// chase; every other reason keeps the near-miss pointer.
+		if history, ok := recordedHistoryFollowUp(*diag.Nearest); ok {
+			w.Diagnostic("  history:  " + history)
+		} else {
+			w.Diagnostic("  near:     awa run ls --near")
+		}
 	}
 }
 

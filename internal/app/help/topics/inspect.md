@@ -26,7 +26,8 @@ command line — the executable or its arguments, joined by single spaces — so
 recorded, including failed, mutating, and record-only runs. `awa run ls` is a
 different question — which stored runs are reusable for the *current* state — so
 a run missing from `ls` is not missing from history. `awa run ls --all` lists the
-non-reusable ones too, each with its reason token. To find an earlier execution,
+non-reusable ones too, each with its reason token. When nothing is reusable,
+`ls` adds a `history:` pointer to `run log`. To find an earlier execution,
 use `run log --command`, not `ls` or `run explain`: a failed, mutating, or
 record-only run is still readable evidence, and reading it needs no cache-policy
 change.
@@ -63,7 +64,8 @@ expression. Exactly one of an id or `--last` selects the run. `--last` is a
 convenience for the newest readable run, which moves whenever anyone records
 another run in this project; keep the id when referring to a result. Ids belong
 to this project's `.awa/` store, so `show` from another project does not find
-them.
+them: the not-found message names the project root it searched. Read another
+project's run with `--root <path>`.
 
 - Plain `show` and `--meta` print metadata only, never captured output:
   command, cwd, exit, duration, cacheability, reuse state, mutation outcome,
