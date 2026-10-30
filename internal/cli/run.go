@@ -93,7 +93,7 @@ var runSubcommands = []subcommand{
 		examples: []string{"awa run log -n 10", "awa run log --command \"xtask check\""},
 		topic:    "inspect",
 	}},
-	{name: "show", run: runRunShow, summary: "show one run's metadata and stored output", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
+	{name: "show", run: runRunShow, summary: "show one run's metadata; stored output on request", caps: []capability{capRoot, capConfig, capJSON}, help: commandHelp{
 		usage: []string{"run show <id>|--last [--meta|--stdout|--stderr] [--tail <n>] [--grep <re>]"},
 		long:  "Show one run's metadata and, on request, its stored output. --stdout/--stderr write one raw stream (pipe-safe); --tail/--grep filter it. Exactly one of an id or --last selects the run.",
 		flags: []flagHelp{

@@ -456,7 +456,7 @@
         },
         {
           "name": "show",
-          "summary": "show one run's metadata and stored output",
+          "summary": "show one run's metadata; stored output on request",
           "usage": [
             "run show <id>|--last [--meta|--stdout|--stderr] [--tail <n>] [--grep <re>]"
           ],
