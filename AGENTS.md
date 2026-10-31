@@ -108,11 +108,19 @@ awa run show <run-id> --tail 500
   and any config change delete or alter evidence or the worktree: propose them with
   their findings and leave the decision to the maintainer.
 
-Use `--record` when tests, builds or diagnostics need a fresh execution. Keep the
-printed run ID, especially on failure, and cite it with the result. Before rerunning
-only to recover output, use `awa run show <run-id> --tail <n>`; plain `show` is metadata.
-A tail is not the full capture, which may be truncated or disabled. Evidence is local
-and subject to retention; keep a native log and exit status when awa is unsuitable.
+Use `--record` for a fresh execution. Keep the project and printed run ID,
+especially on failure. Find earlier executions with `awa run log --command "<text>"`;
+`run ls` and `run explain` assess current reuse, not execution history. Read
+`awa run show <run-id> --tail <n>` before rerunning just to recover output; plain
+`show` is metadata. A tail is not the full capture, which may be truncated,
+disabled or expired; keep a native log and exit status when awa is unsuitable.
+
+Run observations keep input hashes, not input bytes. Only when later inspection
+needs an experiment's inputs, make the change, then preserve that exact state in a
+content-retaining checkpoint or safe fixture before executing; a pre-change baseline
+does not contain it. Cite the project, run and checkpoint IDs together. Excluded,
+protected and hash-only paths retain no bytes; never weaken privacy to capture
+them. See `awa help workflows`.
 
 `awa help validation` covers opt-in result-only policies and external identity probes.
 A replay recreates no artifacts. Do not change policy or authorize probes just to get
