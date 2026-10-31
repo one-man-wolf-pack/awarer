@@ -30,7 +30,7 @@ type ChangeCursor interface {
 // memory stays bounded either way; --no-renames skips the stage entirely.
 //
 // The caller owns left and right and must not consume them elsewhere; the returned
-// cursor's Close closes them.
+// cursor's Close closes them, and likewise any opts.Counterparts evidence.
 func CompareStream(left, right worktree.ManifestCursor, opts Options) (ChangeCursor, error) {
 	return compareStreamLimited(left, right, opts, defaultRenameBufferLimit)
 }
@@ -43,9 +43,15 @@ func compareStreamLimited(left, right worktree.ManifestCursor, opts Options, lim
 		return nil, fmt.Errorf("compare: nil manifest cursor")
 	}
 	base := &mergeCursor{
-		left:    worktree.Ordered(left),
-		right:   worktree.Ordered(right),
-		filters: opts.PathFilters,
+		left:     worktree.Ordered(left),
+		right:    worktree.Ordered(right),
+		filters:  opts.PathFilters,
+		evidence: opts.Counterparts,
+	}
+	if ev := opts.Counterparts; ev != nil {
+		base.lq = &sideQualifier{ev: ev.Left}
+		base.rq = &sideQualifier{ev: ev.Right}
+		base.interrupted = ev.interrupted
 	}
 	if opts.DetectRenames {
 		return newRenameCursorLimited(base, limit)
@@ -61,8 +67,14 @@ func CompareToChangeSet(left, right worktree.ManifestCursor, opts Options) (Chan
 	if err != nil {
 		return ChangeSet{}, err
 	}
+	return CollectChangeSet(cur)
+}
+
+// CollectChangeSet drains an open change cursor into a materialized ChangeSet and
+// closes it. Like CompareToChangeSet, its cost is the full set of reported changes.
+func CollectChangeSet(cur ChangeCursor) (ChangeSet, error) {
 	defer func() { _ = cur.Close() }()
-	// The rename-detection outcome is fixed once CompareStream returns (the rename stage
+	// The rename-detection outcome is fixed once the cursor is open (the rename stage
 	// buffers eagerly), so read it before draining.
 	detection := RenameDetectionOf(cur)
 	var changes []Change
@@ -81,9 +93,20 @@ func CompareToChangeSet(left, right worktree.ManifestCursor, opts Options) (Chan
 // PrimaryPath-then-Status order: at any path exactly one of delete/add/present is
 // emitted, and the merge advances by ascending path, so emitted changes ascend by
 // PrimaryPath with no ties at a path.
+//
+// With counterpart evidence it also feeds each processed record to its side's proof
+// and qualifies the missing side of every reported one-sided entry. Records are fed
+// before path filtering, so a skipped ancestor outside the selection still bounds a
+// selected descendant, and each side's proof streams are read once, in step with the
+// merge. When both manifests end, the rest of every proof stream is drained so its
+// integrity is verified even if the last reported change came early.
 type mergeCursor struct {
 	left, right worktree.ManifestCursor
 	filters     []worktree.RelPath
+
+	evidence    *CounterpartEvidence
+	lq, rq      *sideQualifier
+	interrupted func() error
 
 	started    bool
 	lOK, rOK   bool
@@ -114,20 +137,28 @@ func (m *mergeCursor) Next() bool {
 			return false
 		}
 		if !m.lOK && !m.rOK {
+			m.err = m.finishEvidence()
 			m.done = true
 			return false
 		}
 
 		var ch Change
 		var changed bool
+		var missing *sideQualifier
 		switch {
 		case !m.rOK || (m.lOK && m.lRec.Path().Less(m.rRec.Path())):
+			m.noteSide(m.lq, m.lRec)
 			ch, changed = deletedChange(nodeOf(m.lRec)), true
+			missing = m.rq
 			m.lOK = m.advance(m.left, &m.lRec)
 		case !m.lOK || m.rRec.Path().Less(m.lRec.Path()):
+			m.noteSide(m.rq, m.rRec)
 			ch, changed = addedChange(nodeOf(m.rRec)), true
+			missing = m.lq
 			m.rOK = m.advance(m.right, &m.rRec)
 		default: // equal paths: both present
+			m.noteSide(m.lq, m.lRec)
+			m.noteSide(m.rq, m.rRec)
 			ch, changed = comparePresent(nodeOf(m.lRec), nodeOf(m.rRec))
 			m.lOK = m.advance(m.left, &m.lRec)
 			m.rOK = m.advance(m.right, &m.rRec)
@@ -142,9 +173,61 @@ func (m *mergeCursor) Next() bool {
 		if len(m.filters) > 0 && !matchesAny(ch, m.filters) {
 			continue
 		}
+		if missing != nil {
+			if err := m.qualify(&ch, missing); err != nil {
+				m.err, m.done = err, true
+				return false
+			}
+		}
 		m.cur = ch
 		return true
 	}
+}
+
+// noteSide feeds a processed record to its side's proof, recording a failure on
+// the merge. It is called before the side's cursor advances past the record.
+func (m *mergeCursor) noteSide(q *sideQualifier, rec worktree.ManifestRecord) {
+	if q == nil || m.err != nil {
+		return
+	}
+	if err := q.note(rec); err != nil {
+		m.err = err
+	}
+}
+
+// qualify attaches the missing side's qualification to a one-sided change.
+func (m *mergeCursor) qualify(ch *Change, missing *sideQualifier) error {
+	if err := m.interrupted(); err != nil {
+		return err
+	}
+	side := SideRight
+	if missing == m.lq {
+		side = SideLeft
+	}
+	q, err := missing.qualify(ch.PrimaryPath())
+	if err != nil {
+		return err
+	}
+	ch.Counterpart = Counterpart{Side: side, Qualification: q}
+	return nil
+}
+
+// finishEvidence verifies both sides' proof streams once the merge has ended
+// cleanly. A failure there makes the comparison fail rather than end as complete.
+func (m *mergeCursor) finishEvidence() error {
+	if m.lq == nil {
+		return nil
+	}
+	if err := m.interrupted(); err != nil {
+		return err
+	}
+	if err := m.lq.finish(); err != nil {
+		return err
+	}
+	if err := m.rq.finish(); err != nil {
+		return err
+	}
+	return m.interrupted()
 }
 
 func ComparePair(left, right worktree.ManifestRecord) (Change, bool) {
@@ -180,10 +263,16 @@ func (m *mergeCursor) Err() error { return m.err }
 func (m *mergeCursor) Close() error {
 	err1 := m.left.Close()
 	err2 := m.right.Close()
+	// The evidence streams are closed once; the manifest cursors' Close is idempotent.
+	err3 := m.evidence.Close()
+	m.evidence = nil
 	if err1 != nil {
 		return err1
 	}
-	return err2
+	if err2 != nil {
+		return err2
+	}
+	return err3
 }
 
 // nodeOf adapts a manifest record to the internal node shape the per-pair

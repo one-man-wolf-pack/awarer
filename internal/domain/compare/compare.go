@@ -114,6 +114,10 @@ type Change struct {
 	// Note carries a short human reason when content is unavailable or the change
 	// is a skip (e.g. "hash-only", "skipped: read-error", "traversal changed").
 	Note string
+	// Counterpart qualifies the missing side of an added or deleted entry when the
+	// comparison was given counterpart evidence; it is zero otherwise, and always zero
+	// for other statuses, including a rename.
+	Counterpart Counterpart
 }
 
 // ModeChanged reports whether a regular file's permission bits changed between
@@ -184,6 +188,10 @@ type Options struct {
 	// PathFilters narrows the reported changes to the named paths and their
 	// descendants. Empty means no filtering. The paths are project-root-relative.
 	PathFilters []worktree.RelPath
+	// Counterparts, when set, qualifies each reported added/deleted entry's missing
+	// side from that side's evidence. The comparison owns it: the evidence is
+	// verified when the merge ends and closed with the returned cursor.
+	Counterparts *CounterpartEvidence
 }
 
 // node is a path's presence on one side: either an entry or a skipped input.
