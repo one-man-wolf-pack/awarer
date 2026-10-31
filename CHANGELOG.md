@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.5.0...v0.6.0) (2026-10-31)
+
+
+### Features
+
+* **cli:** bound human command previews in run listings ([11b3f9c](https://github.com/one-man-wolf-pack/awarer/commit/11b3f9c7e1d0e57cb566a523857ab34ab0af5a11))
+* **cli:** explain the missing side of added and deleted changes ([667b234](https://github.com/one-man-wolf-pack/awarer/commit/667b234edaf7432f96346c5e40199380c8417240))
+* **cli:** point empty reuse listings and missing runs at retained history ([b59897b](https://github.com/one-man-wolf-pack/awarer/commit/b59897b577a7f05857f2ace72302af460b0a0ea6))
+* **compare:** qualify the missing side of added and deleted entries ([53766cd](https://github.com/one-man-wolf-pack/awarer/commit/53766cddae2b0f127b8c470b42c122a9837701e1))
+
+
+### Bug Fixes
+
+* **cli:** show the full stored command escaped in run show and run rm ([b66771d](https://github.com/one-man-wolf-pack/awarer/commit/b66771d57284a609fcd04597e599c02b0b19462f))
+
+
+### Documentation
+
+* **agents:** refresh awa execution evidence guidance ([8d4cd23](https://github.com/one-man-wolf-pack/awarer/commit/8d4cd2362e0208dd9cb3cd9cf0dce4a83bc0cbe6))
+* **cli:** describe run show output as on request ([fff7a31](https://github.com/one-man-wolf-pack/awarer/commit/fff7a31545af0cebbe54cda57b9e53e56d60f7a4))
+* **help:** separate run history, metadata, output, and input bytes ([39ae3ae](https://github.com/one-man-wolf-pack/awarer/commit/39ae3ae90cdb8d06645031b231c26f3a7ee7b12f))
+
 ## [0.5.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.4.1...v0.5.0) (2026-10-25)
 
 
