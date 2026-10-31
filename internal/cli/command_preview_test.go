@@ -11,6 +11,7 @@ import (
 	apprun "awarer/internal/app/run"
 	"awarer/internal/app/timeline"
 	domainconfig "awarer/internal/domain/config"
+	"awarer/internal/domain/evidence"
 	"awarer/internal/domain/runcache"
 	"awarer/internal/output"
 )
@@ -252,5 +253,106 @@ func TestRenderersEscapeUnclosedBidiControls(t *testing.T) {
 			ShortID: "18e32e3d74d8", Command: e.KeyInput.Command.Argv, Reason: string(runcache.ReasonInputTreeDiffers),
 		}}, "nearest:")
 		checkPreviewRows(t, tc.name+" status", out.String(), "nearest: 18e32e3d74d8 "+cmd+" not-reusable(input-tree-differs)\n")
+	}
+}
+
+// checkFullCommand asserts what every full command rendering must hold: one line, no raw
+// control, line separator or bidi control character, valid UTF-8, and no preview elision.
+func checkFullCommand(t *testing.T, name, got string) {
+	t.Helper()
+	if !utf8.ValidString(got) {
+		t.Errorf("%s: invalid UTF-8: %q", name, got)
+	}
+	for _, r := range got {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || strings.ContainsRune(bidiControls, r) {
+			t.Errorf("%s: raw control, line separator or bidi control %U in %q", name, r, got)
+		}
+	}
+	if strings.Contains(got, commandPreviewElision) {
+		t.Errorf("%s: full command carries the preview elision: %q", name, got)
+	}
+}
+
+func TestCommandText(t *testing.T) {
+	a := strings.Repeat
+	const L = commandPreviewLimit
+	for _, tc := range []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"short command unchanged", []string{"go", "test", "./..."}, "go test ./..."},
+		{"empty", nil, ""},
+		{"multiline", []string{"sh", "-c", "echo hi\nrm x"}, `sh -c echo hi\nrm x`},
+		{"tab and carriage return", []string{"a\tb\rc"}, `a\tb\rc`},
+		{"terminal escape", []string{"printf", "\x1b[2J\x1b]0;title\x07"}, `printf \x1b[2J\x1b]0;title\x07`},
+		{"delete and C1", []string{"x\x7fy\u0085z\u009b"}, `x\x7fy\u0085z\u009b`},
+		{"unicode line separators", []string{"a\u2028b\u2029c"}, `a\u2028b\u2029c`},
+		{"invalid UTF-8", []string{"a\xffb"}, `a\xffb`},
+		{"unclosed override", []string{"open", "txt.exe\u202egpj"}, `open txt.exe\u202egpj`},
+		{"unclosed isolate", []string{"open", "\u2067שלום"}, `open \u2067שלום`},
+		{"multilingual unchanged", []string{"echo", "привет", "שלום", "مرحبا", "🙂"}, "echo привет שלום مرحبا 🙂"},
+		{"zero-width joiner unchanged", []string{"echo", "👩\u200d💻", "a\u200cb"}, "echo 👩\u200d💻 a\u200cb"},
+		// Past the preview bound the whole command is still there, escapes included.
+		{"beyond the preview bound", []string{"echo", a("z", 10_000) + "\nTAIL"}, "echo " + a("z", 10_000) + `\nTAIL`},
+		{"escapes beyond the preview bound", []string{a("\u202e", L)}, a(`\u202e`, L)},
+	} {
+		got := commandText(tc.argv)
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+		checkFullCommand(t, tc.name, got)
+		// Preview and full text share one escaping meaning: an unelided preview is the
+		// full text, and an elided one is a prefix of it.
+		p := commandPreview(tc.argv)
+		if prefix, elided := strings.CutSuffix(p, commandPreviewElision); elided && !strings.HasPrefix(got, prefix) {
+			t.Errorf("%s: elided preview %q is not a prefix of the full text %q", tc.name, p, got)
+		} else if !elided && p != got {
+			t.Errorf("%s: unelided preview %q differs from the full text %q", tc.name, p, got)
+		}
+	}
+}
+
+// TestRunShowMetaAndRmShowFullEscapedCommand drives the real metadata and removal
+// renderers with a command past the preview bound and an unclosed bidi control: the
+// whole command arrives escaped on its own row, and the surrounding labels and rows
+// stay where they were.
+func TestRunShowMetaAndRmShowFullEscapedCommand(t *testing.T) {
+	rid, err := runcache.ParseRunID("18e32e3d74d80be05b5a6ee1e5a03d80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := runcache.ParseRunID("29f43f4e85e91cf16c6b7ff2f6b14e91")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := runcache.RunEntry{ID: rid, StartedAt: time.Unix(1_800_000_000, 0), FinishedAt: time.Unix(1_800_000_001, 0)}
+	e.KeyInput.Command.Argv = append(longArgv(), "\x1b[31m", "txt.exe\u202egpj")
+	full := `agent --prompt line one\nline two\n` + strings.Repeat("word ", 40) + `UNIQUE_TAIL \x1b[31m txt.exe\u202egpj`
+
+	var out, errb bytes.Buffer
+	renderShowMeta(output.New(&out, &errb), e, domainconfig.TimeUTC, time.Unix(1_800_000_100, 0))
+	lines := strings.Split(out.String(), "\n")
+	if len(lines) < 3 || lines[0] != "id:        "+rid.String() || lines[1] != "command:   "+full || !strings.HasPrefix(lines[2], "cwd:") {
+		t.Fatalf("run show metadata:\n%s\nwant the full escaped command on the command: row", out.String())
+	}
+	checkFullCommand(t, "run show", lines[1])
+
+	for _, tc := range []struct {
+		dryRun bool
+		verb   string
+	}{{true, "would remove"}, {false, "removed"}} {
+		out.Reset()
+		renderRmHuman(output.New(&out, &errb), apprun.RmResult{
+			Removed:           []runcache.RunEntry{e},
+			RemovedUnreadable: []apprun.UnreadableRun{{ID: other, Reason: evidence.TokenMetadataCorrupt}},
+			DryRun:            tc.dryRun,
+		})
+		want := tc.verb + " " + rid.Short() + "  " + full + "\n" +
+			tc.verb + " " + other.Short() + "  (corrupt metadata)\n"
+		if got := out.String(); got != want {
+			t.Errorf("run rm (%s):\ngot  %q\nwant %q", tc.verb, got, want)
+		}
+		checkFullCommand(t, "run rm "+tc.verb, strings.Split(out.String(), "\n")[0])
 	}
 }

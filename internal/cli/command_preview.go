@@ -26,7 +26,8 @@ const commandPreviewElision = "…"
 // prefix of whole escapes and runes followed by commandPreviewElision.
 //
 // The preview is presentation only: it is not executable, not reversible, and never an
-// input to storage, keys, filters or removal. Full argv stays in run show and JSON.
+// input to storage, keys, filters or removal. commandText renders the whole command
+// with the same escapes; exact argv stays in JSON.
 func commandPreview(argv []string) string {
 	var b strings.Builder
 	count := 0 // runes written to b
@@ -50,7 +51,7 @@ func commandPreview(argv []string) string {
 			r, size := utf8.DecodeRuneInString(arg[j:])
 			tok := arg[j : j+size]
 			n := 1
-			if esc := previewEscape(r, size, arg[j]); esc != "" {
+			if esc := commandEscape(r, size, arg[j]); esc != "" {
 				tok, n = esc, len(esc) // escapes are ASCII
 			}
 			if !add(tok, n) {
@@ -62,10 +63,35 @@ func commandPreview(argv []string) string {
 	return b.String()
 }
 
-// previewEscape returns the visible escape for a rune that must not reach the terminal
-// as is, or "" when the rune is printed unchanged. first is the rune's first byte, used
-// to name an invalid UTF-8 byte.
-func previewEscape(r rune, size int, first byte) string {
+// commandText renders the complete command for full inspection: run show metadata and
+// run rm rows. It escapes exactly what commandPreview escapes, but has no limit and no
+// elision, so every part of the command is shown. Like the preview it is for reading
+// only: not a shell command, not reversible to argv, and never an input to storage,
+// keys, filters or removal.
+func commandText(argv []string) string {
+	var b strings.Builder
+	for i, arg := range argv {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		for j := 0; j < len(arg); {
+			r, size := utf8.DecodeRuneInString(arg[j:])
+			if esc := commandEscape(r, size, arg[j]); esc != "" {
+				b.WriteString(esc)
+			} else {
+				b.WriteString(arg[j : j+size])
+			}
+			j += size
+		}
+	}
+	return b.String()
+}
+
+// commandEscape returns the visible escape for a rune of a rendered command that must
+// not reach the terminal as is, or "" when the rune is printed unchanged. It is the one
+// classification behind commandPreview and commandText. first is the rune's first byte,
+// used to name an invalid UTF-8 byte.
+func commandEscape(r rune, size int, first byte) string {
 	switch {
 	case r == utf8.RuneError && size == 1:
 		return fmt.Sprintf(`\x%02x`, first)

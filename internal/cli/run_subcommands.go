@@ -870,21 +870,27 @@ func runRunRm(w *output.Writer, inv invocation) error {
 	if inv.options.JSON {
 		return w.JSON("run.rm", rmDoc(res))
 	}
+	renderRmHuman(w, res)
+	return nil
+}
+
+// renderRmHuman prints the human "run rm" report: one row per target, readable runs
+// with their complete escaped command, unreadable ones with why they would not decode.
+func renderRmHuman(w *output.Writer, res apprun.RmResult) {
 	verb := "removed"
 	if res.DryRun {
 		verb = "would remove"
 	}
 	if len(res.Removed) == 0 && len(res.RemovedUnreadable) == 0 {
 		w.Line("no runs matched")
-		return nil
+		return
 	}
 	for _, e := range res.Removed {
-		w.Linef("%s %s  %s", verb, e.ID.Short(), strings.Join(e.KeyInput.Command.Argv, " "))
+		w.Linef("%s %s  %s", verb, e.ID.Short(), commandText(e.KeyInput.Command.Argv))
 	}
 	for _, u := range res.RemovedUnreadable {
 		w.Linef("%s %s  (%s)", verb, u.ID.Short(), unreadableRunPhrase(u.Reason))
 	}
-	return nil
 }
 
 // buildRunService2 resolves the project from global options and builds the run
@@ -957,7 +963,7 @@ func logLine(le apprun.LogEntry, td domainconfig.TimeDisplay, now time.Time) str
 // renderShowMeta prints a run's metadata and a short output summary.
 func renderShowMeta(w *output.Writer, e runcache.RunEntry, td domainconfig.TimeDisplay, now time.Time) {
 	w.Linef("id:        %s", e.ID.String())
-	w.Linef("command:   %s", strings.Join(e.KeyInput.Command.Argv, " "))
+	w.Linef("command:   %s", commandText(e.KeyInput.Command.Argv))
 	w.Linef("cwd:       %s", e.KeyInput.CWD.String())
 	w.Linef("exit:      %s", exitLabel(e.Exit))
 	w.Linef("started:   %s", FormatTime(td, e.StartedAt, now))

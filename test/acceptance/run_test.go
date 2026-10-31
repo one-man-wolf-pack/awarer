@@ -688,9 +688,111 @@ func TestRunLongCommandPreviewKeepsFullEvidence(t *testing.T) {
 	if len(env.Data) != 1 || !slices.Equal(env.Data[0].Command, argv) {
 		t.Fatalf("run log --json --command <tail> = %+v, want the run with its full argv", env.Data)
 	}
-	_, meta, _ := awa(t, root, "run", "show", env.Data[0].ID, "--meta")
-	if !strings.Contains(meta, prompt) {
-		t.Errorf("run show --meta lost the full command:\n%s", meta)
+	// Full metadata keeps the whole prompt, its line breaks escaped onto the one
+	// command: row and nothing elided.
+	escaped := strings.ReplaceAll(prompt, "\n", `\n`)
+	for _, args := range [][]string{{"run", "show", env.Data[0].ID}, {"run", "show", env.Data[0].ID, "--meta"}} {
+		code, meta, stderr := awa(t, root, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d, %s", args, code, stderr)
+		}
+		if !strings.Contains(meta, "\ncommand:   "+h+" -out long "+escaped+"\ncwd:") || strings.Contains(meta, "…") {
+			t.Errorf("%v lost or elided the full escaped command:\n%s", args, meta)
+		}
+	}
+}
+
+// TestRunFullCommandEscapedThroughShowAndRm records a run whose argument carries a line
+// break, a terminal escape and an unclosed bidi override, next to a run that does not
+// match it. Show metadata and both removal reports print that command whole and
+// escaped, while JSON argv, raw stored output and --command matching keep the original
+// characters: the escaped spelling selects nothing, and the nonmatching run survives.
+func TestRunFullCommandEscapedThroughShowAndRm(t *testing.T) {
+	root := initProject(t)
+	h := helper(t)
+	const raw = "mark\nnext \x1b[31mred txt.exe\u202egpj"
+	shown := `mark\nnext \x1b[31mred txt.exe\u202egpj`
+	// The helper ignores trailing operands; -out writes the same characters to stdout.
+	target := []string{h, "-out", raw, "target", raw}
+	if code, _, stderr := awa(t, root, append([]string{"run", "--"}, target...)...); code != 0 {
+		t.Fatalf("run target: exit %d, %s", code, stderr)
+	}
+	if code, _, stderr := awa(t, root, "run", "--", h, "-out", "plain", "other"); code != 0 {
+		t.Fatalf("run other: exit %d, %s", code, stderr)
+	}
+
+	type row struct {
+		ID      string   `json:"id"`
+		Command []string `json:"command"`
+	}
+	logRows := func() []row {
+		t.Helper()
+		code, stdout, stderr := awa(t, root, "run", "log", "--json")
+		if code != 0 {
+			t.Fatalf("run log --json: exit %d, %s", code, stderr)
+		}
+		var env struct {
+			Data []row `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+			t.Fatalf("run log --json: %v\n%s", err, stdout)
+		}
+		return env.Data
+	}
+	rows := logRows()
+	if len(rows) != 2 || !slices.Equal(rows[1].Command, target) {
+		t.Fatalf("run log --json = %+v, want the target run with its exact argv second", rows)
+	}
+	targetID, otherID := rows[1].ID, rows[0].ID
+	fullShown := h + " -out " + shown + " target " + shown
+
+	for _, args := range [][]string{{"run", "show", targetID}, {"run", "show", targetID, "--meta"}} {
+		code, meta, stderr := awa(t, root, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d, %s", args, code, stderr)
+		}
+		if !strings.Contains(meta, "\ncommand:   "+fullShown+"\ncwd:") || strings.ContainsAny(meta, "\x1b\u202e") {
+			t.Errorf("%v: want the escaped command on one row:\n%q", args, meta)
+		}
+	}
+	// Captured output is raw bytes, not the escaped metadata form.
+	if _, out, _ := awa(t, root, "run", "show", targetID, "--stdout"); out != raw {
+		t.Errorf("run show --stdout = %q, want the raw bytes %q", out, raw)
+	}
+
+	// The escaped spelling is presentation, not a query.
+	if code, human, _ := awa(t, root, "run", "rm", "--command", `mark\nnext`, "--dry-run"); code != 0 || human != "no runs matched\n" {
+		t.Errorf("run rm --command <escaped spelling> --dry-run (exit %d) = %q, want no match", code, human)
+	}
+	code, stdout, stderr := awa(t, root, "run", "rm", "--command", "mark\nnext", "--dry-run", "--json")
+	if code != 0 {
+		t.Fatalf("run rm --dry-run --json: exit %d, %s", code, stderr)
+	}
+	var rm struct {
+		Data struct {
+			Removed []row `json:"removed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rm); err != nil {
+		t.Fatalf("run rm --json: %v\n%s", err, stdout)
+	}
+	if len(rm.Data.Removed) != 1 || rm.Data.Removed[0].ID != targetID || !slices.Equal(rm.Data.Removed[0].Command, target) {
+		t.Errorf("run rm --dry-run --json = %+v, want only the target with its exact argv", rm.Data.Removed)
+	}
+	for _, tc := range []struct {
+		verb string
+		args []string
+	}{
+		{"would remove", []string{"run", "rm", "--command", "mark\nnext", "--dry-run"}},
+		{"removed", []string{"run", "rm", "--command", "mark\nnext"}},
+	} {
+		code, human, stderr := awa(t, root, tc.args...)
+		if want := tc.verb + " " + targetID[:12] + "  " + fullShown + "\n"; code != 0 || human != want {
+			t.Errorf("%v (exit %d, %s) =\n%q\nwant %q", tc.args, code, stderr, human, want)
+		}
+	}
+	if rows := logRows(); len(rows) != 1 || rows[0].ID != otherID {
+		t.Errorf("run log after removal = %+v, want only the nonmatching run %s", rows, otherID)
 	}
 }
 

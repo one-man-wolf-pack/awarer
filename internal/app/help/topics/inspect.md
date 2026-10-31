@@ -24,8 +24,10 @@ command line — the executable or its arguments, joined by single spaces — so
 
 Listing rows show the command as a one-line preview: line breaks, control and
 bidirectional-text characters are escaped, and a long command ends in `…`. That shortens only the
-display, not stored output; `--command` still matches the full text, and
-`awa run show <id>` prints it whole.
+display, not stored output; `--command` still matches the original text.
+`awa run show <id>` and `awa run rm` print the whole command with the same escapes
+and no `…`. That text is for reading, not a shell command to copy: the exact
+arguments are in `--json`.
 
 `awa run log` is chronological history, newest first: everything that was
 recorded, including failed, mutating, and record-only runs. `awa run ls` is a
@@ -76,7 +78,7 @@ project's run with `--root <path>`.
   command, cwd, exit, duration, cacheability, reuse state, mutation outcome,
   key, and per-stream byte counts. Read output with one of the forms below.
 - `--stdout` and `--stderr` write one raw stream and nothing else, so they are
-  safe to pipe.
+  safe to pipe. Captured bytes are never escaped.
 - `--tail <n>` and `--grep <pattern>` filter what is shown; combined with a
   stream selector they filter that stream, otherwise both streams are shown under
   labelled headers. A tailed view says `(tail — earlier lines omitted)` so a
