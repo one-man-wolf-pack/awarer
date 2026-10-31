@@ -86,7 +86,7 @@ func decodeBasis(t *testing.T, stdout, array string) basisDoc {
 }
 
 func mismatchWarnings(stderr string) int {
-	return strings.Count(stderr, "warning: scan config differs")
+	return strings.Count(stderr, "warning: recorded scan config identities differ")
 }
 
 func writeLocalConfig(t *testing.T, root, content string) {

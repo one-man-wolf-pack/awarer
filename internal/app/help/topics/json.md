@@ -59,6 +59,10 @@ Before their array they carry `basis`: `token` (`observation-delta`) and
 `scan_config` with each side's recorded identity and `agreement` (`match` or
 `mismatch`). A mismatch is not a failure, and a match is not proof of equal
 ignore rules or scope — see [awa help diff](diff.md).
+Each `added`/`deleted` element adds `counterpart`: `side` (`left` for added,
+`right` for deleted) and `qualification` — `absent`, `outside-observation`,
+`skipped-boundary` or `unknown`. It describes that side's recorded coverage,
+not a creation or deletion, and is no provider verdict or restore permission.
 After the array, `scope` carries `ignore_sources`: the ignore-source categories
 enabled in the configuration this invocation loaded, as
 `ignore_sources_basis: "current-configuration"` states. It is not a list of

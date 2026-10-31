@@ -54,43 +54,22 @@ func (r Result) Close() error {
 	return err
 }
 
-// Run resolves both sides of the range and compares them by merging their
-// manifest streams — no full manifest is materialized to compare. It performs no
-// writes: a "now" side is an ephemeral scan that publishes no checkpoint. The output
-// ChangeSet is collected because it is the materialized report contract JSON and
-// small callers use; the scale win is the streamed comparison input. Human output
-// uses Stream instead, so it never collects the whole change set.
+// Run is the materialized form of Stream: the same comparison, with each
+// added/deleted entry's missing side qualified and every proof stream verified,
+// collected into a ChangeSet for callers that need the whole report (status).
+// It performs no writes: a "now" side is an ephemeral scan that publishes no
+// checkpoint. Human output uses Stream instead, so it never collects the set.
 func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
-	left, right, err := s.resolver.ResolveRange(ctx, req.Range, req.Now)
+	sr, err := s.Stream(ctx, req)
 	if err != nil {
 		return Result{}, err
 	}
-	// Own the resolved states until they are handed to the caller in the Result: close
-	// them on any error path, disarm on the successful transfer.
-	transferred := false
-	defer func() {
-		if !transferred {
-			_ = left.Close()
-			_ = right.Close()
-		}
-	}()
-
-	lc, err := left.Manifest(ctx)
+	cs, err := compare.CollectChangeSet(sr.Changes)
 	if err != nil {
+		_ = sr.Close()
 		return Result{}, err
 	}
-	rc, err := right.Manifest(ctx)
-	if err != nil {
-		_ = lc.Close()
-		return Result{}, err
-	}
-	// CompareToChangeSet owns lc and rc and closes them.
-	cs, err := compare.CompareToChangeSet(lc, rc, compare.Options{DetectRenames: req.DetectRenames, PathFilters: req.PathFilters})
-	if err != nil {
-		return Result{}, err
-	}
-	transferred = true
-	return Result{Left: left, Right: right, ChangeSet: cs}, nil
+	return Result{Left: sr.Left, Right: sr.Right, ChangeSet: cs}, nil
 }
 
 // StreamResult is the resolved range plus a live change cursor. It is the
@@ -148,23 +127,10 @@ func (s *Service) Stream(ctx context.Context, req Request) (StreamResult, error)
 		}
 	}()
 
-	lc, err := left.Manifest(ctx)
+	// The shared comparison front also qualifies each added/deleted entry's missing
+	// side from that side's recorded coverage; it closes what it opened on error.
+	cur, err := state.OpenComparison(ctx, left, right, compare.Options{DetectRenames: req.DetectRenames, PathFilters: req.PathFilters})
 	if err != nil {
-		return StreamResult{}, err
-	}
-	rc, err := right.Manifest(ctx)
-	if err != nil {
-		_ = lc.Close()
-		return StreamResult{}, err
-	}
-	cur, err := compare.CompareStream(lc, rc, compare.Options{DetectRenames: req.DetectRenames, PathFilters: req.PathFilters})
-	if err != nil {
-		// CompareStream's rename path drains and closes the inputs on error; for the
-		// base path the only error is a nil cursor, which cannot happen here. Close both
-		// defensively — the underlying cursors' Close is idempotent — so a stray error
-		// never leaks a manifest file descriptor.
-		_ = lc.Close()
-		_ = rc.Close()
 		return StreamResult{}, err
 	}
 	transferred = true

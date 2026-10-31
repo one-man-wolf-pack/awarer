@@ -242,8 +242,10 @@ func renderDiffStat(w *output.Writer, csr appdiff.ChangeStreamResult, filters []
 
 	cur := csr.Changes
 	var sum compare.Summary
+	var unproved counterpartTally
 	for cur.Next() {
 		sum.Add(cur.Change())
+		unproved.add(cur.Change())
 	}
 	if err := cur.Err(); err != nil {
 		return partialOutputError(true, err)
@@ -255,6 +257,7 @@ func renderDiffStat(w *output.Writer, csr appdiff.ChangeStreamResult, filters []
 		return nil
 	}
 	renderChangesStat(w, sum)
+	unproved.emit(w, "--stat")
 	emitScopeNote(w, sum.Skipped)
 	renameSkippedNote(w, csr.RenameDetection)
 	return nil
@@ -270,7 +273,11 @@ func renderFileDiff(w *output.Writer, fd appdiff.FileDiff) {
 		w.Raw([]byte(fd.Text))
 		return
 	}
-	w.Linef("%s %s (%s)", c.Status.Code(), primaryPath(c), fd.Reason)
+	reason := fd.Reason
+	if a := counterpartAnnotation(c); a != "" {
+		reason += ", " + a
+	}
+	w.Linef("%s %s (%s)", c.Status.Code(), primaryPath(c), reason)
 }
 
 func diffHeader(c compare.Change) string {
@@ -282,6 +289,11 @@ func diffHeader(c compare.Change) string {
 	// content also changed and a textual body follows.
 	if c.ModeChanged() {
 		header += fmt.Sprintf(" (mode %04o -> %04o)", c.OldMode, c.NewMode)
+	}
+	// A text body has a missing side only for an added/deleted file; name it when that
+	// side did not prove the path absent, as the changes listing does.
+	if a := counterpartAnnotation(c); a != "" {
+		header += " (" + a + ")"
 	}
 	return header
 }

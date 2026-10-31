@@ -219,8 +219,10 @@ func renderChanges(w *output.Writer, sr changes.StreamResult, filters []worktree
 		// cursor into bounded Summary counters (not the change list) keeps it memory-
 		// bounded while still one line of output.
 		var sum compare.Summary
+		var unproved counterpartTally
 		for cur.Next() {
 			sum.Add(cur.Change())
+			unproved.add(cur.Change())
 		}
 		if err := cur.Err(); err != nil {
 			return partialOutputError(headerPrinted, err)
@@ -232,16 +234,20 @@ func renderChanges(w *output.Writer, sr changes.StreamResult, filters []worktree
 			return nil
 		}
 		renderChangesStat(w, sum)
+		unproved.emit(w, "--stat")
 		emitScopeNote(w, sum.Skipped)
 	case nameOnly:
 		wrote := false
+		var unproved counterpartTally
 		for cur.Next() {
 			w.Line(cur.Change().PrimaryPath().String())
+			unproved.add(cur.Change())
 			wrote = true
 		}
 		if err := cur.Err(); err != nil {
 			return partialOutputError(wrote, err)
 		}
+		unproved.emit(w, "--name-only")
 	default:
 		printed, skipped := 0, 0
 		for cur.Next() {
@@ -290,6 +296,27 @@ func emitScopeNote(w *output.Writer, skipped int) {
 		return
 	}
 	w.Diagnostic("note: ignored paths are outside awa evidence; deleted paths may include paths now excluded by ignore policy")
+}
+
+// counterpartTally counts the reported added/deleted entries whose missing side is
+// not proved absent, for the summary forms that print no per-path annotation. It is a
+// count, never a second list of paths, and counts exactly the rows the full listing
+// annotates.
+type counterpartTally struct{ n int }
+
+func (t *counterpartTally) add(c compare.Change) {
+	if counterpartAnnotation(c) != "" {
+		t.n++
+	}
+}
+
+// emit prints one bounded stderr note when any counted entry exists, pointing at
+// the full listing that annotates each one. stdout is untouched.
+func (t counterpartTally) emit(w *output.Writer, mode string) {
+	if t.n == 0 {
+		return
+	}
+	w.Diagnostic(fmt.Sprintf("note: %d added/deleted path(s) have no observed counterpart (outside observation, skipped boundary or coverage unknown); the listing without %s annotates each", t.n, mode))
 }
 
 // partialOutputError frames a mid-stream failure honestly. The underlying error is
@@ -361,12 +388,22 @@ func basisLabel(sum state.StateRangeSummary) string {
 	return label + "differs " + shortConfigHash(sum.Left.ScanConfig) + " -> " + shortConfigHash(sum.Right.ScanConfig)
 }
 
+// emitScanConfigMismatch names only what the two recorded identities establish: the
+// recorded scan configuration projections disagree. The settings behind them are not
+// retained, so it never guesses a cause from today's configuration or from a path.
+// When exactly one side is a run observation it names the one boundary known without
+// history: runs and the history family (checkpoints, now) scan different default
+// scopes, so their identities can differ under unchanged configuration.
 func emitScanConfigMismatch(w *output.Writer, sum state.StateRangeSummary) {
 	if sum.ScanConfigsMatch() {
 		return
 	}
-	w.Diagnostic(fmt.Sprintf("warning: scan config differs between sides (%s -> %s); added/deleted reflect manifest membership and may come from a scope or trust-mode change, not files created or deleted",
-		shortConfigHash(sum.Left.ScanConfig), shortConfigHash(sum.Right.ScanConfig)))
+	msg := fmt.Sprintf("warning: recorded scan config identities differ (%s -> %s); the differing settings are not retained, so their cause is unavailable; added/deleted reflect manifest membership, not files created or deleted",
+		shortConfigHash(sum.Left.ScanConfig), shortConfigHash(sum.Right.ScanConfig))
+	if (sum.Left.Kind == state.KindRunObservation) != (sum.Right.Kind == state.KindRunObservation) {
+		msg += "; a run observation uses the run scope, which can differ from the checkpoint/now history scope without any configuration change"
+	}
+	w.Diagnostic(msg)
 }
 
 func shortConfigHash(h hashing.ConfigHash) string {
@@ -471,7 +508,33 @@ func changeAnnotations(c compare.Change) []string {
 	if c.Note != "" {
 		annots = append(annots, c.Note)
 	}
+	if a := counterpartAnnotation(c); a != "" {
+		annots = append(annots, a)
+	}
 	return annots
+}
+
+// counterpartAnnotation names an added/deleted entry's missing side when that side
+// did not prove the path absent: "right: outside observation" says the right
+// observation did not look there, not why it was excluded or whether the path exists.
+// An ordinary proved absence stays unannotated; it is still an observation fact, not
+// a creation or deletion event.
+func counterpartAnnotation(c compare.Change) string {
+	if !c.Counterpart.Known() {
+		return ""
+	}
+	var what string
+	switch c.Counterpart.Qualification {
+	case compare.QualOutsideObservation:
+		what = "outside observation"
+	case compare.QualSkippedBoundary:
+		what = "skipped boundary"
+	case compare.QualUnknown:
+		what = "coverage unknown"
+	default:
+		return ""
+	}
+	return c.Counterpart.Side.String() + ": " + what
 }
 
 func renderChangesStat(w *output.Writer, s compare.Summary) {
@@ -514,6 +577,14 @@ type changeView struct {
 	NewMode              string `json:"new_mode,omitempty"`
 	ContentDiffAvailable bool   `json:"content_diff_available"`
 	Note                 string `json:"note,omitempty"`
+	// Counterpart is set only on added/deleted entries: the missing side and its
+	// closed qualification. It is observation evidence, not a provider verdict.
+	Counterpart *counterpartView `json:"counterpart,omitempty"`
+}
+
+type counterpartView struct {
+	Side          string `json:"side"`
+	Qualification string `json:"qualification"`
 }
 
 // renameDetectionView is the structural rename-detection fact in changes/diff JSON: a
@@ -614,7 +685,15 @@ func toChangeView(c compare.Change) changeView {
 		NewMode:              octalMode(c.NewMode, c.NewModeSet),
 		ContentDiffAvailable: c.ContentDiffAvailable,
 		Note:                 c.Note,
+		Counterpart:          counterpartViewOf(c.Counterpart),
 	}
+}
+
+func counterpartViewOf(c compare.Counterpart) *counterpartView {
+	if !c.Known() {
+		return nil
+	}
+	return &counterpartView{Side: c.Side.String(), Qualification: c.Qualification.String()}
 }
 
 // octalMode renders permission bits as a 4-digit octal string, or "" when the

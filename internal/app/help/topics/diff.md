@@ -45,7 +45,33 @@ completes:
 
 So matching identities do not prove unchanged ignore rules, equal scope, or
 that a path is absent. Byte-retention settings are not part of the identity:
-they only decide whether a side can show a text diff.
+they only decide whether a side can show a text diff. The differing settings
+themselves are not retained, so the warning says their cause is unavailable
+rather than guessing one. A run observation (`run:<id>:before`/`after`) uses
+the run scope, while checkpoints and `now` use the history scope — which also
+hides `dist`, `build` and `coverage` — so their identities can differ with no
+configuration change.
+
+## Missing side of added/deleted rows
+
+Each `A`/`D` row is qualified by the side that lacks it — the left observation
+for an add, the right for a delete — from that side's recorded coverage:
+
+```text
+D gen/a.txt (right: outside observation)   # excluded or pruned there
+D old.txt (right: coverage unknown)        # record predates coverage evidence
+A cache/x (left: skipped boundary)         # under a skipped/unreadable node
+D keep.txt                                 # proved absent in that observation
+```
+
+None of these is a filesystem event: a proved absence does not mean the file
+was created or deleted in between, and `outside observation` neither says why
+the path was excluded nor that it exists. A recovery observation
+(`restore:<id>:before`) proves absence only at the paths its restore covered;
+everything else is outside its observation. `coverage unknown` is a valid fact
+about an older record; damaged or unreadable proof fails the command instead.
+`--stat` and `--name-only` keep their counts and names and add one stderr
+`note:` counting rows whose missing side is not proved absent.
 
 JSON `scope.ignore_sources` names what today's configuration enables, not what
 either side was scanned with: an enabled `.gitignore` may not have existed then,

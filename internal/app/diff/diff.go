@@ -208,7 +208,8 @@ func (r ChangeStreamResult) Close() error {
 }
 
 // openCompare is the shared front half of Stream and StreamChanges: it resolves the
-// range, opens both manifests, and starts the merged change stream. On any error the
+// range and starts the merged change stream, with each added/deleted entry's missing
+// side qualified from that side's recorded coverage. On any error the
 // resolved states and manifest cursors are closed; on success ownership of the change
 // cursor (and thus the manifest cursors) and the resolved states passes to the caller.
 func (s *Service) openCompare(ctx context.Context, req Request) (*state.ResolvedState, *state.ResolvedState, compare.ChangeCursor, error) {
@@ -226,19 +227,8 @@ func (s *Service) openCompare(ctx context.Context, req Request) (*state.Resolved
 		}
 	}()
 
-	lc, err := left.Manifest(ctx)
+	cur, err := state.OpenComparison(ctx, left, right, compare.Options{DetectRenames: req.DetectRenames, PathFilters: req.PathFilters})
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	rc, err := right.Manifest(ctx)
-	if err != nil {
-		_ = lc.Close()
-		return nil, nil, nil, err
-	}
-	cur, err := compare.CompareStream(lc, rc, compare.Options{DetectRenames: req.DetectRenames, PathFilters: req.PathFilters})
-	if err != nil {
-		_ = lc.Close()
-		_ = rc.Close()
 		return nil, nil, nil, err
 	}
 	transferred = true
