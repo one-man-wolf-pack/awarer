@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/one-man-wolf-pack/awarer/compare/v0.6.0...v0.6.1) (2026-11-04)
+
+
+### Documentation
+
+* **agents:** update awa evidence guidance for v0.6.0 ([33649f6](https://github.com/one-man-wolf-pack/awarer/commit/33649f654749da3ac4c4d88da2383208afa607ec))
+
 ## [0.6.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.5.0...v0.6.0) (2026-10-31)
 
 
