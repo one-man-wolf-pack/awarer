@@ -88,6 +88,27 @@ project's run with `--root <path>`.
 never loads project configuration, so it keeps working when the tree has moved on
 or a config file is malformed.
 
+## Filter stored output, not the live run
+
+The run id and exit are in the footer `awa run` writes to stderr. Filtering both
+live streams — `awa run -- <command> 2>&1 | grep <pattern>`, or `2>&1 | tail` —
+can drop that footer. Any pipe, with or without `2>&1`, normally leaves the
+shell's status for the pipeline as the last command's: the filter's, not awa's
+or the wrapped command's. That is shell behavior, and `pipefail` is not
+available in every shell. Keep the result first, then filter the stored copy:
+
+```text
+awa run --record -- <command>              # unfiltered; note run id and exit
+awa run show <run-id>                      # metadata: the stored exit
+awa run show <run-id> --grep "<pattern>"   # matching captured lines
+```
+
+A successful `run show` means the record was read, matches or not; the stored
+command's result is its `exit:` line (`data.execution.exit` in `--json`). Lost
+an id? Find the execution again with `awa run log --command "<text>"`.
+Recovering an id does not recover output that was truncated, never captured,
+or has expired.
+
 ## What the evidence does and does not prove
 
 Stored output is evidence of what that execution printed at that time. It is not

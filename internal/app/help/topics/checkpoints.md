@@ -44,6 +44,27 @@ Records made before and after such a change are not equivalent evidence. The
 keys and their defaults are in
 [awa help config](../reference/configuration.md).
 
+## Keeping and recovering the id
+
+Keep the id when you create the checkpoint. For a script, the JSON result
+carries it as `data.id` (full) and `data.short_id`:
+
+```text
+awa checkpoint -m "<specific-checkpoint-message>" --json
+```
+
+To recover an earlier id, list checkpoints and pick by message and time; then use
+the id, never the message, as the address:
+
+```text
+awa log -n 5          # newest first: short id, message, time
+awa log -n 5 --json   # data.checkpoints[].id and .message
+```
+
+Ids are local to this project's `.awa/` store. `latest` names whichever
+checkpoint is newest, so another agent's checkpoint moves it; an id you kept
+does not move.
+
 ## Listing
 
 ```text

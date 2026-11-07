@@ -101,6 +101,13 @@ is `["CI", "NODE_ENV"]`; add what your commands actually depend on:
 env_allowlist = ["PYTHONPATH", "MY_TOOL_MODE"]
 ```
 
+Setting a variable for one invocation does not bypass this: with
+`NAME=value awa run -- <command>`, an unlisted `NAME` is dropped without a
+message. `awa config effective` shows what the child gets
+(`effective_env_allowlist`, `injected_env`). Adding a name is a project policy
+change. Do not move a value onto the wrapped command line instead: argv is
+stored verbatim.
+
 Some families are deliberately never in the baseline, because inheriting them by
 default would be wrong for most projects:
 

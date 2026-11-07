@@ -139,6 +139,31 @@ awa changes run:<id>:before..run:<id>:after
 `<id>` is the run id the record printed. A recorded run always executes and never
 becomes a reusable hit — that is the point of it.
 
+## Repeated attempts
+
+When the question is whether a check is stable, or which attempt failed, make
+each attempt its own recorded run. In POSIX `sh`, for example:
+
+```sh
+for i in 1 2 3; do
+  awa run --record -- <command>
+  echo "attempt $i: exit $?"
+done
+```
+
+Each attempt executes, prints its own run id and exit, and stays individually
+readable:
+
+```text
+awa run log --command "<text>"   # one row per attempt, each with its exit
+awa run show <run-id>            # that attempt's metadata
+```
+
+The loop's own exit is its last command's (`echo` here); a wrapper script may
+succeed while an inner attempt failed. Judge each attempt by its own record.
+awa does not group these runs, and an ordinary command does not need a loop
+or a wrapper.
+
 ## Experiments with temporary inputs
 
 A run keeps the command, exit status, and captured output, and the hash of each
