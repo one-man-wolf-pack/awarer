@@ -214,8 +214,8 @@ func (o EffectObservation) effectDisplay() string {
 
 // EffectOutcome is the result of the post-run effect guard's pre/post comparison of
 // the watched generated-output roots. It mirrors MutationOutcome for the input
-// scope: it says whether the command changed the watched state, left it unchanged,
-// or could not observe it.
+// scope: it says whether the watched state changed during the run, stayed unchanged,
+// or could not be observed. Neither outcome names a writer.
 type EffectOutcome int
 
 const (
@@ -226,8 +226,8 @@ const (
 	// EffectGuardUnchanged means the post-run watched state equals the pre-run state.
 	// Safe for reuse.
 	EffectGuardUnchanged
-	// EffectGuardChanged means the command changed the watched generated-output state
-	// between the pre- and post-run observations, so its result cannot be replayed.
+	// EffectGuardChanged means the watched generated-output state changed between the
+	// pre- and post-run observations, so the run's result cannot be replayed.
 	EffectGuardChanged
 	// EffectGuardUnavailable means the watched state could not be observed safely, so
 	// it is unknown and must fail closed.
@@ -290,7 +290,7 @@ func NewEffectGuardStatus(o EffectOutcome) (EffectGuardStatus, error) {
 // Outcome returns the underlying outcome.
 func (g EffectGuardStatus) Outcome() EffectOutcome { return g.outcome }
 
-// Changed reports whether the command changed the watched generated-output state.
+// Changed reports whether the watched generated-output state changed during the run.
 func (g EffectGuardStatus) Changed() bool { return g.outcome == EffectGuardChanged }
 
 // Unavailable reports whether the watched state could not be observed.

@@ -1033,10 +1033,17 @@ func TestRunReservedSubcommandVsCommand(t *testing.T) {
 	}
 }
 
-// mutationWarned reports whether run's human output warned that the command changed
-// observed state and was not cached for replay.
+// mutationWarned reports whether run's human output warned that observed state changed
+// during the run and that it was not cached for replay.
 func mutationWarned(stderr string) bool {
-	return strings.Contains(stderr, "changed observed state")
+	return strings.Contains(stderr, "observed state changed during this run")
+}
+
+// mutationAttributed reports whether run's human output claims the run or command
+// wrote the observed change. Two observations bound a window; they do not name a
+// writer, so this must stay false even when the wrapped command is the writer.
+func mutationAttributed(stderr string) bool {
+	return strings.Contains(stderr, "this run changed") || strings.Contains(stderr, "command changed")
 }
 
 func TestRunLsShowsReusableEntry(t *testing.T) {
@@ -1086,6 +1093,9 @@ func TestRunFixerMutationIsNotReusable(t *testing.T) {
 	}
 	if !mutationWarned(stderr) {
 		t.Errorf("mutating fixer run did not warn about observed state:\n%s", stderr)
+	}
+	if mutationAttributed(stderr) {
+		t.Errorf("mutation warning claims a writer the observations cannot identify:\n%s", stderr)
 	}
 	if isHit(stderr) {
 		t.Error("mutating run must not be a hit")

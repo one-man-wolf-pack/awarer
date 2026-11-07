@@ -16,7 +16,7 @@ observed before/after state around the run — as durable history.
 ```text
 awa run --record --display tail:200 -- ansible-playbook site.yml
 awa run show --last --tail 500                 # its captured output
-awa changes run:<id>:before..run:<id>:after    # what the command changed
+awa changes run:<id>:before..run:<id>:after    # what changed while it ran
 awa run log                                    # every recorded run
 awa log --all                                  # full timeline: checkpoints
                                                # plus recorded runs

@@ -128,7 +128,8 @@ awa gc --committed --dry-run
 ## Steps with side effects
 
 A command that deploys, migrates, formats, or otherwise changes the worktree must
-not be replayed from a cache. Record it instead, then inspect what it did:
+not be replayed from a cache. Record it instead, then inspect what observed state
+changed while it ran (the comparison does not name the writer):
 
 ```text
 awa run --record -- <command>

@@ -646,7 +646,7 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 	// it there.
 	if !sum.Reusable && sum.PrePostCompareAvailable() {
 		if sum.Mutated {
-			w.Diagnostic("  warning:  this run changed observed state; its result is not replayable")
+			w.Diagnostic("  warning:  observed state changed during this run; its result is not replayable")
 		}
 		w.Diagnostic("  compare:  awa changes " + prePostCompareRef(sum.RunID.Short()))
 	}
@@ -1401,8 +1401,8 @@ type runRunDoc struct {
 	Recorded bool   `json:"recorded"`
 	Reuse    string `json:"reuse,omitempty"`
 	// Mutation is the stable machine enum for the run mutation guard's outcome
-	// (unobserved, unchanged, changed, scan-failed): whether the command changed
-	// observed project state between the pre-run and post-run scans, left it
+	// (unobserved, unchanged, changed, scan-failed): whether observed project state
+	// changed between the pre-run and post-run scans (writer not identified), stayed
 	// unchanged, or could not be observed. A hit executes nothing, so it is
 	// "unobserved". A changed run is never cacheable (cache.reason is "mutated-state").
 	Mutation string `json:"mutation"`

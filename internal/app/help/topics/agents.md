@@ -41,7 +41,7 @@ awa run --record --stdin null --display tail:200 -- <command>
 awa run log --command "<text>"   # earlier executions, newest first
 awa run show <run-id>            # metadata only: exit, reuse, byte counts
 awa run show <run-id> --tail 500 # captured output; or --stdout, --stderr
-awa changes run:<run-id>:before..run:<run-id>:after   # what it changed
+awa changes run:<run-id>:before..run:<run-id>:after   # what changed while it ran
 ```
 
 `--stdin null` is only for a command that reads no input; drop it otherwise.
@@ -50,11 +50,11 @@ non-reusable or record-only run is still evidence you can read.
 
 `--record` always executes and never becomes a reusable hit. Use it for fresh
 results and side-effecting work: builds, generators, formatters, migrations,
-deployments. Its before/after observation shows which observed paths the
-command changed; without the wrapper awa sees drift but not its cause. A check
-whose build directory neither affects its result nor is needed after a replay
-may instead use an exact [validation policy](validation.md), which replays the
-result only.
+deployments. Its before/after observation shows which observed paths changed
+while it ran, not who wrote them; without the wrapper awa sees drift but no run
+window. A check whose build directory neither affects its result nor is needed
+after a replay may instead use an exact [validation policy](validation.md),
+which replays the result only.
 
 A copyable paragraph for a project's agent instructions:
 

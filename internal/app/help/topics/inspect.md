@@ -109,7 +109,7 @@ Captured stdout and stderr are stored verbatim and are never redacted, so a
 command that printed a secret stored that secret. See
 [awa help privacy](privacy.md).
 
-## What a run changed
+## What changed during a run
 
 Every stored run — a record-only one, an ordinary cached one, a failed one — has
 an observed state before and after it, usable as state references:
@@ -119,12 +119,14 @@ awa changes run:<id>:before..run:<id>:after
 awa diff run:<id>:before..run:<id>:after
 ```
 
-That is the honest way to answer "what did that command actually do", and it is
-the standard follow-up after a record-only run. A run observation records each
-observed file's hash, not its bytes, so `diff` over run references reports a
-regular-file change as hash-only rather than inventing content, and cannot show
-a temporary input after it is gone. Excluded and protected paths, `.awa/`
-included, are not observed at all. To keep an experiment's input readable, see
+That answers "what observed state changed while it ran", the standard follow-up
+after a record-only run. It does not name the writer: an edit made elsewhere
+during the run shows up the same way, and a write undone before the run ended
+or outside the observed scope does not show up at all. A run observation
+records each observed file's hash, not its bytes, so `diff` over run references
+reports a regular-file change as hash-only rather than inventing content, and
+cannot show a temporary input after it is gone. Excluded and protected paths,
+`.awa/` included, are not observed at all. To keep an experiment's input readable, see
 [awa help agents](agents.md).
 
 ## Delete stored runs

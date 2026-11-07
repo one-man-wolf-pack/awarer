@@ -52,6 +52,12 @@ minus what a matched validation policy waives — becomes reusable. The cache
 prefers a false miss (re-run unnecessarily) over a false hit (skip work that
 mattered).
 
+The before/after observations show that observed state changed during the
+run, not which process wrote it: an edit made elsewhere while the command runs
+produces the same verdict, and a watched root does not name its writer. Unchanged
+endpoints do not rule out a write that was undone or happened outside the
+observed scope.
+
 ## Effect observation
 
 `awa run` also watches generated-output roots with a bounded stat signature:
@@ -131,7 +137,7 @@ The observed state no longer matches what was recorded:
 
 ```text
 input-tree-differs        the input tree changed (the only one with a path sample)
-mutated-state             the command changed observed state
+mutated-state             observed state changed during the run
 effect-state-differs      watched generated output changed or was deleted
 effect-state-unavailable  a watched root could not be observed safely
 fast-trust-mode           observed under fast trust; recorded, never reusable

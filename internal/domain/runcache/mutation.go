@@ -15,9 +15,9 @@ const (
 	// ReasonInputTreeDiffers: the observed input tree no longer matches the recorded
 	// one — the command's inputs changed, so its recorded result no longer applies.
 	ReasonInputTreeDiffers MismatchReason = "input-tree-differs"
-	// ReasonMutatedState: the command changed observed state, so its result cannot be
-	// replayed. Reported by the live mutation guard and persisted on a non-reusable
-	// recorded run.
+	// ReasonMutatedState: observed state changed during the run's execution window, so
+	// its result cannot be replayed. Two observations do not name the writer. Reported
+	// by the live mutation guard and persisted on a non-reusable recorded run.
 	ReasonMutatedState MismatchReason = "mutated-state"
 	// ReasonEffectStateDiffers: the project-local generated-output state awa watches
 	// (build, dist, target, node_modules, ...) no longer matches — either the command
@@ -208,7 +208,8 @@ const (
 	MutationUnobserved MutationOutcome = iota
 	// MutationUnchanged means the post-run observed state equals the pre-run state.
 	MutationUnchanged
-	// MutationChanged means the command changed observed state between the scans.
+	// MutationChanged means observed state changed between the pre- and post-run scans;
+	// it does not identify which process wrote the change.
 	MutationChanged
 	// MutationScanFailed means the post-run scan could not be computed; the state is
 	// unknown and must fail closed.
@@ -271,7 +272,7 @@ func NewMutationStatus(o MutationOutcome) (MutationStatus, error) {
 // Outcome returns the underlying outcome.
 func (m MutationStatus) Outcome() MutationOutcome { return m.outcome }
 
-// Changed reports whether the command changed observed state.
+// Changed reports whether observed state changed during the run.
 func (m MutationStatus) Changed() bool { return m.outcome == MutationChanged }
 
 // ScanFailed reports whether the post-run observation could not be computed.
