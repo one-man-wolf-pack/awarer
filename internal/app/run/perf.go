@@ -52,7 +52,11 @@ func newInputReport(durationMs int64, files int) inputReport {
 // duration something actually took, not an arithmetic result. The second pass is the
 // one more likely to be named, since a command that generates files leaves it a larger
 // tree than the baseline saw.
-func runPerformance(inputs []inputReport, reports ...runcache.EffectReport) []perfdiag.Diagnostic {
+//
+// policy is the invocation's selected execution policy. It is the one place advice is
+// matched to the request, so the human and JSON projections render the same decision
+// rather than each guessing whether a hint still applies.
+func runPerformance(policy Policy, inputs []inputReport, reports ...runcache.EffectReport) []perfdiag.Diagnostic {
 	// The input note is selected first and keeps its seat. Ranking the whole union by
 	// duration would let two slower watched roots evict it, and a scan that crossed the
 	// threshold must be exposed — it is the one note that explains a cost the user
@@ -69,7 +73,7 @@ func runPerformance(inputs []inputReport, reports ...runcache.EffectReport) []pe
 		}
 	}
 	reserved := perfdiag.Top(inputDiags, 1)
-	effects := perfdiag.Top(effectDiagnostics(reports...), maxPerfDiagnostics-len(reserved))
+	effects := perfdiag.Top(effectDiagnostics(policy, reports...), maxPerfDiagnostics-len(reserved))
 	// A final pass over a set already within the bound, so it only restores the
 	// slowest-first presentation order the reservation stepped around.
 	return perfdiag.Top(append(reserved, effects...), maxPerfDiagnostics)
@@ -104,7 +108,12 @@ func inputDiagnostic(r inputReport) (perfdiag.Diagnostic, bool) {
 // only the crossed threshold is reported); a fully-observed root is named only when it is
 // both large and slow, so a normal small project stays quiet. Deduplication and the
 // per-invocation bound are applied by runPerformance over the whole union, not here.
-func effectDiagnostics(reports ...runcache.EffectReport) []perfdiag.Diagnostic {
+//
+// The record-mode hint is advice to select `--record`, so an invocation that already
+// selected it gets the diagnostic without the hint: the measured cost stays, and only
+// the inapplicable suggestion is absent. The decision reads the request's own policy,
+// never a stored record-only reason, which other policies produce too.
+func effectDiagnostics(policy Policy, reports ...runcache.EffectReport) []perfdiag.Diagnostic {
 	var diags []perfdiag.Diagnostic
 	for _, report := range reports {
 		ev, ok := effectEvidence(report)
@@ -113,9 +122,13 @@ func effectDiagnostics(reports ...runcache.EffectReport) []perfdiag.Diagnostic {
 		}
 		// Build the hint only once a diagnostic is actually being formed, so the common
 		// quiet path (no root crossed a threshold) allocates nothing.
-		hint, _ := perfdiag.NewHint(perfdiag.LargeEffectRootHintKind, perfdiag.RecordModeHintArgv())
+		var hint *perfdiag.Hint
+		if !policy.Record {
+			h, _ := perfdiag.NewHint(perfdiag.LargeEffectRootHintKind, perfdiag.RecordModeHintArgv())
+			hint = &h
+		}
 		if d, ok := perfdiag.NewDiagnostic(perfdiag.CauseLargeEffectRoot, report.DurationMs(),
-			perfdiag.StageRunEffectObservation, ev, &hint); ok {
+			perfdiag.StageRunEffectObservation, ev, hint); ok {
 			diags = append(diags, d)
 		}
 	}

@@ -312,3 +312,19 @@ func TestInputRehashJSONCarriesTheTypedTokens(t *testing.T) {
 		t.Errorf("json = %s, want an exact file_count", raw)
 	}
 }
+
+// TestLargeEffectRootWithoutRecordHintKeepsOnlyTheRootReview: a large effect root whose
+// record-mode hint was withheld (an explicit --record run) still tells the reader the
+// review that applies in any mode, and never advises selecting --record again.
+func TestLargeEffectRootWithoutRecordHintKeepsOnlyTheRootReview(t *testing.T) {
+	line, ok := performanceHintLine(mustExactDiag(t, "target", 60_000, 2500))
+	if !ok {
+		t.Fatal("a large effect root must keep its effect-root review guidance")
+	}
+	if !strings.Contains(line, "review [run] effect roots") {
+		t.Errorf("hint = %q, want the effect-root review", line)
+	}
+	if strings.Contains(line, "--record") {
+		t.Errorf("hint = %q advises record mode without a record-mode hint", line)
+	}
+}

@@ -234,7 +234,7 @@ func (s *Service) Ls(ctx context.Context, req LsRequest) (LsResult, error) {
 			res.NearMisses = res.NearMisses[:maxCandidates]
 		}
 	}
-	res.Performance = runPerformance([]inputReport{scanCache.slowest()}, effects.reports...)
+	res.Performance = runPerformance(Policy{}, []inputReport{scanCache.slowest()}, effects.reports...)
 	return res, nil
 }
 

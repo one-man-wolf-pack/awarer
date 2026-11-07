@@ -86,14 +86,17 @@ stored result still matches the worktree means reading the worktree.
 In JSON the same facts appear under `data.diagnostics.performance[]` with a
 stable `code`, `duration_ms`, the `component` it is attributed to, bounded
 `evidence`, and a typed `hint` — `record-mode` for the first cause,
-`review-run-scope` for the second — carrying the tokenized argv to run.
+`review-run-scope` for the second — carrying the tokenized argv to run. An
+explicit `--record` run already chose record mode, so its note omits the
+`record-mode` hint and keeps every measured fact.
 
 This is information, not a misconfiguration to fix by re-running, and neither
 cause has a flag that turns it off. The safe responses differ by cause. For a
-large effect root: use `awa run --record` where you only want evidence, or review
-the configured `[run]` effect roots as a deliberate policy decision. For the
-input rehash: review what the input scope covers (`awa help ignores`) and narrow
-it only where it is genuinely wider than the command.
+large effect root: use `awa run --record` where you only want evidence (it still
+observes the roots, so it does not remove the cost), or review the configured
+`[run]` effect roots as a deliberate policy decision. For the input rehash:
+review what the input scope covers (`awa help ignores`) and narrow it only where
+it is genuinely wider than the command.
 
 Both reviews carry the same warning, and it is the important part. Dropping a
 root from observation, or excluding a file the command actually reads, is not a

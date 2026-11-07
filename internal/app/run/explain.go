@@ -336,7 +336,7 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
 		Warnings:    v.Warnings,
-		Performance: runPerformance([]inputReport{kc.InputReport}, kc.EffectReport),
+		Performance: runPerformance(req.Policy, []inputReport{kc.InputReport}, kc.EffectReport),
 	}
 
 	// Only a plain "no entry for key" miss needs candidate discovery to explain why.
@@ -461,7 +461,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		Differences: cmp,
 		Candidates:  []RunReuseCandidate{cand},
 		Warnings:    append(warnings, v.Warnings...),
-		Performance: runPerformance([]inputReport{kc.InputReport}, kc.EffectReport),
+		Performance: runPerformance(req.Policy, []inputReport{kc.InputReport}, kc.EffectReport),
 	}
 
 	// A plain miss (no entry for the current key) is explained by the requested run's

@@ -12,7 +12,7 @@ func TestEffectDiagnosticsOverBudgetIsDurationIndependent(t *testing.T) {
 	// when the walk-until-fail was fast, because it defeated reuse and cost the budget.
 	// well below the interactive threshold — a budget overrun is named regardless.
 	report := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(5)
-	diags := effectDiagnostics(report)
+	diags := effectDiagnostics(Policy{}, report)
 	if len(diags) != 1 {
 		t.Fatalf("len(diags) = %d, want 1", len(diags))
 	}
@@ -50,7 +50,7 @@ func TestEffectDiagnosticsLargeRootNeedsBothLargeAndSlow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			diags := effectDiagnostics(tc.report)
+			diags := effectDiagnostics(Policy{}, tc.report)
 			if len(diags) != tc.wantLen {
 				t.Fatalf("len(diags) = %d, want %d", len(diags), tc.wantLen)
 			}
@@ -66,10 +66,10 @@ func TestEffectDiagnosticsLargeRootNeedsBothLargeAndSlow(t *testing.T) {
 func TestEffectDiagnosticsYieldsAtMostOne(t *testing.T) {
 	// One report yields at most one diagnostic; an empty report yields none.
 	report := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(6800)
-	if diags := effectDiagnostics(report); len(diags) != 1 {
+	if diags := effectDiagnostics(Policy{}, report); len(diags) != 1 {
 		t.Fatalf("len(diags) = %d, want 1", len(diags))
 	}
-	if diags := effectDiagnostics(runcache.EffectReport{}.WithDuration(6800)); len(diags) != 0 {
+	if diags := effectDiagnostics(Policy{}, runcache.EffectReport{}.WithDuration(6800)); len(diags) != 0 {
 		t.Fatalf("empty report len(diags) = %d, want 0", len(diags))
 	}
 }
@@ -134,7 +134,7 @@ func TestRunPerformanceBoundsAllCausesTogether(t *testing.T) {
 	first := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(slow)
 	second := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "dist", Limit: 100_000}).WithDuration(slow + 1)
 
-	diags := runPerformance([]inputReport{newInputReport(slow+2, 900)}, first, second)
+	diags := runPerformance(Policy{}, []inputReport{newInputReport(slow+2, 900)}, first, second)
 	if len(diags) != maxPerfDiagnostics {
 		t.Fatalf("len(diags) = %d, want the per-invocation bound of %d", len(diags), maxPerfDiagnostics)
 	}
@@ -145,7 +145,7 @@ func TestRunPerformanceBoundsAllCausesTogether(t *testing.T) {
 }
 
 func TestRunPerformanceIsSilentForAFastScan(t *testing.T) {
-	if diags := runPerformance([]inputReport{newInputReport(perfdiag.InteractiveThresholdMs-1, 50_000)}); len(diags) != 0 {
+	if diags := runPerformance(Policy{}, []inputReport{newInputReport(perfdiag.InteractiveThresholdMs-1, 50_000)}); len(diags) != 0 {
 		t.Errorf("a fast scan produced %d notes, want silence whatever the file count", len(diags))
 	}
 }
@@ -158,7 +158,7 @@ func TestRunPerformanceKeepsTheSlowerOfTwoInputPasses(t *testing.T) {
 	fast := perfdiag.InteractiveThresholdMs
 	slow := perfdiag.InteractiveThresholdMs * 3
 
-	diags := runPerformance([]inputReport{newInputReport(fast, 100), newInputReport(slow, 900)})
+	diags := runPerformance(Policy{}, []inputReport{newInputReport(fast, 100), newInputReport(slow, 900)})
 	if len(diags) != 1 {
 		t.Fatalf("len(diags) = %d, want 1: two passes of one stage are one note", len(diags))
 	}
@@ -179,7 +179,7 @@ func TestRunPerformanceNeverEvictsASlowInputScan(t *testing.T) {
 	first := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(input * 10)
 	second := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "dist", Limit: 100_000}).WithDuration(input * 20)
 
-	diags := runPerformance([]inputReport{newInputReport(input, 700)}, first, second)
+	diags := runPerformance(Policy{}, []inputReport{newInputReport(input, 700)}, first, second)
 	if len(diags) != maxPerfDiagnostics {
 		t.Fatalf("len(diags) = %d, want %d", len(diags), maxPerfDiagnostics)
 	}
@@ -206,7 +206,7 @@ func TestRunPerformanceReservesNothingForAQuietScan(t *testing.T) {
 	first := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(slow)
 	second := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "dist", Limit: 100_000}).WithDuration(slow)
 
-	diags := runPerformance([]inputReport{newInputReport(fast, 700)}, first, second)
+	diags := runPerformance(Policy{}, []inputReport{newInputReport(fast, 700)}, first, second)
 	if len(diags) != maxPerfDiagnostics {
 		t.Fatalf("len(diags) = %d, want the full %d effect notes", len(diags), maxPerfDiagnostics)
 	}
@@ -214,5 +214,53 @@ func TestRunPerformanceReservesNothingForAQuietScan(t *testing.T) {
 		if d.Cause() == perfdiag.CauseFullInputRehash {
 			t.Error("a scan below the threshold must produce no note at all")
 		}
+	}
+}
+
+// TestRunPerformanceExplicitRecordOmitsOnlyTheRecordModeHint pins the selected-mode
+// decision: under explicit record the same reports yield the same bounded notes —
+// order, causes, durations and evidence — and only the advice to select record mode
+// again disappears. The input rehash keeps its review-run-scope hint, because that
+// advice does not depend on the mode.
+func TestRunPerformanceExplicitRecordOmitsOnlyTheRecordModeHint(t *testing.T) {
+	slow := perfdiag.InteractiveThresholdMs + 500
+	inputs := []inputReport{newInputReport(slow, 900)}
+	first := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "target", Limit: 100_000}).WithDuration(slow + 1)
+	second := runcache.OverBudgetReport(runcache.OverBudgetFact{Path: "dist", Limit: 100_000}).WithDuration(slow + 2)
+
+	plain := runPerformance(Policy{}, inputs, first, second)
+	record := runPerformance(Policy{Record: true}, inputs, first, second)
+	if len(plain) != maxPerfDiagnostics || len(record) != len(plain) {
+		t.Fatalf("len plain=%d record=%d, want both %d", len(plain), len(record), maxPerfDiagnostics)
+	}
+	for i := range plain {
+		p, r := plain[i], record[i]
+		if p.Cause() != r.Cause() || p.Stage() != r.Stage() || p.DurationMs() != r.DurationMs() || p.Evidence() != r.Evidence() {
+			t.Errorf("note %d differs beyond its hint: plain=%+v record=%+v", i, p, r)
+		}
+		ph, pok := p.Hint()
+		rh, rok := r.Hint()
+		switch p.Cause() {
+		case perfdiag.CauseLargeEffectRoot:
+			if !pok || ph.Kind() != perfdiag.LargeEffectRootHintKind {
+				t.Errorf("plain large-effect-root note %d lost its record-mode hint", i)
+			}
+			if rok {
+				t.Errorf("explicit record note %d still advises %s", i, rh.Kind())
+			}
+		case perfdiag.CauseFullInputRehash:
+			if !pok || !rok || ph.Kind() != perfdiag.ReviewRunScopeHintKind || rh.Kind() != ph.Kind() {
+				t.Errorf("input rehash hint changed with the mode: plain=%v/%v record=%v/%v", pok, ph.Kind(), rok, rh.Kind())
+			}
+		}
+	}
+}
+
+// TestRunPerformanceExplicitRecordStaysQuietBelowThreshold: record mode changes advice,
+// not when a note is due.
+func TestRunPerformanceExplicitRecordStaysQuietBelowThreshold(t *testing.T) {
+	quiet := runcache.EffectReport{}.WithDuration(perfdiag.InteractiveThresholdMs * 3)
+	if diags := runPerformance(Policy{Record: true}, []inputReport{newInputReport(perfdiag.InteractiveThresholdMs-1, 50_000)}, quiet); len(diags) != 0 {
+		t.Errorf("explicit record produced %d notes for quiet observations, want none", len(diags))
 	}
 }

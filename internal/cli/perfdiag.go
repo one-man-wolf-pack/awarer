@@ -153,9 +153,17 @@ func performanceNoteLine(d perfdiag.Diagnostic) string {
 // wording is fixed per hint kind (the JSON carries the machine argv); it deliberately
 // leads with the record-mode workflow and only mentions reviewing effect roots as an
 // explicit policy decision, never a casual "exclude target".
+//
+// Whether the record-mode hint applies is decided once, where the diagnostic is built
+// from the selected request, so this line and the JSON agree. A large effect root
+// without it (an explicit `--record` run) keeps only the effect-root review, which
+// applies whatever the mode: record mode still pays for observation.
 func performanceHintLine(d perfdiag.Diagnostic) (string, bool) {
 	h, ok := d.Hint()
 	if !ok {
+		if d.Cause() == perfdiag.CauseLargeEffectRoot {
+			return "review [run] effect roots as a deliberate policy decision; record mode still observes them", true
+		}
 		return "", false
 	}
 	switch h.Kind() {

@@ -72,8 +72,8 @@ A note appears only for a cause awa can name, past the shared interactive
 threshold, at most two per invocation. Neither cause is a misconfiguration or
 can be disabled:
 
-- `large-effect-root` (`run.effect-observation`, hint `record-mode`) — a watched
-  generated-output root dominated state observation.
+- `large-effect-root` (`run.effect-observation`, hint `record-mode`, absent
+  under `--record`) — a watched generated-output root dominated state observation.
 - `full-input-rehash` (`run.input-observation`, hint `review-run-scope`) — reading
   the inputs was slow enough to notice; a hit pays it too.
 

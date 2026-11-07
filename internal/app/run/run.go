@@ -394,7 +394,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 				Reuse:        entry.Reuse,
 				ExitCode:     entry.Exit.Code,
 				Execution:    withAuthorization(executionFromEntry(entry), kc.Authorization),
-				Performance:  runPerformance([]inputReport{kc.InputReport}, kc.EffectReport),
+				Performance:  runPerformance(req.Policy, []inputReport{kc.InputReport}, kc.EffectReport),
 				effectReport: kc.EffectReport,
 			}, nil
 		}
@@ -584,7 +584,7 @@ func (s *Service) execute(ctx context.Context, req Request, kc keyContext) (Resu
 		Reuse:           reuse,
 		RunID:           runID,
 		Execution:       exec,
-		Performance:     runPerformance([]inputReport{kc.InputReport, afterInput}, kc.EffectReport, effectPost),
+		Performance:     runPerformance(req.Policy, []inputReport{kc.InputReport, afterInput}, kc.EffectReport, effectPost),
 		EffectDiagnosis: effectDiagnosisFrom(reuse, effectPost),
 		effectReport:    kc.EffectReport,
 	}, nil
