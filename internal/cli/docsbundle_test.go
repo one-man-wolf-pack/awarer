@@ -567,6 +567,16 @@ func joinBundlePath(dir, target string) string {
 // fencedCommandRe matches an "awa <token>" invocation at the start of a line.
 var fencedCommandRe = regexp.MustCompile(`(?m)^awa ([^\s]+)(?:\s+([^\s]+))?`)
 
+// exampleCommandName resolves the first word after "awa" on an example line to the
+// command it runs: the root version shortcut runs "version"; anything else is the
+// command word itself.
+func exampleCommandName(word string) string {
+	if word == rootVersionShortcut {
+		return "version"
+	}
+	return word
+}
+
 // TestExportedExamplesNameRealCommands proves requirement 8's example half: every
 // "awa ..." line inside a fenced block names a command the registry implements,
 // and where that command owns subcommands, a following word names a real one. A
@@ -589,7 +599,7 @@ func TestExportedExamplesNameRealCommands(t *testing.T) {
 				continue
 			}
 			checked++
-			subs, ok := commands[m[1]]
+			subs, ok := commands[exampleCommandName(m[1])]
 			if !ok {
 				t.Errorf("document %q shows %q, but %q is not a command", d.Slug(), line, m[1])
 				continue
@@ -638,17 +648,18 @@ func TestExportedExampleFlagsAreDocumented(t *testing.T) {
 			if m == nil {
 				continue
 			}
-			accepted, ok := commands[m[1]]
+			name := exampleCommandName(m[1])
+			accepted, ok := commands[name]
 			if !ok {
 				continue // TestExportedExamplesNameRealCommands owns this failure
 			}
-			label := "awa " + m[1]
+			label := "awa " + name
 			if sub, ok := subcommands[m[1]+" "+m[2]]; ok && isPlainWord(m[2]) {
 				accepted, label = sub, label+" "+m[2]
 			}
 			for _, tok := range exampleFlagTokens(line) {
 				checked++
-				if globals[tok] || accepted[tok] {
+				if globals[tok] || accepted[tok] || (tok == rootVersionShortcut && m[1] == rootVersionShortcut) {
 					continue
 				}
 				t.Errorf("document %q shows %q, but %q is not a documented flag of %q",

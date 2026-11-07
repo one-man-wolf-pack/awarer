@@ -38,7 +38,8 @@ both; one built from an extracted source tree has no VCS to read, so it reports
 neither and its human line shows no commit in the parentheses.
 
 `awa version` takes no global options other than `--json`: it never reads a
-project, a config file, or `.awa/`, so it answers the same way anywhere.
+project, a config file, or `.awa/`, so it answers the same way anywhere. Root
+`awa --version` is the same operation with the same output.
 
 ## Install with Homebrew
 

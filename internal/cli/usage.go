@@ -176,6 +176,7 @@ func (r *router) writeUsage(w *output.Writer) {
 	w.Line("")
 	w.Line("usage:")
 	w.Line("  awa [global options] <command> [arguments]")
+	w.Line("  awa --version [--json]")
 	w.Line("")
 	w.Line("commands:")
 	for _, c := range r.commands {

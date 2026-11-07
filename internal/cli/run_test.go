@@ -224,6 +224,28 @@ func TestRunPassesGlobalLookingFlagsToChildAfterTerminator(t *testing.T) {
 	}
 }
 
+// TestRunPassesVersionFlagToChildAfterTerminator proves root "--version" is not an awa
+// query once "--" has handed argv to the wrapped command: the child receives it
+// verbatim and awa prints no version of its own.
+func TestRunPassesVersionFlagToChildAfterTerminator(t *testing.T) {
+	if _, err := os.Stat("/bin/echo"); err != nil {
+		t.Skip("requires /bin/echo")
+	}
+	root := initProject(t)
+	_, awaVersion, _ := run("version")
+
+	code, stdout, stderr := run("run", "--root", root, "--cwd", root, "--", "/bin/echo", "child-arg", "--version")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "child-arg --version") {
+		t.Errorf("child stdout = %q, want the child's argv %q unchanged", stdout, "child-arg --version")
+	}
+	if strings.Contains(stdout, strings.TrimSpace(awaVersion)) {
+		t.Errorf("stdout = %q, want the child echo, not awa's version", stdout)
+	}
+}
+
 // TestRunCapabilityRejection verifies the run command rejects global options it
 // does not act on, via the central capability check.
 func TestRunCapabilityRejection(t *testing.T) {

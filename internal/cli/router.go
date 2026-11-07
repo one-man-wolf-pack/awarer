@@ -281,8 +281,8 @@ func newRouter() *router {
 			}},
 		{name: "version", summary: "print version and build information", run: runVersion, capabilities: []capability{capJSON},
 			help: commandHelp{
-				usage:    []string{"version [--json]"},
-				long:     "Print the awa version and build information.",
+				usage:    []string{"version [--json]", "--version [--json]"},
+				long:     "Print the awa version and build information. Root 'awa --version' is the same operation; combining it with another command is a usage error.",
 				examples: []string{"awa version"},
 				topic:    "install",
 			}},
@@ -421,7 +421,8 @@ func (r *router) lookup(name string) *command {
 	return nil
 }
 
-// runVersion handles "awa version". It acts only on --json (enforced centrally
+// runVersion handles "awa version" and its root "awa --version" shortcut, which the
+// parser routes here as the same command. It acts only on --json (enforced centrally
 // from the command's capabilities) and takes no positional arguments.
 func runVersion(w *output.Writer, inv invocation) error {
 	if len(inv.args) > 0 {

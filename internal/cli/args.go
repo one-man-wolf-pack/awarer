@@ -155,6 +155,11 @@ func (inv invocation) invCtx() context.Context {
 	return inv.ctx
 }
 
+// rootVersionShortcut is the root spelling that selects the version command. It is a
+// grammar exception, not a global option, so it lives beside parse rather than in the
+// capability catalog.
+const rootVersionShortcut = "--version"
+
 // parse splits argv into global options, a command, and command arguments.
 //
 // Recognized global flags are consumed wherever they appear, so both
@@ -192,6 +197,19 @@ func parse(argv []string) (invocation, error) {
 		}
 
 		name, value, hasValue := splitFlag(tok)
+		// Root "--version" is a grammar shortcut that selects the version command, not
+		// a global option: it is recognized only before a command is named, so after a
+		// command it stays that command's token ("awa status --version" is status's
+		// usage error) and after "--" it is never seen. Later tokens keep their normal
+		// parsing, so a second command or stray operand becomes a version argument the
+		// version handler rejects.
+		if name == rootVersionShortcut && inv.command == "" {
+			if err := noValue(name, hasValue); err != nil {
+				return invocation{}, err
+			}
+			inv.command = "version"
+			continue
+		}
 		consumed, err := applyFlag(&inv.options, name, value, hasValue, argv, &i)
 		if err != nil {
 			return invocation{}, err
