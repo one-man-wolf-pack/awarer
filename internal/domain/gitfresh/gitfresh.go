@@ -157,16 +157,18 @@ func Classify(in Input) Freshness {
 	}
 }
 
-// ReviewCoverage is the honesty note that awa's evidence is a checkpoint delta, not
-// the authoritative git review. It is a single closed concept — a type rather than a
-// bare string — so its token and wording live in one place and can be asserted in
-// tests and reused by every review surface.
+// ReviewCoverage is the honesty note that awa's evidence is the delta between the
+// selected observations, not the authoritative git review. The operands need not
+// include a checkpoint, so the wording stays range-neutral. It is a single closed
+// concept — a type rather than a bare string — so its token and wording live in one
+// place and can be asserted in tests and reused by every review surface.
 type ReviewCoverage struct{}
 
-// Token is the stable wire token for the coverage note.
+// Token is the stable wire token for the coverage note. It is kept for every
+// comparison and does not assert that the selected range contains a checkpoint.
 func (ReviewCoverage) Token() string { return "checkpoint-delta-only" }
 
 // Message is the human sentence the coverage note renders.
 func (ReviewCoverage) Message() string {
-	return "awa shows changes vs the checkpoint baseline; review the full git diff before acceptance"
+	return "awa shows only the delta between the selected observations, not a full git/worktree review; review the full git diff before acceptance"
 }

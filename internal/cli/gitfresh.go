@@ -137,8 +137,9 @@ func freshnessViewOf(f gitfresh.Freshness, baseline state.StateEndpoint, head gi
 }
 
 // reviewCoverageView is the machine projection of the review-coverage honesty note: an
-// awa delta is a checkpoint delta, not a whole-repo git review. It is always present in
-// the surfaces that carry it (a stable contract an agent can key off unconditionally).
+// awa delta covers only the selected observations, not a whole-repo git review. It is
+// always present in the surfaces that carry it (a stable contract an agent can key off
+// unconditionally).
 type reviewCoverageView struct {
 	Token   string `json:"token"`
 	Message string `json:"message"`

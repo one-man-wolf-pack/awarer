@@ -1,6 +1,9 @@
 package gitfresh
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func head(commit string) *GitHead {
 	return &GitHead{Commit: commit, ShortCommit: commit[:min(len(commit), 7)], Subject: "s"}
@@ -109,5 +112,10 @@ func TestReviewCoverageStable(t *testing.T) {
 	}
 	if rc.Message() == "" {
 		t.Error("ReviewCoverage.Message() is empty")
+	}
+	// One message serves every comparison range, including run-only ranges, so it
+	// must not claim a checkpoint baseline.
+	if strings.Contains(rc.Message(), "checkpoint") {
+		t.Errorf("ReviewCoverage.Message() = %q claims a checkpoint baseline", rc.Message())
 	}
 }

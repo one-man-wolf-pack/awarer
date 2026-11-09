@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"awarer/internal/domain/gitfresh"
 )
 
 // gitCmd runs a git command in dir, failing the test on error.
@@ -274,4 +277,97 @@ func TestChangesJSONCarriesFreshnessAndCoverage(t *testing.T) {
 	if !strings.Contains(jsonOut, `"scope"`) || !strings.Contains(jsonOut, `"ignored_paths_outside_evidence": true`) {
 		t.Errorf("changes JSON must carry the scope honesty fact:\n%s", jsonOut)
 	}
+}
+
+// TestCoverageNoteIsRangeNeutral: a run-before/after range with no checkpoint gets the
+// shared review-coverage note in human and JSON projections without claiming a
+// checkpoint baseline; a checkpoint range and status carry the same shared wording.
+func TestCoverageNoteIsRangeNeutral(t *testing.T) {
+	root := initProject(t)
+	note := "note: " + gitfresh.ReviewCoverage{}.Message()
+
+	code, stdout, stderr := run("run", "--json", "--root", root, "--cwd", root, "--", "true")
+	if code != int(ExitSuccess) {
+		t.Fatalf("run exit = %d, stderr = %q", code, stderr)
+	}
+	var runEnv struct {
+		Data struct {
+			Run struct {
+				ID string `json:"id"`
+			} `json:"run"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &runEnv); err != nil || runEnv.Data.Run.ID == "" {
+		t.Fatalf("run JSON has no run id (err %v):\n%s", err, stdout)
+	}
+	rng := "run:" + runEnv.Data.Run.ID + ":before..run:" + runEnv.Data.Run.ID + ":after"
+
+	code, stdout, stderr = run("changes", "--root", root, rng)
+	if code != int(ExitSuccess) {
+		t.Fatalf("changes %s exit = %d, stderr = %q", rng, code, stderr)
+	}
+	if !strings.Contains(stdout, "no changes") || !strings.Contains(stderr, note) {
+		t.Errorf("empty run range must carry the shared note:\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if strings.Contains(stderr, "checkpoint baseline") || strings.Contains(stdout, "note:") {
+		t.Errorf("run range claims a checkpoint baseline or puts the note on stdout:\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+
+	code, stdout, stderr = run("changes", "--root", root, "--name-only", rng)
+	if code != int(ExitSuccess) || stdout != "" {
+		t.Errorf("--name-only exit = %d, stdout must stay names only: %q (stderr %q)", code, stdout, stderr)
+	}
+
+	type coverageDoc struct {
+		Token   string `json:"token"`
+		Message string `json:"message"`
+	}
+	// Decode into a fresh value per surface so a missing field cannot pass on a
+	// previous surface's leftovers. Status nests its review projection under "review".
+	assertJSONCoverage := func(surface string, args ...string) {
+		t.Helper()
+		var doc struct {
+			Data struct {
+				ReviewCoverage *coverageDoc `json:"review_coverage"`
+				Review         struct {
+					ReviewCoverage *coverageDoc `json:"review_coverage"`
+				} `json:"review"`
+			} `json:"data"`
+		}
+		code, stdout, stderr := run(args...)
+		if code != int(ExitSuccess) {
+			t.Fatalf("%s exit = %d, stderr = %q", surface, code, stderr)
+		}
+		if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+			t.Fatalf("%s stdout is not pure JSON: %v\n%s", surface, err, stdout)
+		}
+		rc := doc.Data.ReviewCoverage
+		if args[0] == "status" {
+			rc = doc.Data.Review.ReviewCoverage
+		}
+		if rc == nil {
+			t.Fatalf("%s carries no review_coverage:\n%s", surface, stdout)
+		}
+		if rc.Token != "checkpoint-delta-only" || "note: "+rc.Message != note {
+			t.Errorf("%s review_coverage = %+v, want the shared token and message", surface, *rc)
+		}
+	}
+	assertJSONCoverage("changes --json run range", "changes", "--json", "--root", root, rng)
+	assertJSONCoverage("diff --json run range", "diff", "--json", "--root", root, rng)
+
+	// Control: an ordinary checkpoint range carries the same shared note.
+	if code, _, stderr := run("checkpoint", "--root", root, "-m", "baseline"); code != int(ExitSuccess) {
+		t.Fatalf("checkpoint exit = %d, stderr = %q", code, stderr)
+	}
+	code, stdout, stderr = run("changes", "--root", root)
+	if code != int(ExitSuccess) || !strings.Contains(stdout, "no changes") || !strings.Contains(stderr, note) {
+		t.Errorf("checkpoint range: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	}
+
+	// Status is the shared consumer: it closes with the same note and JSON fields.
+	code, stdout, stderr = run("status", "--root", root)
+	if code != int(ExitSuccess) || !strings.HasSuffix(strings.TrimRight(stderr, "\n"), note) || strings.Contains(stdout, note) {
+		t.Errorf("status must close stderr with the shared note: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	}
+	assertJSONCoverage("status --json", "status", "--json", "--root", root)
 }

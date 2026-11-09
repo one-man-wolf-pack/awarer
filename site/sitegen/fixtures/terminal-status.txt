@@ -19,4 +19,4 @@ next:
   awa run explain -- <command>
   awa log -n 5          # inspect recent checkpoints if this baseline is surprising
   awa gc --dry-run --json # store footprint and what cleanup would remove
-note: awa shows changes vs the checkpoint baseline; review the full git diff before acceptance
+note: awa shows only the delta between the selected observations, not a full git/worktree review; review the full git diff before acceptance

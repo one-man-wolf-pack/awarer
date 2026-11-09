@@ -273,10 +273,10 @@ func renderChanges(w *output.Writer, sr changes.StreamResult, filters []worktree
 }
 
 // emitReviewCoverage prints the review-coverage honesty note to stderr: an empty awa
-// delta means "no changes since this checkpoint", never "the whole worktree was
-// reviewed". It is placed exactly where a reviewer is most tempted to over-trust an
-// empty result. It goes to stderr as an advisory (matching the note contract) so
-// stdout stays a clean "no changes".
+// delta means "no changes between the selected observations", never "the whole
+// worktree was reviewed". It is placed exactly where a reviewer is most tempted to
+// over-trust an empty result. It goes to stderr as an advisory (matching the note
+// contract) so stdout stays a clean "no changes".
 func emitReviewCoverage(w *output.Writer) {
 	var rc gitfresh.ReviewCoverage
 	w.Diagnostic("note: " + rc.Message())
