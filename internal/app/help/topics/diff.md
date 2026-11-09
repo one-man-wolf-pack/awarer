@@ -20,9 +20,10 @@ awa changes <checkpoint-id>..now
 `<checkpoint-id>` is the immutable id `awa checkpoint` printed; any unambiguous
 leading portion of it works too.
 
-An empty changes/diff delta means only "no changes since that baseline" — never
-that the whole worktree is reviewed. Use the delta to verify a focused fix, then
-inspect the full current uncommitted worktree before final acceptance.
+An empty changes/diff delta means only "no changes between the two selected
+observations" — never that the whole worktree is reviewed. Use the delta to
+verify a focused fix, then inspect the full current uncommitted worktree before
+final acceptance.
 
 ## Observation delta basis
 
@@ -117,8 +118,8 @@ rules are not observed at all, so a change confined to them shows as no change
 here; see [awa help ignores](ignores.md). Inputs the scan could not read are
 counted as skipped and reported rather than silently dropped.
 
-A checkpoint delta is also not the uncommitted git diff: it is measured from the
-baseline you chose, which may be older or newer than HEAD.
+A comparison delta is also not the uncommitted git diff: it is measured between
+the observations you chose, which may be older or newer than HEAD.
 
 ## Diff algorithm
 
@@ -135,6 +136,14 @@ what is compared, only how the comparison is rendered — see
 Run observations can be used as state references (`run:<id>:before` /
 `run:<id>:after`). When one side has no stored content, `diff` degrades to a
 hash-only comparison for the affected paths.
+
+A `hash-only` label names a missing byte capability, not proof that a
+checkpoint retention pattern selected the file. The limit can come from
+checkpoint retention — `hash_only_patterns`, or `store_file_contents` turned off —
+or from a run observation, which records hashes but no regular-file bytes. An
+excluded path is a different boundary: it is not observed at all. The label
+alone names neither the cause nor which side lacks bytes, and says nothing about
+whether the other side stored any.
 
 ## See also
 
