@@ -153,7 +153,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ================================================================================
 Component: github.com/ncruces/go-strftime
-Version:   v1.0.0
+Version:   v1.1.0
 License:   MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -384,7 +384,7 @@ express Statement of Purpose.
 
 ================================================================================
 Component: golang.org/x/sys
-Version:   v0.48.0
+Version:   v0.49.0
 License:   BSD-3-Clause
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -446,7 +446,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================================
 Component: modernc.org/libc
-Version:   v1.77.1
+Version:   v1.79.0
 License:   BSD-3-Clause AND MIT
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
@@ -922,7 +922,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 Component: modernc.org/sqlite
-Version:   v1.60.1
+Version:   v1.61.1
 License:   BSD-3-Clause AND LicenseRef-SQLite-Public-Domain
 --------------------------------------------------------------------------------
 LICENSE (LICENSE):
