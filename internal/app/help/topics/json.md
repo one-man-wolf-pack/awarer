@@ -148,6 +148,14 @@ warning). When incomplete, `review.runs.reusable` and `near` are `null`;
 `known_reusable`, `known_near` and `unassessed` count what was established, and
 `nearest` is from the assessed rows. Read `null` as unknown, never as `0`.
 
+When a `[[run.required_env]]` declaration selects the command, explain adds
+`current.environment_requirement` (`declaration`, `origin`, `argv`, `cwd`,
+`satisfied`, and `names` with `state` `set`, `unset` or `empty`; never values).
+Unsatisfied, the outcome is `refused` with reason `env-requirement-unmet`, exit
+0: `current.key` is `null`, `current.cacheable` is `false`, and
+`exact_match.assessment` is `current-identity-unavailable` (nothing looked up).
+`run ls` keeps such a row assessed, not reusable with that reason. `awa run --json` instead exits 1 with empty stdout.
+
 Optional keys, on the other hand, are omitted when they have no value: a
 checkpoint with no message carries no `message` key, a run with capture disabled
 carries no `outputs` block, and a binary with no VCS stamping carries no

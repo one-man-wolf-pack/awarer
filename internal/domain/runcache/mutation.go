@@ -78,6 +78,11 @@ const (
 	ReasonExternalFactsUnavailable        MismatchReason = "external-facts-unavailable"
 	ReasonExternalFactsChanged            MismatchReason = "external-facts-changed"
 	ReasonExternalFactsUnavailablePostRun MismatchReason = "external-facts-unavailable-post-run"
+	// ReasonEnvRequirementUnmet: the invocation's selected command environment
+	// requirement names a caller variable that is unset or empty now, so a run would
+	// refuse before lookup or execution. It is current-only: a refused run executes
+	// nothing and records nothing, so no persisted reuse state admits it.
+	ReasonEnvRequirementUnmet MismatchReason = "env-requirement-unmet"
 )
 
 // mismatchReasons is the canonical enumeration of the closed vocabulary. It is the
@@ -118,6 +123,8 @@ var mismatchReasons = []MismatchReason{
 	ReasonCaptureDisabled,
 	ReasonFailedNotCached,
 	ReasonExternalFactsUnavailable,
+	// the current invocation cannot run at all
+	ReasonEnvRequirementUnmet,
 }
 
 // MismatchReasons returns the closed reason vocabulary in canonical order. The

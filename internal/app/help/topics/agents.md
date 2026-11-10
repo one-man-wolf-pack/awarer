@@ -67,9 +67,9 @@ command only to see its output, read it with `awa run show <run-id> --tail <n>`
 (plain `show` is metadata, with the exit), or filter it with
 `awa run show <run-id> --grep <pattern>`: piping the live run can hide the id
 and report the filter's exit. A tail is not all captured output, and capture
-can be truncated or disabled. Only names in awa's baseline or
-`[run].env_allowlist` reach the command; `NAME=value awa run ...` sets a
-value but cannot add `NAME` to them. See `awa help inspect` and
+can be truncated or disabled. Only names awa's baseline or project
+config admit reach the command; `NAME=value awa run ...` sets a value
+but cannot admit `NAME`. See `awa help inspect` and
 `awa help privacy`.
 ```
 

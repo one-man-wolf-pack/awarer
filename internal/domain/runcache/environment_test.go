@@ -21,7 +21,7 @@ func (m envMap) lookup(name string) (string, bool) {
 
 func buildEnv(t testing.TB, ambient envMap, allowlist ...string) runcache.EffectiveEnvironment {
 	t.Helper()
-	return runcache.BuildEffectiveEnvironment(newHasher(t), "linux", allowlist, ambient.lookup)
+	return runcache.BuildEffectiveEnvironment(newHasher(t), "linux", allowlist, nil, ambient.lookup)
 }
 
 // presenceOf reports the keyed presence token for name, or "" when the name is not keyed.
@@ -249,7 +249,7 @@ func TestLocaleFactsAreKeyedIndependently(t *testing.T) {
 
 	keyFor := func(ambient envMap) runcache.RunKey {
 		in := baseline(t, h)
-		in.Env = runcache.BuildEffectiveEnvironment(h, "linux", nil, ambient.lookup).Keyed()
+		in.Env = runcache.BuildEffectiveEnvironment(h, "linux", nil, nil, ambient.lookup).Keyed()
 		return in.Compute(h)
 	}
 
@@ -295,7 +295,7 @@ func TestMarkerIsPartOfCacheIdentity(t *testing.T) {
 	ambient := envMap{"PATH": "/usr/bin"}
 
 	current := baseline(t, h)
-	current.Env = runcache.BuildEffectiveEnvironment(h, "linux", nil, ambient.lookup).Keyed()
+	current.Env = runcache.BuildEffectiveEnvironment(h, "linux", nil, nil, ambient.lookup).Keyed()
 
 	// A pre-marker record: the same inherited names, without the injected fact.
 	var preMarker []runcache.EnvVar
@@ -413,4 +413,104 @@ func markerAssignments(child []string) []string {
 		}
 	}
 	return out
+}
+
+func TestRequiredNamesAreTransmittedKeyedAndCheckedFromOnePass(t *testing.T) {
+	h := newHasher(t)
+	ambient := envMap{"NEED_SET": "v1", "NEED_EMPTY": "", "NEED_SPACE": " ", "HOME": "/h", "AMBIENT_ONLY": "x"}
+	lookups := map[string]int{}
+	lookup := func(name string) (string, bool) {
+		lookups[name]++
+		return ambient.lookup(name)
+	}
+	required := []string{"NEED_SET", "NEED_EMPTY", "NEED_UNSET", "NEED_SPACE", "HOME"}
+	env := runcache.BuildEffectiveEnvironment(h, "linux", []string{"NEED_SET"}, required, lookup)
+
+	for name, n := range lookups {
+		if n != 1 {
+			t.Errorf("%s looked up %d times; the check must share the assembly's single pass", name, n)
+		}
+	}
+	child := env.ChildEnv()
+	for _, want := range []string{"NEED_SET=v1", "NEED_EMPTY=", "NEED_SPACE= ", "HOME=/h"} {
+		if !slices.Contains(child, want) {
+			t.Errorf("child env lacks %q: %q", want, child)
+		}
+	}
+	for _, a := range child {
+		if strings.HasPrefix(a, "NEED_UNSET=") || strings.HasPrefix(a, "AMBIENT_ONLY=") {
+			t.Errorf("child env carries %q", a)
+		}
+	}
+	if n := strings.Count(strings.Join(child, "\n"), "NEED_SET="); n != 1 {
+		t.Errorf("a required and allowlisted name is passed %d times, want once", n)
+	}
+	if got := presenceOf(env.Keyed(), "NEED_UNSET"); got != "unset" {
+		t.Errorf("unset required name keyed %q, want unset", got)
+	}
+
+	check := env.Requirement()
+	if check.Satisfied() {
+		t.Fatal("requirement with unset and empty names reported satisfied")
+	}
+	var got []string
+	for _, s := range check.States() {
+		got = append(got, s.Name+":"+s.Presence.String())
+	}
+	want := []string{"NEED_SET:set", "NEED_EMPTY:empty", "NEED_UNSET:unset", "NEED_SPACE:set", "HOME:set"}
+	if !slices.Equal(got, want) {
+		t.Errorf("states = %q, want %q", got, want)
+	}
+	var unmet []string
+	for _, s := range check.Unmet() {
+		unmet = append(unmet, s.Name)
+	}
+	if !slices.Equal(unmet, []string{"NEED_EMPTY", "NEED_UNSET"}) {
+		t.Errorf("unmet = %q", unmet)
+	}
+}
+
+func TestRequiredValueChangesTheKeyedIdentity(t *testing.T) {
+	h := newHasher(t)
+	a := runcache.BuildEffectiveEnvironment(h, "linux", nil, []string{"TOKEN_DIR"}, envMap{"TOKEN_DIR": "one"}.lookup)
+	b := runcache.BuildEffectiveEnvironment(h, "linux", nil, []string{"TOKEN_DIR"}, envMap{"TOKEN_DIR": "two"}.lookup)
+	if !a.Requirement().Satisfied() || !b.Requirement().Satisfied() {
+		t.Fatal("nonempty values must satisfy the requirement")
+	}
+	if slices.EqualFunc(a.Keyed().Vars(), b.Keyed().Vars(), func(x, y runcache.EnvVar) bool { return x == y }) {
+		t.Fatal("different required values produced the same keyed environment")
+	}
+	for _, v := range a.Keyed().Vars() {
+		if strings.Contains(v.Identity().String(), "one") {
+			t.Fatal("keyed identity carries the raw value")
+		}
+	}
+}
+
+func TestRequiredNameCannotBeSatisfiedByTheInjectedMarker(t *testing.T) {
+	env := runcache.BuildEffectiveEnvironment(newHasher(t), "linux", nil, []string{config.WrapperMarkerName}, envMap{config.WrapperMarkerName: "1"}.lookup)
+	if env.Requirement().Satisfied() {
+		t.Fatal("the awa-owned marker satisfied a caller requirement")
+	}
+}
+
+func TestRequiredNameFoldsToTheInheritedSpellingOnWindows(t *testing.T) {
+	ambient := envMap{"PATH": `C:\bin`}
+	env := runcache.BuildEffectiveEnvironment(newHasher(t), "windows", nil, []string{"Path"}, ambient.lookup)
+	states := env.Requirement().States()
+	if len(states) != 1 || states[0].Name != "Path" || !states[0].Satisfied() {
+		t.Fatalf("states = %+v, want Path satisfied by the inherited PATH", states)
+	}
+	if n := strings.Count(strings.ToUpper(strings.Join(env.ChildEnv(), "\n")), "PATH="); n != 1 {
+		t.Fatalf("PATH passed %d times on a case-insensitive platform", n)
+	}
+}
+
+func TestNoRequirementIsSatisfiedAndUnchanged(t *testing.T) {
+	h := newHasher(t)
+	ambient := envMap{"CI": "1"}
+	with := runcache.BuildEffectiveEnvironment(h, "linux", []string{"CI"}, nil, ambient.lookup)
+	if !with.Requirement().Satisfied() || len(with.Requirement().States()) != 0 {
+		t.Fatal("an undeclared invocation must carry an empty, satisfied check")
+	}
 }

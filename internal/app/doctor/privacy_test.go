@@ -445,3 +445,39 @@ func TestEnvAllowlistInjectsCodeIsBounded(t *testing.T) {
 		t.Errorf("unrelated or ambiguous names raised the code-injection finding: %q", fs[0].Message())
 	}
 }
+
+// TestRequiredEnvNamesShareTheAllowlistNameAdvisories proves a required name is the
+// same explicit transmission permission as an allowlist entry for doctor's purposes:
+// the existing advisories name it, point at the layer that declared it, and raise no
+// finding for an ordinary required name.
+func TestRequiredEnvNamesShareTheAllowlistNameAdvisories(t *testing.T) {
+	e := newEnv(t)
+	cfg := e.cfg
+	cfg.Run.RequiredEnv = []config.EnvRequirement{
+		{Argv: []string{"deploy"}, CWD: ".", Names: []string{"DEPLOY_TOKEN", "NUGET_PACKAGES"}},
+		{Argv: []string{"node", "x.js"}, CWD: ".", Names: []string{"NODE_OPTIONS", "DEPLOY_TOKEN"}},
+	}
+	localPath := filepath.Join(e.root, ".awa", "config.toml")
+	origins := config.DefaultOrigins()
+	origins["run.required_env"] = config.LayerLocal
+	fact, err := config.NewLayerFact(config.LayerLocal, localPath, true)
+	if err != nil {
+		t.Fatalf("layer fact: %v", err)
+	}
+	resolved, err := config.NewResolvedConfig(cfg, origins, []config.LayerFact{fact})
+	if err != nil {
+		t.Fatalf("resolved config: %v", err)
+	}
+	res := e.run(t, noGit(), Request{Resolved: resolved})
+
+	sensitive := findingsByCode(res, dom.CodeEnvAllowlistSuspicious)
+	if len(sensitive) != 1 || sensitive[0].Path() != localPath ||
+		!strings.Contains(sensitive[0].Message(), "run.required_env") || !strings.Contains(sensitive[0].Message(), "DEPLOY_TOKEN") ||
+		strings.Contains(sensitive[0].Message(), "NUGET_PACKAGES") || strings.Count(sensitive[0].Message(), "DEPLOY_TOKEN") != 1 {
+		t.Fatalf("secret-looking required names: %+v", sensitive)
+	}
+	injecting := findingsByCode(res, dom.CodeEnvAllowlistInjectsCode)
+	if len(injecting) != 1 || !strings.Contains(injecting[0].Message(), "NODE_OPTIONS") {
+		t.Fatalf("code-injecting required names: %+v", injecting)
+	}
+}

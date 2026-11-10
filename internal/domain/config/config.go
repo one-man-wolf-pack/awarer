@@ -40,6 +40,7 @@ func (c Config) Clone() Config {
 	c.Run.EnvAllowlist = slices.Clone(c.Run.EnvAllowlist)
 	c.Run.WatchedEffectRoots = slices.Clone(c.Run.WatchedEffectRoots)
 	c.Run.Validation = cloneValidation(c.Run.Validation)
+	c.Run.RequiredEnv = cloneRequiredEnv(c.Run.RequiredEnv)
 	return c
 }
 
@@ -175,6 +176,8 @@ type Run struct {
 	// observation exists to close.
 	WatchedEffectRoots []string
 	Validation         []ValidationPolicy
+	// RequiredEnv holds the [[run.required_env]] declarations; see EnvRequirement.
+	RequiredEnv []EnvRequirement
 }
 
 // ScanScope is the fully-resolved boundary a single scan walks: the include list,
@@ -687,6 +690,7 @@ func (c Config) Validate() error {
 	p = append(p, effectRootSelectorProblems(c.Run.WatchedEffectRoots)...)
 	p = append(p, envAllowlistProblems(c.Run.EnvAllowlist)...)
 	p = append(p, validationProblems(c.Run.Validation)...)
+	p = append(p, requiredEnvProblems(c.Run.RequiredEnv)...)
 	if !c.Hashing.TrustMode.Valid() {
 		p = append(p, "hashing.trust_mode is not a known trust mode")
 	}

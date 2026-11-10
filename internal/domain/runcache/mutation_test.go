@@ -82,8 +82,8 @@ func TestNotReusableRequiresReason(t *testing.T) {
 // walking the vocabulary (including the documentation coverage matrix) sees.
 func TestMismatchReasonsIsTheClosedVocabulary(t *testing.T) {
 	reasons := runcache.MismatchReasons()
-	if len(reasons) != 23 {
-		t.Errorf("MismatchReasons() has %d entries, want 23 — update the documentation coverage matrix too", len(reasons))
+	if len(reasons) != 24 {
+		t.Errorf("MismatchReasons() has %d entries, want 24 — update the documentation coverage matrix too", len(reasons))
 	}
 	seen := map[runcache.MismatchReason]bool{}
 	for _, r := range reasons {
@@ -147,6 +147,17 @@ var persistedReasonTokens = []string{
 	"external-facts-unavailable",
 	"external-facts-changed",
 	"external-facts-unavailable-post-run",
+	// Current-only: parseable as vocabulary, but no reuse-state constructor admits it,
+	// so a record cannot actually carry it (see TestEnvRequirementUnmetIsNeverPersisted).
+	"env-requirement-unmet",
+}
+
+func TestEnvRequirementUnmetIsNeverPersisted(t *testing.T) {
+	for _, k := range []runcache.ReuseKind{runcache.ReuseReusable, runcache.ReuseNonReusable, runcache.ReuseRecordOnly, runcache.ReuseUnknownPostState} {
+		if _, err := runcache.NewReuseState(k, runcache.ReasonEnvRequirementUnmet); err == nil {
+			t.Errorf("reuse kind %s admits %s; a refused run records nothing", k, runcache.ReasonEnvRequirementUnmet)
+		}
+	}
 }
 
 func TestParseMismatchReasonAcceptsOnlyTheCurrentVocabulary(t *testing.T) {

@@ -37,6 +37,10 @@ const (
 	// OutcomeIncomplete means current identity needs external facts only a run
 	// acquires, and no other rule decides what a run would do.
 	OutcomeIncomplete Outcome = "incomplete"
+	// OutcomeRefused means a run would refuse the invocation before observing,
+	// looking up or executing anything: its command environment requirement is unmet.
+	// It is a known execution-precondition failure, never a hit, miss or unknown.
+	OutcomeRefused Outcome = "refused"
 )
 
 // Reason tokens that are not key-input difference codes. Difference-based reasons
@@ -118,9 +122,12 @@ type ExplainSubject struct {
 	// ProbeAuthorization is the current grant check for a policy declaring probes;
 	// reading it runs nothing.
 	ProbeAuthorization runcache.ProbeAuthorization
-	// IdentityUnavailable means a granted policy's facts were not acquired, so there is
-	// no current key and Key is zero.
+	// IdentityUnavailable means there is no current key and Key is zero: a granted
+	// policy's facts were not acquired, or the invocation is refused before keying.
 	IdentityUnavailable bool
+	// EnvRequirement is the selected command environment requirement and its current
+	// check, nil when no declaration selects the invocation.
+	EnvRequirement *EnvRequirement
 }
 
 // CacheableKnown reports whether Cacheable is established. A policy blocker proves
@@ -316,6 +323,9 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
+	if refused, ok := refusedResult(req, kc, nil); ok {
+		return refused, nil
+	}
 	unassessed := kc.KeyInput.Validation.FactsUnassessed()
 	v, err := s.currentVerdict(ctx, req, kc)
 	if err != nil {
@@ -332,6 +342,7 @@ func (s *Service) explainCommand(ctx context.Context, req Request) (ExplainResul
 
 			ProbeAuthorization:  kc.Authorization,
 			IdentityUnavailable: unassessed,
+			EnvRequirement:      kc.Requirement,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -391,6 +402,9 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		return ExplainResult{}, err
 	}
 	defer func() { _ = kc.Close() }()
+	if refused, ok := refusedResult(req, kc, warnings); ok {
+		return refused, nil
+	}
 	unassessed := kc.KeyInput.Validation.FactsUnassessed()
 
 	// The outcome reflects what a real run would do with the current key — the same
@@ -455,6 +469,7 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 
 			ProbeAuthorization:  kc.Authorization,
 			IdentityUnavailable: unassessed,
+			EnvRequirement:      kc.Requirement,
 		},
 		Outcome:     v.Outcome,
 		Reason:      v.Reason,
@@ -475,6 +490,33 @@ func (s *Service) explainStored(ctx context.Context, base Request, id runcache.R
 		}
 	}
 	return res, nil
+}
+
+// refusedResult is the complete assessment of an invocation a run would refuse for an
+// unmet command environment requirement. The refusal is established before keying, so
+// it settles the outcome ahead of every policy, refresh or fact rule. The read-only
+// observations already taken remain reported, but no current key is claimed, no exact
+// entry is looked up, and no candidate is compared or ranked: none of those would be
+// what a run does, and an empty key or a skipped lookup must not read as a miss.
+func refusedResult(req Request, kc keyContext, warnings []string) (ExplainResult, bool) {
+	if kc.Requirement == nil || kc.Requirement.Satisfied() {
+		return ExplainResult{}, false
+	}
+	return ExplainResult{
+		Outcome: OutcomeRefused,
+		Reason:  runcache.ReasonEnvRequirementUnmet.String(),
+		Subject: ExplainSubject{
+			KeyInput:            kc.KeyInput,
+			Cacheable:           false,
+			Skipped:             kc.Skipped,
+			Exact:               ExactMatch{Assessment: ExactIdentityUnavailable},
+			ProbeAuthorization:  kc.Authorization,
+			IdentityUnavailable: true,
+			EnvRequirement:      kc.Requirement,
+		},
+		Warnings:    warnings,
+		Performance: runPerformance(req.Policy, []inputReport{kc.InputReport}, kc.EffectReport),
+	}, true
 }
 
 // currentKey withholds the key built over unacquired facts: it identifies no state a

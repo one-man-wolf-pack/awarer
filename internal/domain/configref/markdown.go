@@ -101,10 +101,12 @@ func PrecedenceMarkdown() string {
 		"list, never a merge. A local `.awa/config.toml` that sets\n" +
 		"`[scope].extra_excludes` discards the shared `awa.toml` list rather than\n" +
 		"adding to it, and the same is true of `include`, `env_allowlist`,\n" +
-		"`default_scope`, `extra_effect_roots`, and `hash_only_patterns`. To keep a\n" +
-		"shared list and add to it, restate the shared entries in the overriding\n" +
-		"layer. `awa config effective` shows the resolved list and the layer it came\n" +
-		"from, which is the reliable way to catch a list you did not mean to drop.\n" +
+		"`default_scope`, `extra_effect_roots`, `hash_only_patterns`, and the\n" +
+		"`[[run.validation]]` policies and `[[run.required_env]]` declarations. To\n" +
+		"keep a shared list and add to it, restate the shared entries in the\n" +
+		"overriding layer. `awa config effective` shows the resolved list and the\n" +
+		"layer it came from, which is the reliable way to catch a list you did not\n" +
+		"mean to drop.\n" +
 		"\n" +
 		"Each active layer that changes observation, hashing, diff, run cache\n" +
 		"identity, storage, or output policy is folded into the relevant config\n" +

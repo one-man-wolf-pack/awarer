@@ -147,10 +147,12 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 		return err
 	}
 
-	proj, layout, cfg, err := loadProjectConfig(inv.options)
+	proj, layout, resolved, err := loadProjectConfigFull(inv.options)
 	if err != nil {
 		return err
 	}
+	cfg := resolved.Config()
+	reqOrigin := resolved.OriginOf("run.required_env")
 
 	// run explain re-observes the command's input state and must reach the same verdict
 	// a real run would, so it re-derives the key exactly as the hit path does: reading
@@ -206,7 +208,7 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 	}
 
 	if inv.options.JSON {
-		if err := w.JSON("run.explain", explainView(res)); err != nil {
+		if err := w.JSON("run.explain", explainView(res, reqOrigin)); err != nil {
 			return genericErrorf("%v", err)
 		}
 		emitExplainWarnings(w, res.Warnings)
@@ -219,7 +221,7 @@ func runRunExplain(w *output.Writer, inv invocation) error {
 	if err != nil {
 		return usageErrorf("%v", err)
 	}
-	renderExplain(w, res, td, time.Now())
+	renderExplain(w, res, reqOrigin, td, time.Now())
 	emitPerformanceNotes(w, res.Performance)
 	return nil
 }
@@ -251,6 +253,38 @@ type explainCurrentDoc struct {
 	TTYAllowed    bool                 `json:"tty_allowed"`
 	Skipped       explainSkippedDoc    `json:"skipped"`
 	Validation    *validationPolicyDoc `json:"validation,omitempty"`
+	// EnvironmentRequirement is present only when a [[run.required_env]] declaration
+	// selects the invocation: the current check of its names, never their values.
+	EnvironmentRequirement *envRequirementDoc `json:"environment_requirement,omitempty"`
+}
+
+// envRequirementDoc is the current command environment requirement assessment. State is
+// the keyed presence token: "set" (present and nonempty) satisfies the requirement,
+// "unset" and "empty" do not. Origin is the config layer the declaration list came from.
+type envRequirementDoc struct {
+	Declaration int                     `json:"declaration"`
+	Origin      string                  `json:"origin"`
+	Argv        []string                `json:"argv"`
+	CWD         string                  `json:"cwd"`
+	Satisfied   bool                    `json:"satisfied"`
+	Names       []envRequirementNameDoc `json:"names"`
+}
+
+type envRequirementNameDoc struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+func envRequirementView(r *apprun.EnvRequirement, origin domainconfig.Layer) *envRequirementDoc {
+	if r == nil {
+		return nil
+	}
+	states := r.Check.States()
+	names := make([]envRequirementNameDoc, len(states))
+	for i, st := range states {
+		names[i] = envRequirementNameDoc{Name: st.Name, State: st.Presence.String()}
+	}
+	return &envRequirementDoc{Declaration: r.Index, Origin: origin.String(), Argv: r.Argv, CWD: r.CWD, Satisfied: r.Satisfied(), Names: names}
 }
 
 // explainExactDoc keeps exists/healthy as non-omitted pointers: null is an unknown
@@ -277,7 +311,9 @@ type explainDoc struct {
 	Diagnostics *perfDiagnosticsDoc `json:"diagnostics,omitempty"`
 }
 
-func explainView(res apprun.ExplainResult) explainDoc {
+// requirementOrigin is the config layer run.required_env came from; it only labels a
+// selected declaration.
+func explainView(res apprun.ExplainResult, requirementOrigin domainconfig.Layer) explainDoc {
 	ki := res.Subject.KeyInput
 	assessment, key, cacheable := "complete", new(res.Subject.Key.String()), new(res.Subject.Cacheable)
 	if res.Subject.IdentityUnavailable {
@@ -301,6 +337,8 @@ func explainView(res apprun.ExplainResult) explainDoc {
 			TTYAllowed:    ki.TTYAllowed,
 			Skipped:       skippedView(res.Subject.Skipped),
 			Validation:    validationPolicyView(ki.Validation, nil),
+
+			EnvironmentRequirement: envRequirementView(res.Subject.EnvRequirement, requirementOrigin),
 		},
 		Diagnostics: perfDiagnosticsView(res.Performance),
 		ExactMatch:  exactView(res.Subject.Exact),
@@ -345,12 +383,14 @@ func exactView(m apprun.ExactMatch) explainExactDoc {
 // at "awa changes" for path-level detail when the input tree differs. Times use
 // the shared FormatTime policy (td/now) so explain matches run ls/log and the
 // footer rather than emitting its own local timestamp form.
-func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.TimeDisplay, now time.Time) {
+func renderExplain(w *output.Writer, res apprun.ExplainResult, requirementOrigin domainconfig.Layer, td domainconfig.TimeDisplay, now time.Time) {
 	w.Linef("cache:  %s", res.Outcome)
 	if res.Reason != "" {
 		w.Linef("reason: %s", humanReason(res.Reason))
 	}
-	if res.Subject.IdentityUnavailable {
+	if res.Outcome == apprun.OutcomeRefused {
+		w.Line("key:    unavailable (awa run refuses before keying)")
+	} else if res.Subject.IdentityUnavailable {
 		w.Line("key:    unavailable (identity facts are acquired only by awa run)")
 	} else {
 		w.Linef("key:    %s", res.Subject.Key.String())
@@ -365,6 +405,7 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 			w.Linef("facts:  %s", line)
 		}
 	}
+	renderEnvRequirement(w, res.Subject.EnvRequirement, requirementOrigin)
 
 	switch exact := res.Subject.Exact; {
 	case exact.Assessment == apprun.ExactLookupUnavailable:
@@ -420,6 +461,22 @@ func renderExplain(w *output.Writer, res apprun.ExplainResult, td domainconfig.T
 	}
 
 	emitExplainWarnings(w, res.Warnings)
+}
+
+// renderEnvRequirement prints the selected command environment requirement beside the
+// decision it can settle. A satisfied one is a single line; an unmet one names the
+// bounded failing names with their states and the remedy. Values are never shown.
+func renderEnvRequirement(w *output.Writer, r *apprun.EnvRequirement, origin domainconfig.Layer) {
+	if r == nil {
+		return
+	}
+	decl := fmt.Sprintf("run.required_env[%d] (%s)", r.Index, requirementSource(origin))
+	if r.Satisfied() {
+		w.Linef("env requirement: %s satisfied (%d name(s) set)", decl, len(r.Check.States()))
+		return
+	}
+	w.Linef("env requirement: %s unmet: %s", decl, r.UnmetSummary(envNameText))
+	w.Line("set them in the environment that starts awa; awa run refuses this command until then")
 }
 
 func emitExplainWarnings(w *output.Writer, warnings []string) {

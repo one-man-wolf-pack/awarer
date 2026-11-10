@@ -108,6 +108,7 @@ func Sections() []Section {
 				{"cache_failed_runs", boolean(d.Run.CacheFailedRuns), "bool", "Whether non-zero-exit runs are cached.", "Turn off to always re-run failed commands."},
 				{"extra_effect_roots", list(d.Run.WatchedEffectRoots), "name/path list", "Additive watched generated-output selectors on top of the built-ins. Each is either a directory NAME matched wherever it appears (\"bin\") or an exact project-relative PATH matched only there (\"artifacts/bin\"). Literal, never globs. Additive only: this list cannot remove a built-in; a matched [[run.validation]] policy can waive an exact directory for its one invocation (see `awa help validation`).", "Watch a generated directory a command reads so later changes to it invalidate reuse."},
 				{"validation", "[]", "array of tables: name, argv, cwd, unobserved_dirs, identity_probes", "Named validation policies ([[run.validation]]). A policy applies only to the run whose complete argv equals argv element for element and whose execution cwd is cwd; it leaves each unobserved_dirs entry (an exact path below the project root, never a name matched at any depth) out of input identity and effect observation, so a cache hit replays the recorded result without recreating those directories. Declaring one asserts both that their prior contents cannot change the result and that their files are not needed after a replay. Two policies selecting one invocation are a conflict. Optional identity_probes ([[run.validation.identity_probes]], each a name and a literal argv, at most 8) are commands whose exact stdout becomes part of the policy's reuse identity; they run only for a project and probe context the operator approved with awa config probes allow, a per-user grant no config file can set. See `awa help validation`.", "Let a check that writes a huge or changing build directory replay its recorded result."},
+				{"required_env", "[]", "array of tables: argv, cwd, names", "Command environment requirements ([[run.required_env]]). A declaration applies only to the run whose complete argv equals argv element for element and whose execution cwd is cwd, exactly as a validation policy selects; it is independent of [[run.validation]] and waives nothing. Each name is passed from the caller to that command (no env_allowlist entry needed) and must be set to a nonempty value: an unset or empty one makes awa run refuse with exit 1 before any probe, observation, cache lookup, replay, or execution, and run explain reports the refusal. Names only, never values; AWA_RUN is reserved; two declarations selecting one invocation are a conflict. Passing a variable does not prove the tool used it. Introduced in this release: older binaries reject the key as unknown. See `awa help privacy`.", "Make a command whose result depends on a caller variable refuse to run, or to replay, without it."},
 			},
 			Example: "[[run.validation]]\n" +
 				"name = \"cargo-test\"\n" +
@@ -117,7 +118,12 @@ func Sections() []Section {
 				"\n" +
 				"[[run.validation.identity_probes]]\n" +
 				"name = \"rustc\"\n" +
-				"argv = [\"rustc\", \"-vV\"]\n",
+				"argv = [\"rustc\", \"-vV\"]\n" +
+				"\n" +
+				"[[run.required_env]]\n" +
+				"argv = [\"dotnet\", \"restore\"]\n" +
+				"cwd = \".\"\n" +
+				"names = [\"NUGET_PACKAGES\"]\n",
 		},
 		{
 			Name:  "gc",

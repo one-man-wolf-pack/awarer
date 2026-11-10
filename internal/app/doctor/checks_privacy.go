@@ -53,6 +53,8 @@ func (s *Service) checkConfig(ctx context.Context, layout paths.Layout, resolved
 		rep.pass()
 	}
 
+	s.checkRequiredEnvNames(resolved, rep)
+
 	s.checkPatterns(layout, resolved, rep)
 
 	// content-storage-enabled: storing file contents is the point of checkpoints, but in
@@ -75,6 +77,35 @@ func (s *Service) checkConfig(ctx context.Context, layout paths.Layout, resolved
 	}
 	if capture.eligible == "" && capture.uncertain == "" {
 		rep.pass()
+	}
+}
+
+// checkRequiredEnvNames applies the same two name advisories to the names a
+// [[run.required_env]] declaration requires. Requiring a name is an explicit permission
+// to pass it to that command, so it carries the same exposure as an allowlist entry
+// and deserves the same advice; it is not a separate policy. These findings are only
+// added when they apply: the allowlist checks above already account for the pass.
+func (s *Service) checkRequiredEnvNames(resolved domconfig.ResolvedConfig, rep *report) {
+	var names []string
+	seen := map[string]bool{}
+	for _, d := range resolved.Config().Run.RequiredEnv {
+		for _, n := range d.Names {
+			if !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
+	}
+	source := resolved.SourcePathOf("run.required_env")
+	if sensitive := suspiciousEnvNames(names); len(sensitive) > 0 {
+		rep.add(finding(doctor.CodeEnvAllowlistSuspicious, doctor.SeverityWarning, doctor.SubsystemConfig,
+			source, "run.required_env",
+			"run.required_env requires secret-looking names ("+strings.Join(sensitive, ", ")+"); their values reach the selected command and are keyed (as redacted identities, not stored raw)", false))
+	}
+	if injecting := codeInjectingEnvNames(names); len(injecting) > 0 {
+		rep.add(finding(doctor.CodeEnvAllowlistInjectsCode, doctor.SeverityWarning, doctor.SubsystemConfig,
+			source, "run.required_env",
+			"run.required_env requires names that can load or execute code in the selected command ("+strings.Join(injecting, ", ")+"); remove them unless the command genuinely needs them", false))
 	}
 }
 

@@ -65,18 +65,25 @@ type overlayCheckpoint struct {
 }
 
 type overlayRun struct {
-	DefaultScope     *[]string            `toml:"default_scope"`
-	ExtraExcludes    *[]string            `toml:"extra_excludes"`
-	UseGitignore     *bool                `toml:"use_gitignore"`
-	UseAwaignore     *bool                `toml:"use_awaignore"`
-	EnvAllowlist     *[]string            `toml:"env_allowlist"`
-	TTL              *string              `toml:"ttl"`
-	MaxStdoutSize    *string              `toml:"max_stdout_size"`
-	MaxStderrSize    *string              `toml:"max_stderr_size"`
-	CaptureOutput    *bool                `toml:"capture_output"`
-	CacheFailedRuns  *bool                `toml:"cache_failed_runs"`
-	ExtraEffectRoots *[]string            `toml:"extra_effect_roots"`
-	Validation       *[]overlayValidation `toml:"validation"`
+	DefaultScope     *[]string             `toml:"default_scope"`
+	ExtraExcludes    *[]string             `toml:"extra_excludes"`
+	UseGitignore     *bool                 `toml:"use_gitignore"`
+	UseAwaignore     *bool                 `toml:"use_awaignore"`
+	EnvAllowlist     *[]string             `toml:"env_allowlist"`
+	TTL              *string               `toml:"ttl"`
+	MaxStdoutSize    *string               `toml:"max_stdout_size"`
+	MaxStderrSize    *string               `toml:"max_stderr_size"`
+	CaptureOutput    *bool                 `toml:"capture_output"`
+	CacheFailedRuns  *bool                 `toml:"cache_failed_runs"`
+	ExtraEffectRoots *[]string             `toml:"extra_effect_roots"`
+	Validation       *[]overlayValidation  `toml:"validation"`
+	RequiredEnv      *[]overlayRequiredEnv `toml:"required_env"`
+}
+
+type overlayRequiredEnv struct {
+	Argv  []string `toml:"argv"`
+	CWD   string   `toml:"cwd"`
+	Names []string `toml:"names"`
 }
 
 type overlayValidation struct {
@@ -441,6 +448,14 @@ func applyOverlay(cfg *config.Config, origins map[string]config.Layer, layer con
 			}
 			cfg.Run.Validation = policies
 			origins["run.validation"] = layer
+		}
+		if r.RequiredEnv != nil {
+			decls := make([]config.EnvRequirement, len(*r.RequiredEnv))
+			for i, d := range *r.RequiredEnv {
+				decls[i] = config.EnvRequirement{Argv: d.Argv, CWD: d.CWD, Names: d.Names}
+			}
+			cfg.Run.RequiredEnv = decls
+			origins["run.required_env"] = layer
 		}
 	}
 

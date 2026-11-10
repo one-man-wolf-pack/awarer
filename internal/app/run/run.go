@@ -666,6 +666,10 @@ type keyContext struct {
 	Reason runcache.MismatchReason
 	// Authorization is the pre-run grant check for a policy declaring probes.
 	Authorization runcache.ProbeAuthorization
+	// Requirement is the selected command environment requirement and its check, nil
+	// when no declaration selects the invocation. A run never holds an unmet one: it
+	// refuses before building the rest of the context.
+	Requirement *EnvRequirement
 	// Diagnostics hold no acquirer, so they cannot execute a probe; a run's acquirer
 	// checks the grant again at every phase before it starts one.
 	acquire factAcquirer
@@ -700,8 +704,11 @@ func (kc keyContext) Close() error { return kc.beforeScan.Close() }
 // command execution and never publishes a cache entry. persistIndex chooses whether
 // the input scan writes the worktree index: Run persists it (under a presence lock)
 // to keep the accelerator warm, while Explain scans read-only so it never mutates
-// shared state without a lock.
-func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex, acquireFacts bool) (keyContext, error) {
+// shared state without a lock. forRun selects the run lifecycle: it refuses an unmet
+// command environment requirement and acquires granted probe facts, whereas a
+// diagnostic carries the requirement check and acquires nothing. Only a caller that
+// may go on to execute passes true.
+func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex, forRun bool) (keyContext, error) {
 	effScope := effectiveScanScope(req.Config, req.Scope)
 	// A pre-resolved effective scope (Explain reproducing a stored run) replaces the
 	// derived one outright, so both the scan and the key use exactly the requested
@@ -719,19 +726,33 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 	}
 
 	// The child runs with a sanitized environment: the built-in baseline plus the
-	// configured allowlist plus awa's fixed injected facts, and nothing else. The exact
+	// configured allowlist plus the selected command's required names plus awa's fixed
+	// injected facts, and nothing else. The exact
 	// environment the child sees is what the key records, so no unkeyed variable can
 	// change the command's output behind the cache. The one child env taken here is used
 	// for identity probes, executable resolution (so the keyed binary is found via the
 	// PATH the command actually runs with) and for the process itself.
-	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist)
+	//
+	// The requirement check is read from the very lookup pass that built the child
+	// environment. A run refuses an unmet requirement
+	// here — after configuration and scope validation, before any probe, observation,
+	// cache lookup, replay or execution — in every mode, so no earlier reusable entry
+	// can bypass it. Diagnostics instead carry the check to report the refusal.
+	requiredNames, requirement := selectRequirement(req)
+	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist, requiredNames)
 	childEnv := effEnv.ChildEnv()
+	if requirement != nil {
+		requirement.Check = effEnv.Requirement()
+		if !requirement.Satisfied() && forRun {
+			return keyContext{}, &EnvRequirementError{Requirement: *requirement}
+		}
+	}
 
 	// Probes are not proven read-only, so their phase completes before the executable,
 	// input and effect observations the key is built from: whatever a probe changes is
 	// then seen by those observations instead of slipping between them and the lookup.
 	var acquire factAcquirer
-	if acquireFacts {
+	if forRun {
 		acquire = s.acquirerFor(req, childEnv)
 	}
 	validation, auth, err := s.withPreRunFacts(ctx, req, validation, acquire)
@@ -817,6 +838,7 @@ func (s *Service) buildKeyContext(ctx context.Context, req Request, persistIndex
 		BaseStatus:    baseStatus,
 		Reason:        reason,
 		Authorization: auth,
+		Requirement:   requirement,
 		acquire:       acquire,
 	}, nil
 }
@@ -896,8 +918,8 @@ func (s *Service) buildKeyInput(req Request, cfg config.Config, scope config.Sca
 // allowlisted values plus awa's fixed injected facts, which are keyed too. An unset
 // variable is recorded in the key but passed to nothing, and a variable set to ""
 // keys differently from one unset.
-func (s *Service) effectiveEnv(allowlist []string) runcache.EffectiveEnvironment {
-	return runcache.BuildEffectiveEnvironment(s.deps.Hasher, runtime.GOOS, allowlist, s.deps.Env.Lookup)
+func (s *Service) effectiveEnv(allowlist, required []string) runcache.EffectiveEnvironment {
+	return runcache.BuildEffectiveEnvironment(s.deps.Hasher, runtime.GOOS, allowlist, required, s.deps.Env.Lookup)
 }
 
 // cacheability decides whether a run may read and write the cache, the baseline

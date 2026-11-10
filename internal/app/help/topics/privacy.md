@@ -71,8 +71,9 @@ of your own.
 ## The environment a wrapped command runs with
 
 `awa run` does not hand the child your whole environment. It builds one: a built-in
-baseline, plus whatever `[run].env_allowlist` adds, plus a fixed fact awa injects —
-and nothing else. Refusing full inheritance is what makes the cache honest. Every
+baseline, plus whatever `[run].env_allowlist` adds, plus the names a matching
+`[[run.required_env]]` declaration requires, plus a fixed fact awa injects — and
+nothing else. Refusing full inheritance is what makes the cache honest. Every
 value the child can see is in the cache key, so no variable can change a result
 behind awa's back, and no unrelated secret in your shell reaches a wrapped command.
 
@@ -93,7 +94,8 @@ That matters because locale is not a preference: a reader that decodes UTF-8 und
 your locale decodes US-ASCII without it. Each locale variable is keyed like any
 other, so changing one is an honest cache miss rather than a silently different run.
 
-Everything else is opt-in, by name, in `[run].env_allowlist`. The shipped default
+Everything else is opt-in, by name: for every command in `[run].env_allowlist`,
+or for one command in `[[run.required_env]]` (below). The shipped allowlist
 is `["CI", "NODE_ENV"]`; add what your commands actually depend on:
 
 ```toml
@@ -102,11 +104,12 @@ env_allowlist = ["PYTHONPATH", "MY_TOOL_MODE"]
 ```
 
 Setting a variable for one invocation does not bypass this: with
-`NAME=value awa run -- <command>`, an unlisted `NAME` is dropped without a
-message. `awa config effective` shows what the child gets
-(`effective_env_allowlist`, `injected_env`). Adding a name is a project policy
-change. Do not move a value onto the wrapped command line instead: argv is
-stored verbatim.
+`NAME=value awa run -- <command>`, an undeclared `NAME` is dropped without a
+message. `awa config effective` shows what every child gets
+(`effective_env_allowlist`, `injected_env`); a command a `required_env`
+declaration selects also gets that declaration's names, so for it that list is
+not the complete set. Adding a name is a project policy change. Do not move a
+value onto the wrapped command line instead: argv is stored verbatim.
 
 Some families are deliberately never in the baseline, because inheriting them by
 default would be wrong for most projects:
@@ -127,6 +130,32 @@ the value, not what lives behind it, so the contents of those directories stay
 outside the evidence boundary and a cache hit does not prove they are unchanged.
 `PYTHONPATH` is the worked example, and why it is not a default: awa can tell that
 the path string is the same, never that the importable code behind it still is.
+
+## Requiring a variable for one command
+
+`env_allowlist` is optional: an unset name is passed as unset, and the run goes
+ahead. When a result means nothing without a value, declare it (new in this
+release; older binaries reject the key as unknown):
+
+```toml
+[[run.required_env]]
+argv = ["dotnet", "restore"]
+cwd = "."
+names = ["NUGET_PACKAGES"]
+```
+
+Each name is passed to that one invocation, and keyed, with no allowlist entry.
+If one is unset or empty, `awa run` exits 1 before any probe, observation, cache
+lookup, replay, or execution, under `--record`, `--no-cache` and `--refresh` too,
+and records nothing. `awa run explain` reports `refused` with reason
+`env-requirement-unmet`; `run ls` never lists the run as reusable.
+
+Selection is exact: complete argv and cwd, as for validation policies, so
+`dotnet restore --force` is not covered. Declare it first: awa cannot tell
+`NAME=v awa run ...` from your shell. For a one-off check, put the declaration in
+`.awa/config.toml`; a list there replaces the shared one. Names only, never values.
+Transmission is not isolation: awa cannot show the tool used the variable or what
+is behind the path.
 
 ## The `AWA_RUN` marker
 

@@ -371,6 +371,15 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 	if err != nil {
 		return lsAssessment{}, err
 	}
+	// A run of this invocation would refuse before observing or looking anything up,
+	// so it is settled not reusable now without a scan or a key. The row stays an
+	// assessed one: the refusal is known, not an unknown that would leave the window
+	// incomplete. The check comes from the same assembly the key below is built over.
+	requiredNames, requirement := selectRequirement(req)
+	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist, requiredNames)
+	if requirement != nil && !effEnv.Requirement().Satisfied() {
+		return notReusable(runcache.ReasonEnvRequirementUnmet)
+	}
 	if validation, _, err = s.withPreRunFacts(ctx, req, validation, nil); err != nil {
 		return lsAssessment{}, err
 	}
@@ -404,7 +413,7 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 		scanCache.put(sig, scanRes, newInputReport(s.deps.Clock.Now().Sub(scanStart).Milliseconds(), scanRes.Stats().Files))
 	}
 
-	current := s.currentKeyInputFor(req, scope, validation, scanRes.TreeHash(), effect)
+	current := s.currentKeyInputFor(req, effEnv, scope, validation, scanRes.TreeHash(), effect)
 	a := lsAssessment{
 		cmp:          runcache.CompareKeyInputs(entry.KeyInput, current),
 		compared:     true,
@@ -442,13 +451,13 @@ func (s *Service) reusability(ctx context.Context, base Request, entry runcache.
 }
 
 // currentKeyInputFor builds the key input a real run of the entry's command would
-// compute now: the current allowlisted environment checkpoint, the executable
-// resolved under that environment, the freshly scanned input tree hash, and the
+// compute now: the environment the caller assembled for it (the same one its
+// requirement check read), the executable resolved under that environment, the
+// freshly scanned input tree hash, and the
 // effect observation the caller observed once for this Ls, folded through the same
 // buildKeyInput the run path uses — so a deleted or changed generated-output root
 // surfaces as effect-state-differs in the current-state reuse view.
-func (s *Service) currentKeyInputFor(req Request, scope config.ScanScope, validation *runcache.ValidationScope, treeHash hashing.TreeHash, effect runcache.EffectObservation) runcache.KeyInput {
-	effEnv := s.effectiveEnv(req.Config.Run.EnvAllowlist)
+func (s *Service) currentKeyInputFor(req Request, effEnv runcache.EffectiveEnvironment, scope config.ScanScope, validation *runcache.ValidationScope, treeHash hashing.TreeHash, effect runcache.EffectObservation) runcache.KeyInput {
 	resolvedPath, resolvedStat, _ := s.deps.Resolver.Resolve(req.Argv[0], req.AbsDir, effEnv.ChildEnv())
 	return s.buildKeyInput(req, req.Config, scope, validation, treeHash, effect, resolvedPath, resolvedStat, effEnv.Keyed())
 }

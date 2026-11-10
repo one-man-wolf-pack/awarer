@@ -473,10 +473,11 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 		return err
 	}
 
-	proj, layout, cfg, err := loadProjectConfig(inv.options)
+	proj, layout, resolved, err := loadProjectConfigFull(inv.options)
 	if err != nil {
 		return err
 	}
+	cfg := resolved.Config()
 	// A run writes captured output and metadata into .awa/; keep the git guard intact
 	// before growing that state. Restoration is silent when the guard is only missing.
 	if err := guardPreflight(w, proj, true); err != nil {
@@ -554,6 +555,10 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 		Stderr: errW,
 	})
 	if err != nil {
+		var refusal *apprun.EnvRequirementError
+		if errors.As(err, &refusal) {
+			return envRequirementRefusal(refusal.Requirement, resolved.OriginOf("run.required_env"))
+		}
 		return classifyRunError(err)
 	}
 
@@ -1314,6 +1319,31 @@ func (realClock) Now() time.Time { return time.Now() }
 // exit 5; an ambiguous prefix is a usage error; an unknown id or key is not-found;
 // an invalid config is a config error; a start failure or anything else is
 // generic.
+// envRequirementRefusal is run's exit-1 diagnostic for an unmet command environment
+// requirement: an awa failure of an execution precondition, distinct from invalid
+// configuration (4), invalid usage (2) and any child outcome. It names the declaration,
+// its layer and the invocation it selected, then the failing names with their unset or
+// empty state — bounded and escaped, never a value, and never the ambient names nobody
+// declared. The remedy is the caller's environment, not argv or config values.
+func envRequirementRefusal(r apprun.EnvRequirement, origin domainconfig.Layer) error {
+	return genericErrorf("run refused before execution: run.required_env[%d] (%s) selects `%s` in cwd %s and requires nonempty caller values: %s\n"+
+		"set them in the environment that starts awa (config holds names, never values); see `awa help privacy`",
+		r.Index, requirementSource(origin), commandPreview(r.Argv), strconv.Quote(r.CWD), r.UnmetSummary(envNameText))
+}
+
+// requirementSource names the config layer a declaration came from for human text:
+// "shared config", "local config", or the explicit "--config file".
+func requirementSource(origin domainconfig.Layer) string {
+	if origin == domainconfig.LayerConfig {
+		return "--config file"
+	}
+	return origin.String() + " config"
+}
+
+// envNameText renders a configured environment variable name with the command escapes,
+// so a control character in a name cannot reach the terminal.
+func envNameText(name string) string { return commandText([]string{name}) }
+
 func classifyRunError(err error) error {
 	if c := interruptError(err); c != nil {
 		return c

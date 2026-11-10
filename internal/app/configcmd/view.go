@@ -99,6 +99,25 @@ type RunView struct {
 	ExtraEffectRoots     []string         `json:"extra_effect_roots"`
 	EffectiveEffectRoots []string         `json:"effective_effect_roots"`
 	Validation           []ValidationView `json:"validation"`
+	// RequiredEnv is the declared command environment requirements: names only. It
+	// describes configuration, not a run, so it never reports whether a caller
+	// currently has the variables; a selected command's required names join its own
+	// inherited set at run time and are not folded into EffectiveEnvAllowlist.
+	RequiredEnv []RequiredEnvView `json:"required_env"`
+}
+
+type RequiredEnvView struct {
+	Argv  []string `json:"argv"`
+	CWD   string   `json:"cwd"`
+	Names []string `json:"names"`
+}
+
+func requiredEnvViews(ds []config.EnvRequirement) []RequiredEnvView {
+	out := make([]RequiredEnvView, len(ds))
+	for i, d := range ds {
+		out[i] = RequiredEnvView{Argv: slices.Clone(d.Argv), CWD: d.CWD, Names: slices.Clone(d.Names)}
+	}
+	return out
 }
 
 type ValidationView struct {
@@ -192,6 +211,7 @@ func NewView(c config.Config) View {
 			ExtraEffectRoots:      slices.Clone(c.Run.WatchedEffectRoots),
 			EffectiveEffectRoots:  config.EffectiveEffectRoots(c.Run.WatchedEffectRoots),
 			Validation:            validationViews(c.Run.Validation),
+			RequiredEnv:           requiredEnvViews(c.Run.RequiredEnv),
 		},
 		GC: GCView{
 			KeepLastCheckpoints: c.GC.KeepLastCheckpoints,

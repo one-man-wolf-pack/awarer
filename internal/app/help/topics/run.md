@@ -195,14 +195,19 @@ unless another rule decides, and `run ls` lists the run as unassessed: unknown,
 not a miss. With `--json`, `run ls` and `run explain` share one near-miss shape;
 see [awa help json](json.md).
 
+An unmet [`[[run.required_env]]`](privacy.md) makes `awa run` exit 1 before
+probes, observation, cache lookup, replay or execution; explain says `refused`
+(`env-requirement-unmet`), `run ls` not reusable.
+
 ## Evidence and privacy
 
 Captured stdout/stderr is stored verbatim and never redacted, so a printed
 secret is stored. Output over the capture limit is stored truncated, and the
 footer, replay, and `run show` state the omitted byte count. The child does not
 inherit your environment: it gets the built-in baseline (your locale
-unchanged), what `env_allowlist` adds, and the advisory marker `AWA_RUN=1`, all
-keyed; allowlisted values are stored only as a redacted identity. See
+unchanged), what `env_allowlist` adds, the names a matching `required_env`
+declaration requires, and the advisory marker `AWA_RUN=1`, all keyed; passed
+values are stored only as a redacted identity. See
 [awa help privacy](privacy.md).
 
 <!-- awa:include effect-vs-exclude -->

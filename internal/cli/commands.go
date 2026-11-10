@@ -1430,6 +1430,7 @@ func renderEffective(w *output.Writer, v configcmd.View, resolved domainconfig.R
 	kv("run.extra_effect_roots", "extra_effect_roots = %s", quoteList(v.Run.ExtraEffectRoots))
 	w.Linef("effective_effect_roots = %s", quoteList(v.Run.EffectiveEffectRoots))
 	kv("run.validation", "validation = %s", validationList(v.Run.Validation))
+	kv("run.required_env", "required_env = %s", requiredEnvList(v.Run.RequiredEnv))
 	w.Line("")
 	w.Line("[gc]")
 	kv("gc.keep_last_checkpoints", "keep_last_checkpoints = %d", v.GC.KeepLastCheckpoints)
@@ -1454,6 +1455,16 @@ func quoteList(items []string) string {
 	parts := make([]string, len(items))
 	for i, s := range items {
 		parts[i] = strconv.Quote(s)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// requiredEnvList renders declarations as inline tables: names only, because a
+// declaration says what a command needs, never what the caller currently has.
+func requiredEnvList(ds []configcmd.RequiredEnvView) string {
+	parts := make([]string, len(ds))
+	for i, d := range ds {
+		parts[i] = fmt.Sprintf("{ argv = %s, cwd = %s, names = %s }", quoteList(d.Argv), strconv.Quote(d.CWD), quoteList(d.Names))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

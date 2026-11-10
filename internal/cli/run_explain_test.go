@@ -31,7 +31,7 @@ func TestExplainViewSkippedSamplesIncludeReason(t *testing.T) {
 		},
 	}
 
-	data, err := json.Marshal(explainView(res))
+	data, err := json.Marshal(explainView(res, domainconfig.LayerDefault))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestExplainJSONKeepsEveryDifference(t *testing.T) {
 	if got := len(differenceLines(cmp)); got >= len(names) {
 		t.Fatalf("human output printed %d lines for %d differences; it is not bounded", got, len(names))
 	}
-	view := explainView(apprun.ExplainResult{Outcome: apprun.OutcomeMiss, Differences: cmp})
+	view := explainView(apprun.ExplainResult{Outcome: apprun.OutcomeMiss, Differences: cmp}, domainconfig.LayerDefault)
 	if got := len(view.Differences); got != len(names) {
 		t.Errorf("JSON differences = %d, want all %d: truncation must not reach the machine surface", got, len(names))
 	}
@@ -226,7 +226,7 @@ func TestExplainExactMatchProjectsUnknownFactsAsNull(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			res := apprun.ExplainResult{Outcome: apprun.OutcomeDisabled, Reason: "no-cache", Subject: apprun.ExplainSubject{Exact: c.exact}}
-			data, err := json.Marshal(explainView(res))
+			data, err := json.Marshal(explainView(res, domainconfig.LayerDefault))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,7 +241,7 @@ func TestExplainExactMatchProjectsUnknownFactsAsNull(t *testing.T) {
 			}
 
 			var stdout, stderr bytes.Buffer
-			renderExplain(output.New(&stdout, &stderr), res, domainconfig.TimeRelative, time.Unix(0, 0))
+			renderExplain(output.New(&stdout, &stderr), res, domainconfig.LayerDefault, domainconfig.TimeRelative, time.Unix(0, 0))
 			var got string
 			for line := range strings.Lines(stdout.String()) {
 				if strings.HasPrefix(line, "exact match:") {

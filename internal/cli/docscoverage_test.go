@@ -141,6 +141,7 @@ var docCoverage = map[string]coverageOwner{
 	"reason:external-facts-unavailable":          {topic: "validation"},
 	"reason:external-facts-changed":              {topic: "validation"},
 	"reason:external-facts-unavailable-post-run": {topic: "validation"},
+	"reason:env-requirement-unmet":               {topic: "privacy"},
 }
 
 // requiredCoverageKeys derives the capability keys from the live registries. It is
