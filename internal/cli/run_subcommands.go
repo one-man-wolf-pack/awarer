@@ -351,11 +351,20 @@ func runHistoryHint(command string) string {
 // It decides from the run's own stored verdict, never from rendered text, and reads
 // nothing; run show reports any payload problem itself.
 func recordedHistoryFollowUp(c apprun.RunReuseCandidate) (string, bool) {
-	r := c.Entry.Reuse
-	if r.Kind() != runcache.ReuseRecordOnly || (r.Reason() != runcache.ReasonRecordOnly && r.Reason() != runcache.ReasonNoCache) {
+	if !deliberateRecording(c.Entry.Reuse) {
 		return "", false
 	}
 	return "awa run show " + c.Entry.ID.String() + " --tail 50", true
+}
+
+// deliberateRecording reports whether a stored reuse verdict is intentional history:
+// kind record-only with reason record-only (--record) or no-cache (--no-cache). The
+// record-only kind alone is not deliberate — stdin, capture, observation, failure and
+// authorization blockers share it and remain technical reasons. It is the one rule the
+// run footer, near-miss follow-ups and status use, decided from facts, never from
+// rendered text.
+func deliberateRecording(r runcache.ReuseState) bool {
+	return r.Kind() == runcache.ReuseRecordOnly && (r.Reason() == runcache.ReasonRecordOnly || r.Reason() == runcache.ReasonNoCache)
 }
 
 // shellWord renders s as one POSIX shell word for a copyable command line: bare when

@@ -39,7 +39,7 @@ func TestAcceptanceReviewUX(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit = %d, stderr = %q", code, stderr)
 	}
-	for _, want := range []string{"awa run: stored", "exit:     0", "run:      ", "cwd:      ", "inspect:  awa run show"} {
+	for _, want := range []string{"awa run: stored ", " exit=0 ", " cwd=.", "inspect: awa run show "} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("run footer missing %q:\n%s", want, stderr)
 		}
@@ -175,12 +175,16 @@ func TestAcceptanceReviewUX(t *testing.T) {
 		"checkpoint:",
 		"specific review checkpoint",
 		"dirty:",
-		"near miss",
+		"non-reusable candidate(s)",
 		"next:",
 	} {
 		if !strings.Contains(dash, want) {
 			t.Errorf("status dashboard missing %q:\n%s", want, dash)
 		}
+	}
+	// The candidate's input-tree-differs reason is technical, not deliberate history.
+	if strings.Contains(dash, "deliberately recorded") {
+		t.Errorf("a technical candidate is labeled deliberate:\n%s", dash)
 	}
 
 	// status --json carries the same review facts the human dashboard shows: the

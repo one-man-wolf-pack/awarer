@@ -69,7 +69,7 @@ func TestNamedValidationReplaysOnlyTheResult(t *testing.T) {
 	if !isHit(stderr) || stdout != "checked\n" {
 		t.Fatalf("repeat: stdout %q stderr %q", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "replay:   result only (policy check); not observed or recreated: build, gen") {
+	if !strings.Contains(stderr, "replay: result only (policy check); not observed or recreated: build, gen") {
 		t.Errorf("the hit is not disclosed as result-only: %q", stderr)
 	}
 	if got := readAt(t, root, "build/obj/out"); got != built {

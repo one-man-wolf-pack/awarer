@@ -592,12 +592,18 @@ func executeRun(w *output.Writer, inv invocation, flags runFlags, argv []string)
 	return &commandExit{code: res.ExitCode}
 }
 
-// emitRunFooter prints the single compact review footer after a real execution or a
-// cache hit. It leads with the storage state (hit/stored/record-only/uncached) and
-// the run's identity — id, cwd, exit, duration, and whether the result is reusable —
-// then the inspection command, and, when the run mutated or is otherwise
-// non-reusable history, the exact before/after compare command. All footer lines go
-// to stderr as diagnostics so a piped stdout receives only the command's own bytes.
+// emitRunFooter prints the compact review footer after a real execution or a cache
+// hit, following the output RFC's compact-run-footer grammar. It leads with one
+// summary row — storage or replay state, run identity, exit, duration and cwd, plus a
+// technical non-reuse reason — then the exact stored-output inspection command. Any
+// further line is conditional on a fact that could mislead if hidden: validation
+// replay/policy limits, capture truncation, skipped inputs, observed mutation with its
+// before/after compare, the effect and cache diagnoses, and latency notes. All footer
+// lines go to stderr as diagnostics so a piped stdout receives only the command's bytes.
+//
+// The footer never prints an executable follow-up rebuilt from the command's argv:
+// a joined, clipped or shell-guessed command line is not the invocation that ran. The
+// stored run is addressed by its exact id instead.
 //
 // The footer is presentation: it never changes the process exit code. If the summary
 // cannot be built — an impossible-state guard tripping, which means a domain bug —
@@ -609,54 +615,40 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 		w.Diagnostic("warning: could not summarize run (internal): " + err.Error())
 		return
 	}
+	w.Diagnostic(runSummaryLine(sum, res.Reuse))
 
-	reuse := "reusable"
-	if !sum.Reusable {
-		reuse = "not reusable"
-		if sum.Reason != "" {
-			reuse = fmt.Sprintf("not reusable (%s)", sum.Reason)
-		}
-	}
-	// Header names the storage state and the reuse verdict; the aligned block below
-	// carries identity and facts, so the footer reads like the run show meta and the
-	// status dashboard rather than a fourth footer grammar.
-	w.Diagnostic(fmt.Sprintf("awa run: %s, %s", sum.State, reuse))
-
-	if !sum.RunID.IsZero() {
-		w.Diagnostic(fmt.Sprintf("  run:      %s", sum.RunID.Short()))
-		w.Diagnostic(fmt.Sprintf("  cwd:      %s", footerCWD(sum.CWD)))
-	}
-	w.Diagnostic(fmt.Sprintf("  exit:     %s", exitLabel(sum.Exit)))
-	w.Diagnostic("  duration: " + durationLabel(sum.Duration))
+	// Facts, then risks, then the exact follow-ups, per the output RFC's section order.
 	if v := res.Execution.KeyInput.Validation; v != nil {
 		if res.Status == runcache.CacheHit {
-			w.Diagnostic("  replay:   " + validationReplayLine(v))
+			w.Diagnostic("replay: " + validationReplayLine(v))
 		} else {
-			w.Diagnostic("  policy:   " + validationPolicyLine(v))
+			w.Diagnostic("policy: " + validationPolicyLine(v))
 		}
 		if line := identityFactsLine(v, res.Execution.PostRunFacts, res.Status == runcache.CacheHit, res.Execution.ProbeAuthorization); line != "" {
-			w.Diagnostic("  facts:    " + line)
+			w.Diagnostic("facts: " + line)
 		}
 	}
 	emitTruncationBanner(w, res.Execution.Output)
-	if sum.Recorded && !sum.RunID.IsZero() {
-		w.Diagnostic(fmt.Sprintf("  inspect:  awa run show %s (add --tail N for more)", sum.RunID.Short()))
+	for _, line := range observationLimitLines(res, summaryReason(sum, res.Reuse), res.EffectDiagnosis != nil) {
+		w.Diagnostic(line)
 	}
-	if !sum.Recorded {
-		w.Diagnostic("  note:     full output not stored (run not recorded); nothing to inspect later")
+	// Observed mutation is always a visible risk; the exact before/after compare joins
+	// it only when both observations were recorded. A clean run — reusable or
+	// deliberately non-reusable history — gets no compare, which would be empty noise.
+	if sum.Mutated {
+		w.Diagnostic("warning: observed state changed during this run's execution window; its result is not replayable")
 	}
-	// A mutating or otherwise non-reusable recorded run is where a reviewer most needs
-	// the exact pre/post compare command, so surface it explicitly. A clean reusable
-	// run's before and after are identical, so the compare would be empty noise — skip
-	// it there.
-	if !sum.Reusable && sum.PrePostCompareAvailable() {
-		if sum.Mutated {
-			w.Diagnostic("  warning:  observed state changed during this run; its result is not replayable")
-		}
-		w.Diagnostic("  compare:  awa changes " + prePostCompareRef(sum.RunID.Short()))
-	}
-
+	compare := sum.Mutated && sum.PrePostCompareAvailable()
 	emitEffectDiagnosis(w, res.EffectDiagnosis)
+
+	if sum.Recorded && !sum.RunID.IsZero() {
+		w.Diagnostic(fmt.Sprintf("inspect: awa run show %s --tail 200", sum.RunID.String()))
+	} else {
+		w.Diagnostic("note: output not stored (run not recorded); nothing to inspect later")
+	}
+	if compare {
+		w.Diagnostic("compare: awa changes " + prePostCompareRef(sum.RunID.String()))
+	}
 	emitCacheDiagnosis(w, res, sum, diag)
 
 	// Latency diagnostics come last: a slow-but-known cause (a huge watched effect root
@@ -664,6 +656,70 @@ func emitRunFooter(w *output.Writer, res apprun.Result, diag apprun.RunInlineDia
 	// notes and already selected by the app layer. They stay quiet when nothing crossed
 	// the interactive threshold.
 	emitPerformanceNotes(w, res.Performance)
+}
+
+// runSummaryLine renders the footer's one summary row in the compact key=value scan
+// grammar: `awa run: <state> [<short-id>] exit=<exit> duration=<N.Ns> cwd=<cwd>`, with
+// a trailing `not-reusable(<reason>)` only for a technical or evidence reason. A hit is
+// labeled as a replay so it never reads as a fresh execution. Deliberate recording
+// (--record or --no-cache) is already named by the record-only state, so repeating its
+// reason would present chosen history as a cache defect. The cwd is escaped like a
+// command preview so a control character cannot become terminal formatting.
+func runSummaryLine(sum apprun.RunExecutionSummary, reuse runcache.ReuseState) string {
+	var b strings.Builder
+	b.WriteString("awa run: ")
+	if sum.State == apprun.RunStateHit {
+		b.WriteString("hit (replay)")
+	} else {
+		b.WriteString(sum.State.String())
+	}
+	if !sum.RunID.IsZero() {
+		b.WriteString(" " + sum.RunID.Short())
+	}
+	fmt.Fprintf(&b, " exit=%s duration=%s cwd=%s", exitLabel(sum.Exit), durationLabel(sum.Duration), commandText([]string{footerCWD(sum.CWD)}))
+	if r := summaryReason(sum, reuse); r != "" {
+		fmt.Fprintf(&b, " not-reusable(%s)", r)
+	}
+	return b.String()
+}
+
+// summaryReason is the non-reuse reason the summary row names: the canonical reason of
+// a non-reusable result, or none for a reusable one or for deliberate recording, which
+// its record-only state already names.
+func summaryReason(sum apprun.RunExecutionSummary, reuse runcache.ReuseState) runcache.MismatchReason {
+	if sum.Reusable || (sum.Recorded && deliberateRecording(reuse)) {
+		return ""
+	}
+	return sum.Reason
+}
+
+// observationLimitLines renders the execution's incomplete observations from its own
+// typed facts, independently of the primary reuse reason: a deliberate recording, or
+// a run blocked by another reason, can still have skipped inputs, a failed post-run
+// observation or unobservable watched output, and hiding them behind that reason would
+// present partial evidence as complete. A limit the summary row already names as its
+// reason (shown), or the effect diagnosis already explains (effectExplained), is not
+// repeated. An unknown observation is reported as unknown, never as a change.
+func observationLimitLines(res apprun.Result, shown runcache.MismatchReason, effectExplained bool) []string {
+	var lines []string
+	exec := res.Execution
+	if s := exec.Skipped; s.Count > 0 {
+		switch {
+		case s.Allowed:
+			// The flag permits only the skip; whether the run is reusable stays the
+			// summary's verdict, so the line claims nothing about reuse.
+			lines = append(lines, fmt.Sprintf("warning: %d input(s) skipped (not read); skipping permitted by --allow-skipped-inputs", s.Count))
+		case shown != runcache.ReasonSkippedInputs:
+			lines = append(lines, fmt.Sprintf("warning: %d input(s) skipped (not read); this run's observation is incomplete", s.Count))
+		}
+	}
+	if exec.Mutation.ScanFailed() && shown != exec.Mutation.Reason() {
+		lines = append(lines, "warning: the post-run observation failed; whether observed state changed during this run is unknown")
+	}
+	if exec.EffectGuard.Unavailable() && !effectExplained && shown != exec.EffectGuard.Reason() {
+		lines = append(lines, "warning: watched generated-output state could not be observed safely; its state after this run is unknown")
+	}
+	return lines
 }
 
 // emitTruncationBanner writes a per-stream notice whenever a run's stored output is
@@ -679,12 +735,11 @@ func emitTruncationBanner(w *output.Writer, out *apprun.Output) {
 	if out == nil {
 		return
 	}
-	// Two-space indent to sit inside the aligned footer block.
 	if out.Stdout.Truncated {
-		w.Diagnostic("  " + truncationNotice("stdout", out.Stdout.OmittedBytes))
+		w.Diagnostic(truncationNotice("stdout", out.Stdout.OmittedBytes))
 	}
 	if out.Stderr.Truncated {
-		w.Diagnostic("  " + truncationNotice("stderr", out.Stderr.OmittedBytes))
+		w.Diagnostic(truncationNotice("stderr", out.Stderr.OmittedBytes))
 	}
 }
 
@@ -697,72 +752,60 @@ func truncationNotice(stream string, omitted int64) string {
 
 // prePostCompareRef renders the `awa changes` range that diffs a run's recorded
 // before/after observations from an already-chosen id token, so the ref grammar has a
-// single source of truth. The caller picks the id representation its surface needs:
-// the footer passes the short id for a scannable human line, while the machine-readable
-// JSON suggestion passes the full id so its argv is an unambiguous invocation rather
-// than a display-only prefix.
+// single source of truth. Both the footer and the machine-readable JSON suggestion pass
+// the full id, so the command is an unambiguous invocation rather than a display-only
+// prefix.
 func prePostCompareRef(idToken string) string {
 	return fmt.Sprintf("run:%s:before..run:%s:after", idToken, idToken)
 }
 
 // emitCacheDiagnosis appends the bounded inline cache diagnosis to the footer: for a
 // clean miss (one that became reusable or was left uncached) with a nearest previous
-// run, it names that run, why it is not reusable, a bounded changed-input sample, and
-// at most one advisory hint. It always points at the deeper `run explain` command for
-// any non-hit, and adds `run ls --near` when a nearest candidate is shown — or, for a
-// deliberately recorded nearest run, the `run show` command that reads its output.
+// run, it names that run, why it is not reusable, a bounded changed-input sample, at
+// most one advisory hint, and one follow-up: `run ls --near`, or, for a deliberately
+// recorded nearest run, the `run show` command that reads its output.
 //
 // It stays quiet where it would only repeat what the footer already said: a hit needs
-// no diagnosis, and a mutating or record-only run already leads with its reason and
-// (for a mutating run) the pre/post compare command, so the nearest-candidate block is
-// suppressed there to avoid noise — only the deeper-command pointer remains.
+// no diagnosis, and a mutating or record-only run already leads with its own reason
+// (and, for a mutating run, the pre/post compare command). There is no unconditional
+// `run explain` pointer: rebuilding the command line from argv would offer a joined,
+// possibly clipped command as if it were the invocation that ran. The typed JSON
+// suggestions still carry the explain action with its exact argv.
 func emitCacheDiagnosis(w *output.Writer, res apprun.Result, sum apprun.RunExecutionSummary, diag apprun.RunInlineDiagnosis) {
 	if res.Status == runcache.CacheHit {
 		return
 	}
-
-	// The nearest-candidate block is shown only for a plain miss — one that stored a
-	// reusable entry or ran uncached — not for a mutating/record-only run whose own
-	// reason and compare command already explain it.
-	showBlock := diag.Nearest != nil &&
-		(sum.State == apprun.RunStateStored || sum.State == apprun.RunStateUncached)
-
-	if showBlock {
-		n := diag.Nearest
-		w.Diagnostic("  cache diagnosis:")
-		reason := "not-reusable"
-		if n.Reason != "" {
-			reason = fmt.Sprintf("not-reusable(%s)", n.Reason)
-		}
-		w.Diagnostic(fmt.Sprintf("    nearest previous: %s %s", n.Entry.ID.Short(), reason))
-		// One compact detail from the shared renderer, so this preview names the same
-		// watched-state fact status and the deeper surfaces do — and stays silent on the
-		// same rootless candidates they do, rather than paraphrasing the reason above.
-		if detail := effectDetail(n.Effect); detail != "" {
-			w.Diagnostic("    effect: " + detail)
-		}
-		if n.Changed != nil && len(n.Changed.Paths()) > 0 {
-			w.Diagnostic("    changed inputs: " + changedInputsLabel(n.Changed))
-		}
-		// Advisory only: a hint suggests where a [run] exclude might belong; it never
-		// implies the path is safe to ignore and never removes it from the sample above.
-		if len(n.Hints) > 0 {
-			w.Diagnostic("    hint: review [run] excludes near " + n.Hints[0].Suggestion)
-		}
+	if diag.Nearest == nil || (sum.State != apprun.RunStateStored && sum.State != apprun.RunStateUncached) {
+		return
 	}
 
-	argv := res.Execution.KeyInput.Command.Argv
-	if len(argv) > 0 {
-		w.Diagnostic("  explain:  awa run explain -- " + strings.Join(argv, " "))
+	n := diag.Nearest
+	w.Diagnostic("cache diagnosis:")
+	reason := "not-reusable"
+	if n.Reason != "" {
+		reason = fmt.Sprintf("not-reusable(%s)", n.Reason)
 	}
-	if showBlock {
-		// A deliberately recorded nearest run is history to read, not a near miss to
-		// chase; every other reason keeps the near-miss pointer.
-		if history, ok := recordedHistoryFollowUp(*diag.Nearest); ok {
-			w.Diagnostic("  history:  " + history)
-		} else {
-			w.Diagnostic("  near:     awa run ls --near")
-		}
+	w.Diagnostic(fmt.Sprintf("  nearest previous: %s %s", n.Entry.ID.Short(), reason))
+	// One compact detail from the shared renderer, so this preview names the same
+	// watched-state fact status and the deeper surfaces do — and stays silent on the
+	// same rootless candidates they do, rather than paraphrasing the reason above.
+	if detail := effectDetail(n.Effect); detail != "" {
+		w.Diagnostic("  effect: " + detail)
+	}
+	if n.Changed != nil && len(n.Changed.Paths()) > 0 {
+		w.Diagnostic("  changed inputs: " + changedInputsLabel(n.Changed))
+	}
+	// Advisory only: a hint suggests where a [run] exclude might belong; it never
+	// implies the path is safe to ignore and never removes it from the sample above.
+	if len(n.Hints) > 0 {
+		w.Diagnostic("  hint: review [run] excludes near " + n.Hints[0].Suggestion)
+	}
+	// A deliberately recorded nearest run is history to read, not a near miss to
+	// chase; every other reason keeps the near-miss pointer.
+	if history, ok := recordedHistoryFollowUp(*n); ok {
+		w.Diagnostic("  history: " + history)
+	} else {
+		w.Diagnostic("  near: awa run ls --near")
 	}
 }
 

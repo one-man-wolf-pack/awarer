@@ -56,13 +56,14 @@ next:
   `unavailable (<reason>)`, or `non-git`. The dashboard always states git status
   so it is obvious whether a git cross-check applies at all.
 - `reusable:` counts runs replayable for the current observed state. When none
-  are, it reports how many near misses exist and points at `awa run ls --near`;
-  a `nearest:` sub-line then names the closest candidate and its reason token.
-  A deliberately recorded candidate (`record-only` or `no-cache`) adds a
-  `history:` line with `awa run show <id> --tail 50`: it is history to read, not
-  a miss.
+  are, it reports how many non-reusable candidates exist and points at
+  `awa run ls --near`; a `nearest:` sub-line then names the closest candidate and
+  its reason token. A deliberately recorded candidate (`record-only` or
+  `no-cache`) is marked `(deliberately recorded)` and adds a `history:` line with
+  `awa run show <id> --tail 50`: it is history to read, not a stale check. The
+  mark describes that one candidate, not the whole group.
   Runs whose reuse needs identity-probe reports only `awa run` acquires make it
-  `unknown`, with their count and what the other runs established; a near miss
+  `unknown`, with their count and what the other runs established; a candidate
   shown then is the nearest among those others.
   When that reason is `effect-state-differs` or `effect-state-unavailable` *and*
   the run's state was compared against an observation that identified a dominant

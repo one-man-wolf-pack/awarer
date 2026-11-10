@@ -40,7 +40,7 @@ func TestRunDisplayTailMiss(t *testing.T) {
 	if !strings.Contains(stderr, "last 2 line(s) of stdout") {
 		t.Errorf("stderr missing tail header: %q", stderr)
 	}
-	if !strings.Contains(stderr, "inspect:  awa run show") {
+	if !strings.Contains(stderr, "inspect: awa run show") {
 		t.Errorf("stderr missing inspect footer: %q", stderr)
 	}
 
@@ -113,7 +113,7 @@ func TestRunDisplayHitObeysMode(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hit exit = %d", code)
 	}
-	if !strings.Contains(stderr, "awa run: hit,") {
+	if !strings.Contains(stderr, "awa run: hit (replay) ") {
 		t.Fatalf("expected a hit, stderr = %q", stderr)
 	}
 	if stdout != "line5\n" {

@@ -50,8 +50,9 @@ func decodeRunDiagnosis(t *testing.T, stdout string) runDiagnosisJSON {
 
 // TestRunInlineDiagnosisStaleMiss confirms that after an input edit the run footer
 // itself explains the miss: it names the nearest previous run, its input-tree-differs
-// reason, a bounded changed-input sample, and the deeper run explain / run ls --near
-// commands — so the first response is useful without a follow-up command.
+// reason, a bounded changed-input sample, and the run ls --near follow-up — so the
+// first response is useful without a follow-up command — but no explain command
+// rebuilt from argv.
 func TestRunInlineDiagnosisStaleMiss(t *testing.T) {
 	root := initProject(t)
 	h := helper(t)
@@ -74,12 +75,14 @@ func TestRunInlineDiagnosisStaleMiss(t *testing.T) {
 		"nearest previous:",
 		"not-reusable(input-tree-differs)",
 		"changed inputs: data.txt",
-		"run explain --",
-		"run ls --near",
+		"near: awa run ls --near",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("footer missing %q:\n%s", want, stderr)
 		}
+	}
+	if strings.Contains(stderr, "explain") {
+		t.Errorf("footer rebuilds an explain command from argv:\n%s", stderr)
 	}
 }
 
@@ -107,22 +110,27 @@ func TestRunInlineDiagnosisGeneratedHint(t *testing.T) {
 }
 
 // TestRunInlineDiagnosisMutatingCompact confirms a mutating run stays compact: it
-// leads with the mutated-state reason and the exact pre/post compare command, points
-// at run explain, and does not add a redundant nearest-candidate diagnosis block.
+// leads with the mutated-state reason, warns in temporal terms, gives the exact
+// full-id pre/post compare command, and adds neither a rebuilt explain command nor a
+// redundant nearest-candidate diagnosis block.
 func TestRunInlineDiagnosisMutatingCompact(t *testing.T) {
 	root := initProject(t)
 	h := helper(t)
 	write(t, root, "code.txt", "raw")
 
 	_, _, stderr := awa(t, root, "run", "--", h, "-fix", "code.txt", "-content", "done")
-	if !strings.Contains(stderr, "not reusable (mutated-state)") {
+	if !strings.Contains(stderr, "not-reusable(mutated-state)") {
 		t.Errorf("mutating footer missing mutated-state reason:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "compare:  awa changes run:") {
-		t.Errorf("mutating footer missing pre/post compare command:\n%s", stderr)
+	if !strings.Contains(stderr, "warning: observed state changed during this run's execution window") {
+		t.Errorf("mutating footer missing temporal mutation warning:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "run explain --") {
-		t.Errorf("mutating footer should still point to run explain:\n%s", stderr)
+	id := latestRunID(t, root)
+	if !strings.Contains(stderr, "compare: awa changes run:"+id+":before..run:"+id+":after\n") {
+		t.Errorf("mutating footer missing exact pre/post compare command for %s:\n%s", id, stderr)
+	}
+	if strings.Contains(stderr, "explain") {
+		t.Errorf("mutating footer rebuilds an explain command:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "cache diagnosis:") {
 		t.Errorf("mutating footer should not add a nearest-candidate block:\n%s", stderr)

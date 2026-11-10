@@ -374,7 +374,7 @@ func TestStatusHumanQualifiesANearMissFromAnIncompleteWindow(t *testing.T) {
 	if !strings.Contains(line, "unknown") || !strings.Contains(line, "2 run(s) need identity facts") || strings.Contains(line, "none") {
 		t.Errorf("reusable line = %q, want overall unknown with the unassessed count", line)
 	}
-	if !strings.Contains(out.String(), "assessed:  1 near miss") {
+	if !strings.Contains(out.String(), "assessed:  1 non-reusable candidate(s)") {
 		t.Errorf("near misses not qualified as assessed:\n%s", out.String())
 	}
 	if !strings.Contains(nearest, "nearest assessed:") || !strings.Contains(nearest, "1a2b3c4d5e6f go test ./...") || !strings.Contains(nearest, "not-reusable(input-tree-differs)") {

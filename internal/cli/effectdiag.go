@@ -122,9 +122,8 @@ func effectDetail(d *apprun.EffectDiagnosis) string {
 // recorded as a bounded stat signature, not a per-path manifest, so this names the
 // dominant watched root when the observation identified one and is otherwise honest
 // that no changed-path sample exists — it never fabricates one. It then teaches the
-// exclude/effect-root/record decision so the reader knows the safe next step. The
-// exact before/after inspect command is already printed by the footer when the run
-// recorded both observations, so it is not repeated here.
+// exclude/effect-root/record decision so the reader knows the safe next step. It
+// prints no before/after compare; the footer offers one only for observed mutation.
 func emitEffectDiagnosis(w *output.Writer, diag *apprun.EffectDiagnosis) {
 	if diag == nil {
 		return
@@ -132,21 +131,21 @@ func emitEffectDiagnosis(w *output.Writer, diag *apprun.EffectDiagnosis) {
 	switch diag.Reason {
 	case runcache.ReasonEffectStateDiffers:
 		if diag.Root != "" {
-			w.Diagnostic(fmt.Sprintf("  diagnosis: watched generated-output state changed (dominant root %q)", diag.Root))
+			w.Diagnostic(fmt.Sprintf("diagnosis: watched generated-output state changed (dominant root %q)", diag.Root))
 		} else {
-			w.Diagnostic("  diagnosis: watched generated-output state changed during the run")
+			w.Diagnostic("diagnosis: watched generated-output state changed during the run")
 		}
 	case runcache.ReasonEffectStateUnavailable:
 		if diag.Root != "" {
-			w.Diagnostic(fmt.Sprintf("  diagnosis: watched generated-output state could not be observed safely (root %q)", diag.Root))
+			w.Diagnostic(fmt.Sprintf("diagnosis: watched generated-output state could not be observed safely (root %q)", diag.Root))
 		} else {
-			w.Diagnostic("  diagnosis: watched generated-output state could not be observed safely")
+			w.Diagnostic("diagnosis: watched generated-output state could not be observed safely")
 		}
 	default:
 		return
 	}
-	w.Diagnostic("  sample:    changed-path sample unavailable (effect state is a bounded stat signature)")
-	w.Diagnostic("  hint:      self-generated output -> exclude it ([run].extra_excludes / .awaignore);")
-	w.Diagnostic("             read-only dependency -> keep it a [run].extra_effect_roots root;")
-	w.Diagnostic("             side-effecting command -> awa run --record")
+	w.Diagnostic("sample:    changed-path sample unavailable (effect state is a bounded stat signature)")
+	w.Diagnostic("hint:      self-generated output -> exclude it ([run].extra_excludes / .awaignore);")
+	w.Diagnostic("           read-only dependency -> keep it a [run].extra_effect_roots root;")
+	w.Diagnostic("           side-effecting command -> awa run --record")
 }

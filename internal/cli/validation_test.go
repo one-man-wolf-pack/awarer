@@ -84,10 +84,10 @@ func TestValidationReplayIsDisclosedAsResultOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, stderr = runValidation(root)
-	if code != int(ExitSuccess) || !strings.Contains(stderr, "awa run: hit,") {
+	if code != int(ExitSuccess) || !strings.Contains(stderr, "awa run: hit (replay) ") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "checked") || !strings.Contains(stderr, "replay:   result only (policy check); not observed or recreated: target") {
+	if !strings.Contains(stdout, "checked") || !strings.Contains(stderr, "replay: result only (policy check); not observed or recreated: target") {
 		t.Fatalf("hit disclosure missing: stdout %q stderr %q", stdout, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {

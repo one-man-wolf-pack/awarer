@@ -116,7 +116,7 @@ func TestIdentityProbesKeyTheRunOnTheSelectedTool(t *testing.T) {
 	if l.callCount(t) != 0 {
 		t.Fatalf("approving executed %d probes", l.callCount(t))
 	}
-	if code, _, stderr := runIt(t); code != 0 || isHit(stderr) || l.callCount(t) != 2 || !strings.Contains(stderr, "facts:    1 identity probe reported the same bytes") {
+	if code, _, stderr := runIt(t); code != 0 || isHit(stderr) || l.callCount(t) != 2 || !strings.Contains(stderr, "facts: 1 identity probe reported the same bytes") {
 		t.Fatalf("granted miss: exit %d probes %d stderr %q", code, l.callCount(t), stderr)
 	}
 	if code, stdout, stderr := runIt(t); code != 0 || !isHit(stderr) || stdout != "checked\n" || l.callCount(t) != 3 {

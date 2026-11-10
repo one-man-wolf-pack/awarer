@@ -190,7 +190,7 @@ func TestRunWritesToProvidedStreams(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second run exit = %d", code)
 	}
-	if !strings.Contains(stderr, "awa run: hit,") {
+	if !strings.Contains(stderr, "awa run: hit (replay) ") {
 		t.Fatalf("expected a hit, stderr = %q", stderr)
 	}
 	if !strings.Contains(stdout, "hello-streams") {

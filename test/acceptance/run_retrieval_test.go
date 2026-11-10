@@ -25,6 +25,12 @@ func deliberateRunID(t *testing.T, root, flag string, args ...string) string {
 	if code, _, stderr := awa(t, root, append([]string{"run", flag, "--"}, args...)...); code != 0 {
 		t.Fatalf("run %s: exit %d\n%s", flag, code, stderr)
 	}
+	return latestRunID(t, root)
+}
+
+// latestRunID returns the full id of the newest recorded run in root.
+func latestRunID(t *testing.T, root string) string {
+	t.Helper()
 	_, stdout, _ := awa(t, root, "run", "log", "--json")
 	var env struct {
 		Data []struct {
@@ -132,14 +138,13 @@ func TestRunInlineDiagnosisRecordOnlyNearestRoutesToHistory(t *testing.T) {
 			}
 			for _, want := range []string{
 				"nearest previous: " + id[:12] + " not-reusable(" + tc.reason + ")",
-				"explain:  awa run explain --",
-				"history:  awa run show " + id + " --tail 50",
+				"  history: awa run show " + id + " --tail 50",
 			} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("footer missing %q:\n%s", want, stderr)
 				}
 			}
-			if strings.Contains(stderr, "run ls --near") || strings.Contains(stderr, "--last") {
+			if strings.Contains(stderr, "run ls --near") || strings.Contains(stderr, "--last") || strings.Contains(stderr, "explain") {
 				t.Errorf("deliberately recorded nearest still routed to the near-miss view or --last:\n%s", stderr)
 			}
 
@@ -188,9 +193,9 @@ func statusRoutesDeliberateNearest(t *testing.T, h, flag, reason string) {
 		t.Fatalf("status: exit %d\n%s", code, stderr)
 	}
 	for _, want := range []string{
-		"reusable:    none — 1 near miss(es), inspect with: awa run ls --near",
-		"not-reusable(" + reason + ")\n  history:   awa run show " + id + " --tail 50\n",
-		"awa run ls --near      # why recent checks are stale",
+		"reusable:    none — 1 non-reusable candidate(s), inspect with: awa run ls --near",
+		"not-reusable(" + reason + ") (deliberately recorded)\n  history:   awa run show " + id + " --tail 50\n",
+		"awa run ls --near      # why recent runs are not reusable",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("status missing %q:\n%s", want, stdout)
@@ -209,8 +214,10 @@ func statusRoutesDeliberateNearest(t *testing.T, h, flag, reason string) {
 					} `json:"nearest"`
 				} `json:"runs"`
 				Next []struct {
-					Kind string   `json:"kind"`
-					Argv []string `json:"argv"`
+					Kind    string   `json:"kind"`
+					Reason  string   `json:"reason"`
+					Argv    []string `json:"argv"`
+					Display string   `json:"display"`
 				} `json:"next"`
 			} `json:"review"`
 		} `json:"data"`
@@ -221,6 +228,24 @@ func statusRoutesDeliberateNearest(t *testing.T, h, flag, reason string) {
 	runs := env.Data.Review.Runs
 	if runs.Near == nil || *runs.Near != 1 || runs.Nearest == nil || runs.Nearest.RunID != id || runs.Nearest.Reason != reason {
 		t.Errorf("status JSON runs = %+v, want the %s nearest", runs, reason)
+	}
+	// The neutral explanation is one shared display text: the human dashboard prints
+	// exactly the JSON display, and the action's kind, reason and argv are unchanged.
+	var nearAction bool
+	for _, n := range env.Data.Review.Next {
+		if n.Kind != "run-ls-near" {
+			continue
+		}
+		nearAction = true
+		if n.Reason != "near-misses" || !reflect.DeepEqual(n.Argv, []string{"awa", "run", "ls", "--near"}) {
+			t.Errorf("run-ls-near action changed: %+v", n)
+		}
+		if n.Display != "awa run ls --near      # why recent runs are not reusable" || !strings.Contains(stdout, "\n  "+n.Display+"\n") {
+			t.Errorf("JSON display %q is not the human next line:\n%s", n.Display, stdout)
+		}
+	}
+	if !nearAction {
+		t.Errorf("status JSON lost the run-ls-near action: %+v", env.Data.Review.Next)
 	}
 	for _, n := range env.Data.Review.Next {
 		if strings.Contains(strings.Join(n.Argv, " "), "run show") {

@@ -564,8 +564,35 @@ func joinBundlePath(dir, target string) string {
 	return strings.Join(parts, "/")
 }
 
-// fencedCommandRe matches an "awa <token>" invocation at the start of a line.
-var fencedCommandRe = regexp.MustCompile(`(?m)^awa ([^\s]+)(?:\s+([^\s]+))?`)
+// fencedCommandRe matches an "awa <token>" invocation at the start of a line. A first
+// token ending in ':' is awa's own output prefix (the "awa run:" footer summary shown
+// in an example of output), not an invocation, so it does not match.
+var fencedCommandRe = regexp.MustCompile(`(?m)^awa ([^\s]*[^\s:])(?:\s+([^\s]+))?(?:\s|$)`)
+
+// TestFencedCommandReSkipsOnlyOutputPrefixes pins the narrow exception: awa's own
+// output prefix is not an invocation, while every real or bogus command word — with
+// or without a subcommand — is still matched and therefore still checked.
+func TestFencedCommandReSkipsOnlyOutputPrefixes(t *testing.T) {
+	for line, want := range map[string][]string{
+		"awa run ls --near":                    {"run", "ls"},
+		"awa status":                           {"status", ""},
+		"awa bogus thing":                      {"bogus", "thing"},
+		"awa run --record -- go test ./...":    {"run", "--record"},
+		"awa run: stored 1a2b exit=0 cwd=.":    nil,
+		"awa: fatal error printed by the tool": nil,
+	} {
+		m := fencedCommandRe.FindStringSubmatch(line)
+		if want == nil {
+			if m != nil {
+				t.Errorf("%q matched as an invocation: %q", line, m)
+			}
+			continue
+		}
+		if m == nil || m[1] != want[0] || m[2] != want[1] {
+			t.Errorf("%q = %q, want command %q sub %q", line, m, want[0], want[1])
+		}
+	}
+}
 
 // exampleCommandName resolves the first word after "awa" on an example line to the
 // command it runs: the root version shortcut runs "version"; anything else is the

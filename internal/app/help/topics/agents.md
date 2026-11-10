@@ -102,7 +102,7 @@ roots unchanged:
 ```text
 awa run --stdin null --display tail:200 -- <command>
 awa run ls                       # reusable now (current inputs and policy)
-awa run ls --near                # and why recent checks are now stale
+awa run ls --near                # and why recent runs are not reusable
 awa run explain --stdin null -- <command>   # cache decision, no execution
 awa run --refresh --stdin null -- <command> # force a fresh check
 awa run show --last --grep "<pattern>"      # convenience: the newest run

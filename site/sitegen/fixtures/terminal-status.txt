@@ -10,12 +10,12 @@ store:       /home/dev/acme-api/.awa/store
 checkpoint:  checkpoint 32td8sbxh2dw "before extracting the rate limiter" (just now)
   dirty:     1 changed (0A 1M 0D 0R 0T 0S) — awa changes --stat
 git:         branch main @ ef47c97 (dirty)
-reusable:    none — 1 near miss(es), inspect with: awa run ls --near
+reusable:    none — 1 non-reusable candidate(s), inspect with: awa run ls --near
   nearest:   18c5f22f2059 go test ./... not-reusable(input-tree-differs)
 next:
   awa changes --stat     # what changed since the checkpoint
   awa diff src/          # focus the review on a path
-  awa run ls --near      # why recent checks are stale
+  awa run ls --near      # why recent runs are not reusable
   awa run explain -- <command>
   awa log -n 5          # inspect recent checkpoints if this baseline is surprising
   awa gc --dry-run --json # store footprint and what cleanup would remove

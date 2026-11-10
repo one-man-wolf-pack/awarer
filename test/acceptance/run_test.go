@@ -123,7 +123,7 @@ func helper(t *testing.T) string {
 	return helperBin
 }
 
-func isHit(stderr string) bool { return strings.Contains(stderr, "awa run: hit,") }
+func isHit(stderr string) bool { return strings.Contains(stderr, "awa run: hit (replay) ") }
 
 func TestRunMissThenHit(t *testing.T) {
 	root := initProject(t)

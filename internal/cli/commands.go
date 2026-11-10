@@ -655,7 +655,7 @@ func computeStatusGit(diag *reviewDiag, ctx context.Context, root string) review
 }
 
 // computeStatusRuns reports which recent runs are reusable right now and, when none
-// are, the nearest misses that explain why recent checks are stale. A single
+// are, the nearest non-reusable candidates and their reasons. A single
 // Ls(Near) call answers both from one bounded scan pass. Service/scan failures and
 // the corrupt-metadata count warn under the "runs" section. It also returns the run
 // listing's latency diagnostics (a huge watched effect root that dominated the shared
@@ -699,10 +699,11 @@ func computeStatusRuns(diag *reviewDiag, ctx context.Context, layout paths.Layou
 }
 
 // computeStatusNext builds the next commands most useful given the current state:
-// focus a review when the tree is dirty, explain a stale check when only near misses
-// exist, or checkpoint when nothing has been recorded yet. Each suggestion carries a
-// machine token (kind/reason) and a tokenized argv alongside the human display line,
-// so an agent acts on it without parsing text and the human sees the same commands.
+// focus a review when the tree is dirty, inspect why recent runs are not reusable when
+// only non-reusable candidates exist, or checkpoint when nothing has been recorded yet.
+// Each suggestion carries a machine token (kind/reason) and a tokenized argv alongside
+// the human display line, so an agent acts on it without parsing text and the human
+// sees the same commands.
 func computeStatusNext(res status.Result, dirty bool, runs reviewRunsDoc) []reviewNextDoc {
 	reusable, near := runs.Reusable, runs.Near
 	// A non-nil slice so the JSON field is a stable empty array rather than null.
@@ -733,7 +734,7 @@ func computeStatusNext(res status.Result, dirty bool, runs reviewRunsDoc) []revi
 			reviewNextDoc{
 				Kind: "run-ls-near", Reason: "near-misses",
 				Argv:    []string{"awa", "run", "ls", "--near"},
-				Display: "awa run ls --near      # why recent checks are stale",
+				Display: "awa run ls --near      # why recent runs are not reusable",
 			},
 			reviewNextDoc{
 				Kind: "run-explain", Reason: "near-misses",
@@ -790,7 +791,13 @@ func renderStatusNearest(w *output.Writer, runs reviewRunsDoc, label string) {
 	if n == nil {
 		return
 	}
-	w.Linef("  %s %s %s not-reusable(%s)", label, n.ShortID, commandPreview(n.Command), n.Reason)
+	// A deliberately recorded candidate names that fact about this one row — never the
+	// whole group — so chosen history does not read as a stale check needing repair.
+	deliberate := ""
+	if runs.nearestHistory != "" {
+		deliberate = " (deliberately recorded)"
+	}
+	w.Linef("  %s %s %s not-reusable(%s)%s", label, n.ShortID, commandPreview(n.Command), n.Reason, deliberate)
 	// At most one compact detail line, and only where the candidate carries an
 	// observed root the reason token above does not already state. The deeper
 	// commands in "next:" carry the exclude/effect-root/record decision.
@@ -853,13 +860,13 @@ func renderStatusReview(w *output.Writer, res status.Result, r reviewDoc, td dom
 			w.Linef("reusable:    unknown — %d run(s) need identity facts only awa run acquires; %d replayable now among the rest — awa run ls",
 				r.Runs.Unassessed, r.Runs.Reusable)
 			if r.Runs.Near > 0 {
-				w.Linef("  assessed:  %d near miss(es), inspect with: awa run ls --near", r.Runs.Near)
+				w.Linef("  assessed:  %d non-reusable candidate(s), inspect with: awa run ls --near", r.Runs.Near)
 				renderStatusNearest(w, r.Runs, "nearest assessed:")
 			}
 		case r.Runs.Reusable > 0:
 			w.Linef("reusable:    %d run(s) replayable now — awa run ls", r.Runs.Reusable)
 		case r.Runs.Near > 0:
-			w.Linef("reusable:    none — %d near miss(es), inspect with: awa run ls --near", r.Runs.Near)
+			w.Linef("reusable:    none — %d non-reusable candidate(s), inspect with: awa run ls --near", r.Runs.Near)
 			renderStatusNearest(w, r.Runs, "nearest:  ")
 		default:
 			w.Line("reusable:    none for the current state")

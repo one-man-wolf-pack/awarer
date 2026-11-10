@@ -117,14 +117,23 @@ upstream producer may block or get a broken pipe. Not with `--allow-tty`.
 
 ## Footer and inline diagnosis
 
-Every execution and hit ends with a footer: storage state
-(hit/stored/record-only/uncached), run id, cwd, exit, duration, reusability, and
-the inspect command, plus the before/after compare for a non-reusable run. A
-common miss adds a bounded preview: the nearest previous run, why it is not
-reusable, a sample of changed inputs, and the `run explain` / `run ls --near`
-follow-ups. When that nearest run was deliberately recorded (`--record` or
-`--no-cache`), the follow-up is `run show <id> --tail 50` instead: it is history
-to read, not a miss to fix.
+Each execution or hit ends with a stderr footer:
+
+```text
+awa run: record-only 1a2b3c4d5e6f exit=0 duration=1.2s cwd=.
+inspect: awa run show <full-run-id> --tail 200
+```
+
+The summary names the state (`stored`, `hit (replay)`, `record-only`,
+`uncached`), short id, exit, duration and cwd, plus `not-reusable(<reason>)`
+for a technical reason; `--record`/`--no-cache` is named by its state. A tail
+is a window, not the full or permanent log; an unrecorded run gets no `inspect:`.
+Lines appear only as needed: validation/probe facts, truncation, skipped
+inputs, a mutation warning with exact `compare:` if recorded, and a nearest-run
+diagnosis ending in `awa run ls --near`, or `run show <id> --tail 50` for a
+deliberate recording. For a stored run's reuse now,
+`awa run explain --from-run <id> --to-now` uses today's config and environment,
+not the past mode or decision, and runs no probes.
 
 ## Why a run is not reusable
 
@@ -180,7 +189,7 @@ awa run log --command <text>  history of executions, any reuse state, newest fir
 awa run show <run-id>         metadata only: exit, reuse, stream byte counts
 awa run show <run-id> --tail 200   captured output; or --stdout, --stderr
 awa run ls                    runs reusable for the current state
-awa run ls --near             also recent near misses: reason, changed-path sample
+awa run ls --near             also recent non-reusable candidates: reason, changed-path sample
 awa run explain -- <command>  the cache decision, without running
 ```
 
