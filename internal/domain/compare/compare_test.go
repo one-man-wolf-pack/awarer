@@ -175,6 +175,45 @@ func TestModifiedContentDiffAvailability(t *testing.T) {
 	}
 }
 
+// TestContentDiffEligibilityFollowsRequiredSides pins the per-change byte rule: an
+// added file needs only its right entry's bytes, a deleted file only its left
+// entry's, and a content modification both. The side a one-sided change does not
+// read is not consulted, so a hash-only entry elsewhere never blocks it, while a
+// needed hash-only side always does.
+func TestContentDiffEligibilityFollowsRequiredSides(t *testing.T) {
+	blob, hashOnly := worktree.StorageBlob, worktree.StorageHashOnly
+	for _, tc := range []struct {
+		name        string
+		left, right []worktree.Entry
+		path        string
+		want        bool
+	}{
+		{"added owned", nil, []worktree.Entry{regular(t, "a.go", hexA, blob)}, "a.go", true},
+		{"added hash-only", nil, []worktree.Entry{regular(t, "a.go", hexA, hashOnly)}, "a.go", false},
+		{"deleted owned", []worktree.Entry{regular(t, "a.go", hexA, blob)}, nil, "a.go", true},
+		{"deleted hash-only", []worktree.Entry{regular(t, "a.go", hexA, hashOnly)}, nil, "a.go", false},
+		{"modified hash-only left", []worktree.Entry{regular(t, "a.go", hexA, hashOnly)}, []worktree.Entry{regular(t, "a.go", hexB, blob)}, "a.go", false},
+		{"modified hash-only right", []worktree.Entry{regular(t, "a.go", hexA, blob)}, []worktree.Entry{regular(t, "a.go", hexB, hashOnly)}, "a.go", false},
+		{
+			"added beside unrelated hash-only entries",
+			[]worktree.Entry{regular(t, "z.go", hexC, hashOnly)},
+			[]worktree.Entry{regular(t, "a.go", hexA, blob), regular(t, "z.go", hexC, hashOnly)},
+			"a.go", true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := changeSet(t, scantest.CanonicalCursor(tc.left, nil), scantest.CanonicalCursor(tc.right, nil), compare.Options{})
+			ch := find(t, cs, tc.path)
+			if ch.ContentDiffAvailable != tc.want {
+				t.Errorf("%s %s: ContentDiffAvailable = %v, want %v", ch.Status, tc.path, ch.ContentDiffAvailable, tc.want)
+			}
+			if !tc.want && ch.Note != "hash-only" {
+				t.Errorf("ineligible %s note = %q, want hash-only", tc.path, ch.Note)
+			}
+		})
+	}
+}
+
 func TestTypeChange(t *testing.T) {
 	left := scantest.CanonicalCursor([]worktree.Entry{regular(t, "x", hexA, worktree.StorageBlob)}, nil)
 	right := scantest.CanonicalCursor([]worktree.Entry{symlink(t, "x", "./target")}, nil)

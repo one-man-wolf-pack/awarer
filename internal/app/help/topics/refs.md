@@ -45,8 +45,8 @@ The `run:` forms work for any stored run, not only a `--record` one: an ordinary
 cached run and a failed run are addressable the same way. A run observation stores
 identity, not content: it compares, it proves what was absent inside its observed
 scope, and it keeps a symlink's target, but it holds no regular-file bytes — so
-`awa diff` against one degrades to hash-only and `awa restore` from one reports
-`hash-only-content` rather than writing a file.
+`awa diff` shows a change needing its bytes as hash-only and `awa restore` from one
+reports `hash-only-content` rather than writing a file.
 
 The `restore:` form names the immutable state an applied `awa restore` recorded
 before its first write. Unlike a run observation it carries content for every

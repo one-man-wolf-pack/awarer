@@ -76,8 +76,8 @@ func TestResolveRunObservation(t *testing.T) {
 	if st.Kind != KindRunObservation {
 		t.Errorf("kind = %v, want run-observation", st.Kind)
 	}
-	if st.ContentAvailable() {
-		t.Error("a run observation must report no content available")
+	if _, err := st.Content(worktree.RelPath{}, hashing.ContentHash{}); !errors.Is(err, ErrRunObservationNoContent) {
+		t.Errorf("Content on a run observation = %v, want ErrRunObservationNoContent", err)
 	}
 	if rid, sel, _, _, ok := st.RunObservation(); !ok || sel != RunBefore || rid != id.String() {
 		t.Errorf("RunObservation() = %q %v %v", rid, sel, ok)

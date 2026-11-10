@@ -57,8 +57,9 @@ var (
 	// to the observation-unstable outcome.
 	ErrObservationUnstable = errors.New("current-worktree observation is unstable")
 	// ErrRunObservationNoContent reports that a run observation stores only a manifest
-	// (paths, hashes, modes), not file content, so a content diff against it is not
-	// available. changes works manifest-to-manifest; diff degrades to hash-only.
+	// (paths, hashes, modes), not file content, so it can never supply a side's bytes.
+	// A change that needs those bytes is hash-only before any read; reaching this
+	// error means a caller skipped that eligibility.
 	ErrRunObservationNoContent = errors.New("run observation stores no content")
 )
 
@@ -215,12 +216,6 @@ func (s *ResolvedState) Close() error {
 	}
 	return s.now.Close()
 }
-
-// ContentAvailable reports whether this state can serve file content for a diff. A
-// run observation stores only a manifest (no blobs), so a diff against it degrades
-// to hash-only rather than aborting. A recovery observation does carry content —
-// that is the whole reason it exists — so it reports available.
-func (s *ResolvedState) ContentAvailable() bool { return s.Kind != KindRunObservation }
 
 // RecoveryObservation returns this state's pre-restore recovery record and the
 // stream over the exact path set it covers, or ok false when it is not one. The
@@ -401,8 +396,9 @@ func (s *ResolvedState) Content(path worktree.RelPath, expected hashing.ContentH
 		return data, nil
 	case KindRunObservation:
 		// A run observation stores only a manifest, never file content, so a content
-		// read is not available. diff guards on ContentAvailable and never reaches here
-		// in normal use; this is the loud backstop for any caller that does.
+		// read is not available. Its regular entries are hash-only, so a change that
+		// needs this side is never byte-eligible and diff never reaches here in normal
+		// use; this is the loud backstop for any caller that does.
 		return nil, fmt.Errorf("%w: %s", ErrRunObservationNoContent, path)
 	default:
 		return nil, fmt.Errorf("unknown state kind %d", s.Kind)
@@ -517,8 +513,9 @@ func (r *Resolver) Resolve(ctx context.Context, ref Ref, now NowContext) (*Resol
 
 // resolveRunObservation resolves a recorded run's pre/post observed state. It opens
 // the run's stored observation manifest (already verified by the run store on
-// drain) and exposes it as a manifest-only state — no content, so changes works
-// manifest-to-manifest and diff degrades to hash-only. An unknown run, a missing
+// drain) and exposes it as a manifest-only state — no content, so a change that
+// needs this side's bytes is hash-only, while the other side of an added or deleted
+// file still renders. An unknown run, a missing
 // observation (a post-scan-failed after), or a corrupt manifest fails loud through
 // the run store's errors.
 func (r *Resolver) resolveRunObservation(ctx context.Context, ref Ref) (*ResolvedState, error) {

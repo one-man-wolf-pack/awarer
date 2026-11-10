@@ -144,9 +144,9 @@ That answers "what observed state changed while it ran", the standard follow-up
 after a record-only run. It does not name the writer: an edit made elsewhere
 during the run shows up the same way, and a write undone before the run ended
 or outside the observed scope does not show up at all. A run observation
-records each observed file's hash, not its bytes, so `diff` over run references
-reports a regular-file change as hash-only rather than inventing content, and
-cannot show a temporary input after it is gone. Excluded and protected paths,
+records each observed file's hash, not its bytes, so `diff` reports a change that
+needs a run's bytes as hash-only rather than inventing content, and cannot show a
+temporary input after it is gone. Excluded and protected paths,
 `.awa/` included, are not observed at all. To keep an experiment's input readable, see
 [awa help agents](agents.md).
 

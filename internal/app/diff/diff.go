@@ -1,8 +1,9 @@
 // Package diff implements the "awa diff" use case: the change set of "awa
 // changes" plus a content diff for each change where content is available.
 //
-// Content loading is an explicit step over the resolved states' content access:
-// blob bytes for a checkpoint, the scanner's verified opener for "now". A missing
+// Content loading is an explicit step that reads only the sides a change's byte
+// eligibility requires: blob bytes for a checkpoint or recovery observation, the
+// scanner's verified opener for "now"; a run observation owns no bytes. A missing
 // blob a diff needs is storage corruption and fails the whole diff loudly; a
 // current-workspace file that changed under the scan degrades that one file to
 // "unavailable" rather than emitting misleading bytes.
@@ -319,17 +320,9 @@ func (s *Service) fileDiff(left, right *state.ResolvedState, c compare.Change, c
 		return fd, nil
 	}
 
-	// A recorded run's observation stores only a manifest, no file content, so a
-	// content diff against it is not available: report the change at hash-only
-	// granularity rather than aborting. This degrade is typed (ContentAvailable),
-	// not a string sniff, and is the reason a run side never reaches the byte reads
-	// below.
-	if !left.ContentAvailable() || !right.ContentAvailable() {
-		fd.Availability = HashOnly
-		fd.Reason = "run observation stores no content"
-		return fd, nil
-	}
-
+	// The comparison's per-change eligibility is the only gate before reading, so an
+	// operand's kind matters only on a side this change needs: a run on the unread
+	// side of an added or deleted file does not block the other side's bytes.
 	if !c.ContentDiffAvailable {
 		fd.Availability = HashOnly
 		fd.Reason = "hash-only content unavailable"

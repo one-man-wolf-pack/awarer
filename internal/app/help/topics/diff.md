@@ -124,8 +124,9 @@ the observations you chose, which may be older or newer than HEAD.
 ## Diff algorithm
 
 `awa diff` defaults to the histogram algorithm; pass `--algorithm myers` for
-Myers. Selecting two different algorithms is a usage error. Binary or oversized
-files are compared hash-only (changed/unchanged) rather than shown as text.
+Myers. Selecting two different algorithms is a usage error. A binary change is
+reported without a text body, and files over `max_file_size` are compared
+hash-only (changed/unchanged) under the default large-file policy.
 
 The project-wide default lives in the one-key `[diff]` config table, and the
 default hunk context in `[checkpoint].diff_context`; `--algorithm <name>` and
@@ -134,16 +135,23 @@ what is compared, only how the comparison is rendered — see
 [awa help config](../reference/configuration.md).
 
 Run observations can be used as state references (`run:<id>:before` /
-`run:<id>:after`). When one side has no stored content, `diff` degrades to a
-hash-only comparison for the affected paths.
+`run:<id>:after`). Content is judged per change, on the sides it needs: an added
+file needs only the right side's bytes, a deleted file only the left's, and a
+modified file both. So a file a checkpoint stored still shows as text when the
+run is the side without it; `/dev/null` there means that observation has no
+such entry — not that the file was deleted, nor proof for a restore. A change
+that needs a run's bytes is hash-only, even when a checkpoint stored the same
+bytes. JSON `content_diff_available` is this per-change promise, the same in
+`changes` and `diff`; rendering can still report `binary` or `unavailable` (a
+file changed during the read, a diff too large), and a missing or corrupt
+stored blob fails with exit 5.
 
-A `hash-only` label names a missing byte capability, not proof that a
-checkpoint retention pattern selected the file. The limit can come from
+A `hash-only` label names a missing byte capability on a needed side, not proof
+that a checkpoint retention pattern selected the file. The limit can come from
 checkpoint retention — `hash_only_patterns`, or `store_file_contents` turned off —
 or from a run observation, which records hashes but no regular-file bytes. An
 excluded path is a different boundary: it is not observed at all. The label
-alone names neither the cause nor which side lacks bytes, and says nothing about
-whether the other side stored any.
+alone names neither the cause nor which side lacks bytes.
 
 ## See also
 

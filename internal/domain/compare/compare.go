@@ -79,12 +79,16 @@ func (s Status) String() string {
 // Change is one reported difference between the two states. Old* fields describe
 // the left side, New* fields the right side; a side absent for the status leaves
 // its fields zero. For modify/type/skipped, OldPath and NewPath are the same
-// path. ContentDiffAvailable is true only when there is a meaningful content diff
-// to render: a regular file whose content hash actually differs and whose bytes
-// are stored as blobs on both sides. It is a domain fact (settled here), not a
-// renderer decision. A hash-only or skipped side leaves it false (no bytes), and
-// so does a metadata-only modification (same content hash, changed mode or
-// traversal) — there is nothing to diff, so it explains itself through Note.
+// path. ContentDiffAvailable is the per-change byte eligibility of a regular file:
+// every side the status needs owns its bytes — the right entry for an added file,
+// the left for a deleted one, both for a content modification. An absent side
+// needs nothing, so nothing on that side can block it. It is a domain fact
+// (settled here, before any read), not a renderer decision, and not a promise of
+// a text diff: rendering may still find binary content or unavailable bytes. A
+// hash-only or skipped side it needs leaves it false, whatever another record
+// holds for the same hash, and so does a metadata-only modification (same content
+// hash, changed mode or traversal) — there is nothing to diff, so it explains
+// itself through Note.
 type Change struct {
 	Status     Status
 	OldPath    worktree.RelPath
