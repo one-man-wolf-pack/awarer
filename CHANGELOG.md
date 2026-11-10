@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.7.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.6.0...v0.7.0) (2026-11-10)
+
+
+### Features
+
+* **cli:** accept root awa --version as the version operation ([3da9567](https://github.com/one-man-wolf-pack/awarer/commit/3da9567d0a30af5fe21b6376574ca85c5c8de131))
+* **run:** compact the run footer and neutralize status reuse wording ([4999f4b](https://github.com/one-man-wolf-pack/awarer/commit/4999f4b14d3462732abdd1ee41a84c961252bb78))
+* **run:** require caller environment variables per command ([2201811](https://github.com/one-man-wolf-pack/awarer/commit/2201811153053e4ae6eac5cb1c1f4521152029ec))
+
+
+### Bug Fixes
+
+* **cli:** describe run mutation as a change during the run window ([74ad353](https://github.com/one-man-wolf-pack/awarer/commit/74ad3537cfb85ce9f62041b051031f2bab155fea))
+* **diff:** render one-sided content against a run on the unread side ([beb2bbf](https://github.com/one-man-wolf-pack/awarer/commit/beb2bbf0b80adf0d3c4ef7cccbc480b788454a92))
+* **review:** make the review-coverage note range-neutral ([3b8ba0b](https://github.com/one-man-wolf-pack/awarer/commit/3b8ba0b80f3c23120fcf29e6bc7ba975271a76c0))
+* **run:** omit record-mode advice for explicit --record runs ([ad9afa4](https://github.com/one-man-wolf-pack/awarer/commit/ad9afa41eb25f23757b252682a601518f99f58b4))
+
+
+### Documentation
+
+* **agents:** update awa evidence guidance for v0.6.0 ([33649f6](https://github.com/one-man-wolf-pack/awarer/commit/33649f654749da3ac4c4d88da2383208afa607ec))
+* **help:** add evidence capture and retrieval recipes ([6f21416](https://github.com/one-man-wolf-pack/awarer/commit/6f21416a6088871b14a1b884715a09dbf7bd8196))
+* **help:** explain what a hash-only comparison label proves ([0c8a30c](https://github.com/one-man-wolf-pack/awarer/commit/0c8a30c5cc2e44803c86dd2f683586e18648ac6e))
+
+
+### Tests
+
+* **workflows:** accept the bumped release action pins ([14c0c42](https://github.com/one-man-wolf-pack/awarer/commit/14c0c425271f2ef6d3a64f2aa07fab8129d24f78))
+
+
+### Build System
+
+* **deps:** Bump the actions group across 1 directory with 3 updates ([628f497](https://github.com/one-man-wolf-pack/awarer/commit/628f49738a910be9730e0e3ef0e25f1524bdbf04))
+* **deps:** Bump the go-dependencies group across 1 directory with 3 updates ([3058a25](https://github.com/one-man-wolf-pack/awarer/commit/3058a25d3ef2b9a519f5c759c69e20c08287e30a))
+* **deps:** review licenses for the go-dependencies bump ([2d61ea1](https://github.com/one-man-wolf-pack/awarer/commit/2d61ea14434d7caa0887626cf21ed38b2f9bee98))
+
 ## [0.6.0](https://github.com/one-man-wolf-pack/awarer/compare/v0.5.0...v0.6.0) (2026-10-31)
 
 
