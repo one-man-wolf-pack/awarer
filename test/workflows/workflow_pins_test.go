@@ -72,7 +72,7 @@ var reviewedSecretSteps = []string{
 	strings.Join([]string{
 		"      - name: Mint the tap installation token",
 		"        id: tap-token",
-		"        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3",
+		"        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3",
 		"        with:",
 		"          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}",
 		"          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}",
@@ -108,7 +108,7 @@ var tapTokenConsumer = strings.Join([]string{
 // args are inside for the reason the blocks above give.
 var releasePublisher = strings.Join([]string{
 	"      - name: Build and attach the release assets",
-	"        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3",
+	"        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0",
 	"        with:",
 	"          distribution: goreleaser",
 	"          version: v2.18.2",
